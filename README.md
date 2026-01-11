@@ -53,3 +53,12 @@ Bei Rating-Bereichen wird beim Losen ein zufälliger Wert innerhalb des Bereichs
 - Die Daten werden in der Datei `players.json` abgelegt
 - Beim Start des Programms werden gespeicherte Spieler automatisch geladen
 
+--- 
+
+## Windows-Standalone-Version
+
+- Unter `/dist` befindet sich eine ausführbare `.exe`
+- Die `.exe` wurde mit **PyInstaller** erstellt
+- Die Version kann ohne installierte Python-Umgebung unter Windows ausgeführt werden
+
+---
