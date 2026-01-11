@@ -9,3 +9,18 @@
 # Built Visual Studio Code Extensions
 *.vsix
 .build/
+.vscode/settings.json
+build/internomat/Analysis-00.toc
+build/internomat/base_library.zip
+build/internomat/EXE-00.toc
+build/internomat/internomat.pkg
+build/internomat/PKG-00.toc
+build/internomat/PYZ-00.pyz
+build/internomat/PYZ-00.toc
+build/internomat/warn-internomat.txt
+build/internomat/xref-internomat.html
+build/internomat/localpycs/pyimod01_archive.pyc
+build/internomat/localpycs/pyimod02_importers.pyc
+build/internomat/localpycs/pyimod03_ctypes.pyc
+build/internomat/localpycs/pyimod04_pywin32.pyc
+build/internomat/localpycs/struct.pyc
