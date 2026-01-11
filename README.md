@@ -39,14 +39,11 @@ Bei Rating-Bereichen wird beim Losen ein zufälliger Wert innerhalb des Bereichs
 
 ## Einstellungen
 
-``` Max. Differenz
-Legt fest, ab welcher maximalen Rating-Differenz der Algorithmus abbrechen darf, wenn eine passende Aufteilung gefunden wurde.
+`Max. Differenz` - Legt fest, ab welcher maximalen Rating-Differenz der Algorithmus abbrechen darf, wenn eine passende Aufteilung gefunden wurde.
 
-``` Iterationen
-Gibt an, wie oft versucht wird, eine bessere Teamaufteilung zu finden.
+`Iterationen` - Gibt an, wie oft versucht wird, eine bessere Teamaufteilung zu finden.
 
-``` Gleiche Teamgröße
-Wenn aktiviert, werden die Teams gleich groß erstellt (Spieleranzahl muss gerade sein).
+`Gleiche Teamgröße` - Wenn aktiviert, werden die Teams gleich groß erstellt (Spieleranzahl muss gerade sein).
 
 ---
 
