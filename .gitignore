@@ -24,3 +24,4 @@ build/internomat/localpycs/pyimod02_importers.pyc
 build/internomat/localpycs/pyimod03_ctypes.pyc
 build/internomat/localpycs/pyimod04_pywin32.pyc
 build/internomat/localpycs/struct.pyc
+internomat.spec
