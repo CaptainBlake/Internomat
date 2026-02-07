@@ -5,7 +5,7 @@
 !.vscode/extensions.json
 !.vscode/*.code-snippets
 !*.code-workspace
-
+.env
 # Built Visual Studio Code Extensions
 *.vsix
 .build/
@@ -25,3 +25,4 @@ build/internomat/localpycs/pyimod03_ctypes.pyc
 build/internomat/localpycs/pyimod04_pywin32.pyc
 build/internomat/localpycs/struct.pyc
 internomat.spec
+players.json
