@@ -43,6 +43,8 @@ def parse_players_from_text(text):
 
     return players
 
+
+
 def get_player_rating(rating):
     """Gibt das Rating als Zahl zurück, würfelt bei Bereich"""
     if isinstance(rating, tuple):
@@ -72,6 +74,8 @@ def load_into_textbox():
     input_text.delete("1.0", tk.END)
     for name, rating in load_players():
         input_text.insert(tk.END, f"{name},{rating}\n")
+
+
 
 
 # Core logic
