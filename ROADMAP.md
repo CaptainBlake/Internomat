@@ -1,4 +1,4 @@
-## V2
+# Ideas for Version 2.0
 
 ## Keynotes
 - steam auth for fetching data from: https://steamcommunity.com/id/<STEAMPROFILE>/gcpd/730?tab=matchhistoryscrimmage
