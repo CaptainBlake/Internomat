@@ -1,4 +1,5 @@
-# login_and_fetch.py
+# Collector.py
+# This script uses Playwright to automate the process of logging into Steam, navigating to the user's CS2 match history, and loading all matches from the last 12 months. It then extracts the HTML of the match history table for further processing.
 
 import asyncio
 from playwright.async_api import async_playwright
