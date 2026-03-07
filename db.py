@@ -1,12 +1,10 @@
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 
 DB_FILE = "players.db"
 
-
 def get_conn():
     return sqlite3.connect(DB_FILE)
-
 
 def init_db():
 
@@ -27,7 +25,6 @@ def init_db():
             last_updated TEXT
         )
         """)
-
 
 def insert_player(player):
 
@@ -76,9 +73,8 @@ def delete_player(steam_id):
     conn.commit()
     conn.close()
 
-
 def update_player(player):
-
+   
     now = datetime.utcnow().isoformat()
 
     with get_conn() as conn:
@@ -123,7 +119,6 @@ def get_players_to_update(max_age_minutes=1):
 
         return [r[0] for r in cur.fetchall()]
 
-
 def get_players():
 
     with get_conn() as conn:
@@ -142,7 +137,6 @@ def get_players():
         """)
 
         return cur.fetchall()
-
 
 def player_exists(steam_id):
 
