@@ -27,3 +27,4 @@ build/internomat/localpycs/struct.pyc
 internomat.spec
 players.json
 scoreboard_table.html
+players.db
