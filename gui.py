@@ -8,6 +8,21 @@ import time
 
 update_running = False
 
+
+def sort_treeview(tree, col, reverse):
+
+    data = [(tree.set(k, col), k) for k in tree.get_children('')]
+
+    if col == "rating":
+        data.sort(key=lambda x: int(x[0]), reverse=reverse)
+    else:
+        data.sort(key=lambda x: x[0].lower(), reverse=reverse)
+
+    for index, (val, k) in enumerate(data):
+        tree.move(k, '', index)
+
+    tree.heading(col, command=lambda: sort_treeview(tree, col, not reverse))
+
 def start_gui():
 
     root = tk.Tk()
@@ -34,8 +49,12 @@ def start_gui():
 
             try:
                 steam_ids = db.get_players_to_update()
+                if not steam_ids:
+                    root.after(0, finish)
+                    return
+                
                 total = len(steam_ids)
-                for steam_id in steam_ids:
+                for i, steam_id in enumerate(steam_ids, 1):
                     root.after(0, lambda i=i, total=total:
                         update_button.config(text=f"Updating {i}/{total}")
                     )
@@ -76,44 +95,45 @@ def start_gui():
             )
 
 
-    def sort_treeview(tree, col, reverse):
-
-        data = [(tree.set(k, col), k) for k in tree.get_children('')]
-
-        data.sort(reverse=reverse)
-
-        for index, (val, k) in enumerate(data):
-            tree.move(k, '', index)
-
-        tree.heading(col, command=lambda: sort_treeview(tree, col, not reverse))
-
-
     def add_player():
 
         url = entry.get().strip()
+        url_copy = url
 
         if not url:
             messagebox.showerror("Error", "Enter Steam profile URL")
             return
 
-        try:
+        add_button.config(state="disabled")
 
-            steam_id = core.get_player_identifier(url)
+        def worker():
 
-            player = core.get_leetify_player(steam_id)
+            try:
+                steam_id = core.get_player_identifier(url_copy)
 
-            
-            if db.player_exists(steam_id):
-                db.update_player(player)
-            else:
-                db.insert_player(player)
+                player = core.get_leetify_player(steam_id)
 
-            refresh_players()
+                if db.player_exists(steam_id):
+                    db.update_player(player)
+                else:
+                    db.insert_player(player)
 
-            entry.delete(0, tk.END)
+                def finish():
+                    refresh_players()
+                    entry.delete(0, tk.END)
+                    add_button.config(state="normal")
 
-        except Exception as e:
-            messagebox.showerror("Error", str(e))
+                root.after(0, finish)
+
+            except Exception as e:
+
+                def fail():
+                    messagebox.showerror("Error", str(e))
+                    add_button.config(state="normal")
+
+                root.after(0, fail)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def remove_player():
 
@@ -230,11 +250,12 @@ def start_gui():
 
     entry.pack(side="left", fill="x", expand=True, padx=(0,10))
 
-    tk.Button(
+    add_button = tk.Button(
         top_frame,
         text="Add Player",
         command=add_player
-    ).pack(side="left", padx=5)
+    )
+    add_button.pack(side="left", padx=5)
 
     tk.Button(
         top_frame,
@@ -273,6 +294,7 @@ def start_gui():
 
     db_tree.heading("name", text="Player", command=lambda: sort_treeview(db_tree, "name", False))
     db_tree.heading("rating", text="Rating", command=lambda: sort_treeview(db_tree, "rating", True))
+    db_tree.bind("<Double-1>", lambda e: add_to_pool())
 
     
     
@@ -309,7 +331,8 @@ def start_gui():
 
     pool_scroll = ttk.Scrollbar(pool_frame, orient="vertical", command=pool_tree.yview)
     pool_tree.configure(yscrollcommand=pool_scroll.set)
-
+    pool_tree.bind("<Double-1>", lambda e: remove_from_pool())
+    
     pool_scroll.pack(side="right", fill="y")
     pool_tree.pack(fill="both", expand=True)
 
