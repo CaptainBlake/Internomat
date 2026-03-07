@@ -30,3 +30,4 @@ scoreboard_table.html
 players.db
 __pycache__/
 build/
+dist/__pycache__/
