@@ -28,3 +28,5 @@ internomat.spec
 players.json
 scoreboard_table.html
 players.db
+__pycache__/
+build/

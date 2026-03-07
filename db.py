@@ -76,6 +76,7 @@ def delete_player(steam_id):
     conn.commit()
     conn.close()
 
+
 def update_player(player):
 
     now = datetime.utcnow().isoformat()
@@ -106,7 +107,6 @@ def update_player(player):
                 player["steam64_id"]
             )
         )
-
 
 def get_players_to_update(max_age_minutes=1):
 

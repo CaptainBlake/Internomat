@@ -1,4 +1,3 @@
-from logging import root
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -7,6 +6,8 @@ import db
 import threading
 import time
 
+update_running = False
+
 def start_gui():
 
     root = tk.Tk()
@@ -14,35 +15,49 @@ def start_gui():
     root.geometry("900x700")
 
 
-    # FUNCTIONS
     def update_players():
+
+        global update_running
+
+        if update_running:
+            messagebox.showinfo("Update", "Update already running")
+            return
+
+        update_running = True
+
+        update_button.config(state="disabled")
+        update_button.config(text="Updating...")
 
         def worker():
 
-            steam_ids = db.get_players_to_update()
+            global update_running
 
-            total = len(steam_ids)
+            try:
+                steam_ids = db.get_players_to_update()
+                total = len(steam_ids)
+                for steam_id in steam_ids:
+                    root.after(0, lambda i=i, total=total:
+                        update_button.config(text=f"Updating {i}/{total}")
+                    )
+                    try:
+                        player = core.get_leetify_player(steam_id)
+                        db.update_player(player)
 
-            for i, steam_id in enumerate(steam_ids, start=1):
+                    except Exception as e:
+                        print(f"Update failed for {steam_id}: {e}")
 
-                try:
+                    time.sleep(1)
 
-                    player = core.get_leetify_player(steam_id)
+            finally:
 
-                    db.update_player(player)
+                def finish():
+                    global update_running
+                    update_running = False
+                    update_button.config(state="normal")
+                    update_button.config(text="Update")
+                    refresh_players()
 
-                except Exception as e:
-
-                    print(f"Update failed for {steam_id}: {e}")
-
-                time.sleep(1)
-
-            root.after(0, refresh_players)
-
-            messagebox.showinfo(
-                "Update",
-                f"Updated {len(steam_ids)} players (skipped recent ones)"
-            )
+                root.after(0, finish)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -60,6 +75,19 @@ def start_gui():
                 values=(p[1], p[2])
             )
 
+
+    def sort_treeview(tree, col, reverse):
+
+        data = [(tree.set(k, col), k) for k in tree.get_children('')]
+
+        data.sort(reverse=reverse)
+
+        for index, (val, k) in enumerate(data):
+            tree.move(k, '', index)
+
+        tree.heading(col, command=lambda: sort_treeview(tree, col, not reverse))
+
+
     def add_player():
 
         url = entry.get().strip()
@@ -74,7 +102,11 @@ def start_gui():
 
             player = core.get_leetify_player(steam_id)
 
-            db.insert_player(player)
+            
+            if db.player_exists(steam_id):
+                db.update_player(player)
+            else:
+                db.insert_player(player)
 
             refresh_players()
 
@@ -208,13 +240,15 @@ def start_gui():
         top_frame,
         text="Remove Player",
         command=remove_player
-    ).pack(side="right", padx=5)
+    ).pack(side="left", padx=5)
 
-    tk.Button(
+    update_button = tk.Button(
         top_frame,
         text="Update",
         command=update_players
-    ).pack(side="left", padx=5)
+    )
+
+    update_button.pack(side="left", padx=5)
 
 
     # SPLIT SCREEN
@@ -237,9 +271,11 @@ def start_gui():
         selectmode="extended"
     )
 
-    db_tree.heading("name", text="Player")
-    db_tree.heading("rating", text="Rating")
+    db_tree.heading("name", text="Player", command=lambda: sort_treeview(db_tree, "name", False))
+    db_tree.heading("rating", text="Rating", command=lambda: sort_treeview(db_tree, "rating", True))
 
+    
+    
     db_scroll = ttk.Scrollbar(db_frame, orient="vertical", command=db_tree.yview)
     db_tree.configure(yscrollcommand=db_scroll.set)
 
