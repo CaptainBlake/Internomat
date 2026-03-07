@@ -1,64 +1,150 @@
 # Internomat
 
-Internomat ist ein einfaches Python-Tool mit grafischer Oberfläche (Tkinter), das Spielerteams anhand von Ratings möglichst ausgeglichen auslost.
+Internomat ist ein kleines Desktop-Tool zum schnellen Erstellen möglichst ausgeglichener CS2-Teams.
+
+Spieler werden über ihren **Steam-Profil-Link** hinzugefügt. Das Programm ruft automatisch Rating-Daten von **Leetify** ab und erstellt daraus zwei möglichst gleich starke Teams.
+
+Spieler werden lokal gespeichert und können jederzeit wiederverwendet werden.
 
 ---
 
-## Funktionen
+# Funktionen
 
-- Grafische Benutzeroberfläche mit Tkinter
-- Auslosen von zwei Teams
-- Berücksichtigung von Spieler-Ratings
-- Unterstützung von Rating-Bereichen (z. B. `8000-10000`)
-- Konfigurierbare Anzahl an Iterationen
-- Konfigurierbare maximale Rating-Differenz
-- Option für gleiche Teamgröße
-- Speichern und Laden der Spieler über `players.json`
+- Grafische Oberfläche
+- Spieler über **Steam-Profil-Link** hinzufügen
+- Automatisches Abrufen des **Premier Ratings**
+- Lokale Spielerdatenbank
+- Auswahl eines **Player Pools**
+- Generierung ausgeglichener Teams
+- Aktualisieren von Spielerdaten über Leetify
+- Sortierbare Spielerliste
 
 ---
 
-## Eingabeformat
+# Grundprinzip
 
-Spieler werden zeilenweise im folgenden Format eingegeben:
+1. Spieler über Steam-Link hinzufügen  
+2. Spieler in den **Player Pool** verschieben  
+3. **Generate Teams** klicken  
 
-```
-Name,Rating
-```
+Internomat testet mehrere Teamaufteilungen und wählt die mit der geringsten Rating-Differenz.
+
+---
+
+# Spieler hinzufügen
+
+Einfach einen Steam-Profil-Link einfügen und **Add Player** klicken.
 
 Beispiele:
 
 ```
-Alice,12000
-Bob,15000
-Charlie,8000-10000
+https://steamcommunity.com/profiles/76561198012345678
 ```
 
-Bei Rating-Bereichen wird beim Losen ein zufälliger Wert innerhalb des Bereichs verwendet und im Ergebnis angezeigt.
+oder
+
+```
+https://steamcommunity.com/id/spielername
+```
 
 ---
 
-## Einstellungen
+# Player Database
 
-`Max. Differenz` - Legt fest, ab welcher maximalen Rating-Differenz der Algorithmus abbrechen darf, wenn eine passende Aufteilung gefunden wurde.
+Die linke Liste enthält alle gespeicherten Spieler.
 
-`Iterationen` - Gibt an, wie oft versucht wird, eine bessere Teamaufteilung zu finden.
+Aktionen:
 
-`Gleiche Teamgröße` - Wenn aktiviert, werden die Teams gleich groß erstellt (Spieleranzahl muss gerade sein).
+- **Add Player** – Spieler hinzufügen  
+- **Remove Player** – Spieler löschen  
+- **Update** – Spielerdaten aktualisieren  
+
+Die Liste kann über die Spaltenüberschriften sortiert werden.
+
+---
+
+# Player Pool
+
+Die rechte Liste enthält die Spieler für das aktuelle Match.
+
+Spieler hinzufügen:
+
+- Spieler auswählen und `>` drücken  
+- oder **Doppelklick**
+
+Spieler entfernen:
+
+- Spieler auswählen und `<` drücken  
+- oder **Doppelklick**
 
 ---
 
-## Speicherung
+# Teams generieren
 
-- Spieler können über den Button **„Spieler speichern“** gespeichert werden
-- Die Daten werden in der Datei `players.json` abgelegt
-- Beim Start des Programms werden gespeicherte Spieler automatisch geladen
+Nachdem Spieler im Pool sind:
 
---- 
+1. **Generate Teams** klicken  
+2. Zwei Teams werden mit möglichst ähnlicher Gesamtwertung erstellt  
 
-## Windows-Standalone-Version
-
-- Unter `/dist` befindet sich eine ausführbare `.exe`
-- Die `.exe` wurde mit **PyInstaller** erstellt
-- Die Version kann ohne installierte Python-Umgebung unter Windows ausgeführt werden
+Das Ergebnis erscheint im unteren Bereich.
 
 ---
+
+# Spieler aktualisieren
+
+Über **Update** können gespeicherte Spieler aktualisiert werden.
+
+Spieler, die kürzlich aktualisiert wurden, werden automatisch übersprungen.
+
+---
+
+# Lokale Speicherung
+
+Spieler werden lokal gespeichert in:
+
+```
+players.db
+```
+
+Die Datei wird automatisch erstellt.
+
+---
+
+# Windows-Version
+
+Im Ordner `dist` befindet sich eine ausführbare `.exe`.
+
+Diese wurde mit **PyInstaller** erstellt und kann ohne Python gestartet werden.
+
+---
+
+# Ausführen aus dem Source-Code
+
+Abhängigkeiten installieren:
+
+```
+pip install -r requirements.txt
+playwright install
+```
+
+Zusätzlich wird eine `.env` Datei benötigt:
+
+```
+LEETIFY_API=dein_api_key
+```
+
+---
+
+# Projektstruktur
+
+```
+main.py
+gui.py
+core.py
+db.py
+```
+
+- **main.py** – Einstiegspunkt  
+- **gui.py** – Benutzeroberfläche  
+- **core.py** – API & Team-Balancing  
+- **db.py** – Datenbank
