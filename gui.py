@@ -28,7 +28,7 @@ def start_gui():
     root = tk.Tk()
     root.title("Internomat")
     root.geometry("900x700")
-
+    root.minsize(850, 650)
 
     def update_players():
 
@@ -43,21 +43,33 @@ def start_gui():
         update_button.config(state="disabled")
         update_button.config(text="Updating...")
 
-        def worker():
-
+        def finish():
             global update_running
+            update_running = False
+            update_button.config(state="normal")
+            update_button.config(text="Update")
+            refresh_players()
+
+        def worker():
 
             try:
                 steam_ids = db.get_players_to_update()
+
                 if not steam_ids:
                     root.after(0, finish)
                     return
-                
+
                 total = len(steam_ids)
-                for i, steam_id in enumerate(steam_ids, 1):
-                    root.after(0, lambda i=i, total=total:
+
+                for i, steam_id in enumerate(steam_ids, start=1):
+
+                    # update progress in UI thread
+                    root.after(
+                        0,
+                        lambda i=i, total=total:
                         update_button.config(text=f"Updating {i}/{total}")
                     )
+
                     try:
                         player = core.get_leetify_player(steam_id)
                         db.update_player(player)
@@ -68,14 +80,6 @@ def start_gui():
                     time.sleep(1)
 
             finally:
-
-                def finish():
-                    global update_running
-                    update_running = False
-                    update_button.config(state="normal")
-                    update_button.config(text="Update")
-                    refresh_players()
-
                 root.after(0, finish)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -209,26 +213,42 @@ def start_gui():
 
         (team_a, team_b), diff = core.balance_teams(players)
 
-        output.delete("1.0", tk.END)
+        # clear previous results
+        for row in team_a_tree.get_children():
+            team_a_tree.delete(row)
 
-        output.insert(tk.END, "TEAM A\n\n")
+        for row in team_b_tree.get_children():
+            team_b_tree.delete(row)
+
+        # sort players by rating
+        team_a = sorted(team_a, key=lambda p: p[2], reverse=True)
+        team_b = sorted(team_b, key=lambda p: p[2], reverse=True)
 
         sum_a = 0
         for p in team_a:
-            output.insert(tk.END, f"{p[1]} ({p[2]})\n")
+            team_a_tree.insert("", "end", values=(p[1], p[2]))
             sum_a += p[2]
-
-        output.insert(tk.END, f"\nTotal: {sum_a}\n\n")
-
-        output.insert(tk.END, "TEAM B\n\n")
 
         sum_b = 0
         for p in team_b:
-            output.insert(tk.END, f"{p[1]} ({p[2]})\n")
+            team_b_tree.insert("", "end", values=(p[1], p[2]))
             sum_b += p[2]
 
-        output.insert(tk.END, f"\nTotal: {sum_b}\n")
-        output.insert(tk.END, f"\nDifference: {diff}")
+        team_a_total.config(text=f"Total: {sum_a}")
+        team_b_total.config(text=f"Total: {sum_b}")
+
+        # balance indicator
+        if diff < 500:
+            color = "green"
+            text = f"Balanced ✔  (Difference: {diff})"
+        elif diff < 1500:
+            color = "orange"
+            text = f"Acceptable ⚠  (Difference: {diff})"
+        else:
+            color = "red"
+            text = f"Unbalanced ✖  (Difference: {diff})"
+
+        diff_label.config(text=text, fg=color)
 
 
     # ADD PLAYER UI
@@ -294,7 +314,7 @@ def start_gui():
 
     db_tree.heading("name", text="Player", command=lambda: sort_treeview(db_tree, "name", False))
     db_tree.heading("rating", text="Rating", command=lambda: sort_treeview(db_tree, "rating", True))
-    db_tree.bind("<Double-1>", lambda e: add_to_pool())
+    db_tree.bind("<Double-1>", lambda e: add_to_pool() if db_tree.selection() else None)
 
     
     
@@ -331,7 +351,7 @@ def start_gui():
 
     pool_scroll = ttk.Scrollbar(pool_frame, orient="vertical", command=pool_tree.yview)
     pool_tree.configure(yscrollcommand=pool_scroll.set)
-    pool_tree.bind("<Double-1>", lambda e: remove_from_pool())
+    pool_tree.bind("<Double-1>", lambda e: remove_from_pool() if pool_tree.selection() else None)
     
     pool_scroll.pack(side="right", fill="y")
     pool_tree.pack(fill="both", expand=True)
@@ -345,12 +365,97 @@ def start_gui():
         command=run_balancer
     ).pack(pady=10)
 
-
     # OUTPUT
 
+    result_frame = tk.Frame(root)
+    result_frame.pack(fill="both", padx=10, pady=10)
 
-    output = tk.Text(root, height=15)
-    output.pack(fill="both", padx=10, pady=10)
+    team_a_frame = tk.LabelFrame(
+        result_frame,
+        text="TEAM A",
+        bg="#e8f1ff",
+        padx=5,
+        pady=5
+    )
+    team_a_frame.pack(side="left", fill="both", expand=True, padx=5)
+
+    team_b_frame = tk.LabelFrame(
+        result_frame,
+        text="TEAM B",
+        bg="#ffecec",
+        padx=5,
+        pady=5
+    )
+    team_b_frame.pack(side="left", fill="both", expand=True, padx=5)
+
+
+    # TEAM A TABLE
+    team_a_tree = ttk.Treeview(
+        team_a_frame,
+        columns=("name", "rating"),
+        show="headings",
+        height=6
+    )
+
+    team_a_tree.heading("name", text="Player")
+    team_a_tree.heading("rating", text="Rating")
+
+    team_a_tree.column("name", anchor="w", width=150)
+    team_a_tree.column("rating", anchor="center", width=80)
+
+    team_a_tree.pack(fill="both", expand=True)
+
+
+    # TEAM B TABLE
+    team_b_tree = ttk.Treeview(
+        team_b_frame,
+        columns=("name", "rating"),
+        show="headings",
+        height=6
+    )
+
+    team_b_tree.heading("name", text="Player")
+    team_b_tree.heading("rating", text="Rating")
+
+    team_b_tree.column("name", anchor="w", width=150)
+    team_b_tree.column("rating", anchor="center", width=80)
+
+    team_b_tree.pack(fill="both", expand=True)
+
+
+    # TOTALS
+    team_a_total = tk.Label(
+        team_a_frame,
+        text="Total: 0",
+        bg="#e8f1ff",
+        font=("Segoe UI", 9, "bold")
+    )
+    team_a_total.pack(pady=4)
+
+    team_b_total = tk.Label(
+        team_b_frame,
+        text="Total: 0",
+        bg="#ffecec",
+        font=("Segoe UI", 9, "bold")
+    )
+    team_b_total.pack(pady=4)
+
+    # DIFFERENCE 
+
+    balance_frame = tk.Frame(root)
+    balance_frame.pack(pady=(0,10))
+
+    separator = ttk.Separator(balance_frame, orient="horizontal")
+    separator.pack(fill="x", pady=5)
+
+    diff_label = tk.Label(
+        balance_frame,
+        text="Rating Difference: 0",
+        font=("Segoe UI", 10, "bold")
+    )
+
+    diff_label.pack()
+
 
     # initial load
     refresh_players()

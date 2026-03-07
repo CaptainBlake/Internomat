@@ -15,6 +15,9 @@ load_dotenv()
 
 LEETIFY_API = os.getenv("LEETIFY_API")
 
+if not LEETIFY_API:
+    raise RuntimeError("Missing LEETIFY_API in .env file")
+
 ITERATIONS = 1000
 
 # STEAM PARSING
