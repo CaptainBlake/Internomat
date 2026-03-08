@@ -234,4 +234,18 @@ dist/
 
 # Lizenz
 
-Dieses Projekt ist ein Hobbyprojekt und wird ohne Garantie bereitgestellt.
+Dieses Projekt steht unter der **GNU General Public License v3.0 (GPL-3.0)**.
+
+Du darfst:
+
+- das Programm frei verwenden
+- den Code studieren
+- den Code verändern
+- das Programm weiterverbreiten
+
+Bedingung ist, dass **alle abgeleiteten Werke ebenfalls unter der GPL veröffentlicht werden**.
+
+[License](https://github.com/CaptainBlake/Internomat/blob/main/LICENSE)
+
+Weitere Informationen:
+https://www.gnu.org/licenses/gpl-3.0.html
