@@ -1,10 +1,14 @@
 import sqlite3
-from datetime import datetime, time, timedelta
+import os
+from pathlib import Path
+from datetime import datetime, timedelta
 
-DB_FILE = "players.db"
+DB_FILE = "internomat.db"
+
 
 def get_conn():
     return sqlite3.connect(DB_FILE)
+
 
 def init_db():
 
@@ -25,6 +29,32 @@ def init_db():
             last_updated TEXT
         )
         """)
+
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS maps(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE
+        )
+        """)
+
+        cur = conn.execute("SELECT COUNT(*) FROM maps")
+        count = cur.fetchone()[0]
+
+        if count == 0:
+            default_maps = [
+                "De_Mirage",
+                "De_Inferno",
+                "De_Nuke",
+                "De_Ancient",
+                "De_Anubis",
+                "De_Dust2",
+                "De_Overpass"
+            ]
+
+            conn.executemany(
+                "INSERT INTO maps(name) VALUES(?)",
+                [(m,) for m in default_maps]
+            )
 
 def insert_player(player):
 
@@ -104,7 +134,7 @@ def update_player(player):
             )
         )
 
-def get_players_to_update(max_age_minutes=1):
+def get_players_to_update(max_age_minutes=60):
 
     cutoff = (datetime.utcnow() - timedelta(minutes=max_age_minutes)).isoformat()
 

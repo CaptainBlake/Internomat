@@ -126,7 +126,7 @@ def build_team_tab(root, parent):
 
             except Exception as e:
 
-                def fail():
+                def fail(e=e):
                     messagebox.showerror("Error", str(e))
                     add_button.config(state="normal")
 
@@ -205,6 +205,7 @@ def build_team_tab(root, parent):
             messagebox.showerror("Error", "Player count must be even")
             return
 
+        # calling core function for balancing alg.
         (team_a, team_b), diff = core.balance_teams(players)
 
         for row in team_a_tree.get_children():

@@ -12,13 +12,11 @@ from playwright.async_api import async_playwright
 load_dotenv()
 
 # CONSTANTS
-
+ITERATIONS = 1000
 LEETIFY_API = os.getenv("LEETIFY_API")
 
 if not LEETIFY_API:
     raise RuntimeError("Missing LEETIFY_API in .env file")
-
-ITERATIONS = 1000
 
 # STEAM PARSING
 
@@ -77,7 +75,7 @@ def get_leetify_player(steam_id):
     r = requests.get(url, params=params, headers=headers, timeout=5)
 
     # Player not available in API
-    if r.status_code == 404:
+    if r.status_code == 404: 
         return _get_leetify_profile_fallback(steam_id)
 
     if r.status_code != 200:
@@ -87,6 +85,10 @@ def get_leetify_player(steam_id):
 
     premier = data.get("ranks", {}).get("premier")
     leetify = data.get("ranks", {}).get("leetify")
+
+    # If player has no premier rating yet
+    if premier is None:
+        return _get_leetify_profile_fallback(steam_id)
 
     return {
         "steam64_id": steam_id,
@@ -112,7 +114,10 @@ async def _fetch_leetify_profile_html(steam_id):
         await page.goto(url)
 
         # Wait until rank summary exists instead of sleeping
-        await page.wait_for_selector("#rank-summary", timeout=10000)
+        try:
+            await page.wait_for_selector("#rank-summary", timeout=10000)
+        except:
+            pass
 
         html = await page.content()
 
@@ -140,7 +145,7 @@ def _get_leetify_profile_fallback(steam_id):
         "winrate": None
     }
 
-# parse html
+
 def _parse_leetify_profile(html, steam_id):
 
     soup = BeautifulSoup(html, "html.parser")
@@ -234,6 +239,7 @@ def _parse_leetify_profile(html, steam_id):
 
 
 # TEAM BALANCER
+# TODO: implement something smarter than thousand random shuffles and compare them...
 def balance_teams(players):
 
     best = None
