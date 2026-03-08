@@ -3,6 +3,7 @@ import random
 import re
 import xml.etree.ElementTree as ET
 import os
+import sys
 
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
@@ -14,7 +15,19 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-load_dotenv()
+def resource_path(relative_path):
+    """Get absolute path to resource for dev and PyInstaller"""
+    if getattr(sys, "frozen", False):
+        base_path = sys._MEIPASS
+    else:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
+env_path = resource_path(".env")
+
+load_dotenv(env_path)
+
 
 # CONSTANTS
 ITERATIONS = 1000
