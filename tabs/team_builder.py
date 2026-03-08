@@ -53,6 +53,14 @@ def build_team_tab(root, parent):
                 steam_ids = db.get_players_to_update()
 
                 if not steam_ids:
+
+                    def notify():
+                        messagebox.showinfo(
+                            "Update",
+                            "All players were updated recently.\nTry again later."
+                        )
+
+                    root.after(0, notify)
                     root.after(0, finish)
                     return
 

@@ -266,3 +266,11 @@ def balance_teams(players):
             best = (team_a.copy(), team_b.copy())
 
     return best, best_diff
+
+# MAP MANAGEMENT
+def choose_random_map(maps):
+
+    if not maps:
+        raise ValueError("No maps in pool")
+
+    return random.choice(maps)
