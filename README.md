@@ -230,25 +230,6 @@ Der Build erzeugt:
 dist/
   Internomat_1.x.x.exe
 ```
-
----
-
-# Projektstruktur
-
-```
-main.py
-gui.py
-core.py
-db.py
-
-tabs/
-  team_builder.py
-  map_roulette.py
-
-assets/
-  duck_icon.ico
-```
-
 ---
 
 # Lizenz
