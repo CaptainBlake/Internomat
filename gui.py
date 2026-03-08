@@ -30,6 +30,15 @@ def start_gui():
     root.geometry("900x700")
     root.minsize(850, 650)
 
+    notebook = ttk.Notebook(root)
+    notebook.pack(fill="both", expand=True)
+
+    team_tab = tk.Frame(notebook)
+    map_tab = tk.Frame(notebook)
+
+    notebook.add(team_tab, text="Team Builder")
+    notebook.add(map_tab, text="Map Roulette")
+
     def update_players():
 
         global update_running
@@ -253,7 +262,7 @@ def start_gui():
 
     # ADD PLAYER UI
 
-    top_frame = tk.Frame(root)
+    top_frame = tk.Frame(team_tab)
     top_frame.pack(fill="x", padx=10, pady=10)
 
     # limit entry to 80 chars
@@ -295,7 +304,7 @@ def start_gui():
     # SPLIT SCREEN
 
 
-    lists_frame = tk.Frame(root)
+    lists_frame = tk.Frame(team_tab)
     lists_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
     # ---------- DATABASE LIST ----------
@@ -360,14 +369,14 @@ def start_gui():
 
 
     tk.Button(
-        root,
+        team_tab,
         text="Generate Teams",
         command=run_balancer
     ).pack(pady=10)
 
     # OUTPUT
 
-    result_frame = tk.Frame(root)
+    result_frame = tk.Frame(team_tab)
     result_frame.pack(fill="both", padx=10, pady=10)
 
     team_a_frame = tk.LabelFrame(
@@ -442,7 +451,7 @@ def start_gui():
 
     # DIFFERENCE 
 
-    balance_frame = tk.Frame(root)
+    balance_frame = tk.Frame(team_tab)
     balance_frame.pack(pady=(0,10))
 
     separator = ttk.Separator(balance_frame, orient="horizontal")
@@ -456,6 +465,11 @@ def start_gui():
 
     diff_label.pack()
 
+    tk.Label(
+        map_tab,
+        text="Map Roulette (coming soon)",
+        font=("Segoe UI", 12)
+    ).pack(pady=30)
 
     # initial load
     refresh_players()
