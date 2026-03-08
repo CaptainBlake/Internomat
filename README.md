@@ -1,33 +1,56 @@
 # Internomat
 
-Internomat ist ein kleines Desktop-Tool zum schnellen Erstellen möglichst ausgeglichener CS2-Teams.
+Internomat ist ein kleines Desktop-Tool zum schnellen Erstellen möglichst ausgeglichener **CS2-Teams**.
 
 Spieler werden über ihren **Steam-Profil-Link** hinzugefügt. Das Programm ruft automatisch Rating-Daten von **Leetify** ab und erstellt daraus zwei möglichst gleich starke Teams.
 
-Spieler werden lokal gespeichert und können jederzeit wiederverwendet werden.
+Zusätzlich enthält Internomat eine **Map Roulette**, um zufällig eine Map aus einem konfigurierbaren Pool auszuwählen.
+
+Alle Spieler und Maps werden lokal gespeichert und können jederzeit wiederverwendet werden.
+
+**Aktueller Release:**  
+https://github.com/CaptainBlake/Internomat/releases
 
 ---
 
 # Funktionen
+
+## Team Builder
 
 - Grafische Oberfläche
 - Spieler über **Steam-Profil-Link** hinzufügen
 - Automatisches Abrufen des **Premier Ratings**
 - Lokale Spielerdatenbank
 - Auswahl eines **Player Pools**
-- Generierung ausgeglichener Teams
+- Generierung möglichst ausgeglichener Teams
 - Aktualisieren von Spielerdaten über Leetify
 - Sortierbare Spielerliste
+
+## Map Roulette
+
+- Zufällige Map-Auswahl
+- Bearbeitbarer Map Pool
+- Persistente Speicherung der Maps
 
 ---
 
 # Grundprinzip
+
+## Team Builder
 
 1. Spieler über Steam-Link hinzufügen  
 2. Spieler in den **Player Pool** verschieben  
 3. **Generate Teams** klicken  
 
 Internomat testet mehrere Teamaufteilungen und wählt die mit der geringsten Rating-Differenz.
+
+---
+
+## Map Roulette
+
+1. Maps im Pool verwalten  
+2. **Spin** drücken  
+3. Eine zufällige Map wird ausgewählt
 
 ---
 
@@ -46,6 +69,11 @@ oder
 ```
 https://steamcommunity.com/id/spielername
 ```
+
+Internomat erkennt automatisch:
+
+- Steam64 IDs
+- Vanity URLs
 
 ---
 
@@ -88,6 +116,8 @@ Nachdem Spieler im Pool sind:
 
 Das Ergebnis erscheint im unteren Bereich.
 
+Internomat führt mehrere zufällige Teamaufteilungen durch und wählt die mit der kleinsten Differenz.
+
 ---
 
 # Spieler aktualisieren
@@ -96,15 +126,54 @@ Das Ergebnis erscheint im unteren Bereich.
 
 Spieler, die kürzlich aktualisiert wurden, werden automatisch übersprungen.
 
+Die Aktualisierung erfolgt über die **Leetify API**.
+
+Falls ein Spieler dort noch kein Ranking hat, wird automatisch ein **Fallback-Scraper** verwendet.
+
+---
+
+# Leetify Fallback
+
+Falls ein Spieler in der API kein Premier-Ranking besitzt, nutzt Internomat einen Fallback:
+
+- Selenium lädt das Leetify-Profil
+- Die Seite wird vollständig gerendert
+- Das Premier Rating wird aus dem HTML extrahiert
+
+---
+
+# Map Pool
+
+Die Map Roulette nutzt eine lokale Mapliste.
+
+Standardmäßig werden folgende Maps hinzugefügt:
+
+```
+de_mirage
+de_inferno
+de_nuke
+de_ancient
+de_anubis
+de_dust2
+de_overpass
+```
+
+Maps können im UI hinzugefügt oder entfernt werden.
+
 ---
 
 # Lokale Speicherung
 
-Spieler werden lokal gespeichert in:
+Alle Daten werden lokal gespeichert in:
 
 ```
-players.db
+internomat.db
 ```
+
+Die Datenbank enthält zwei Tabellen:
+
+- **players**
+- **maps**
 
 Die Datei wird automatisch erstellt.
 
@@ -116,21 +185,50 @@ Im Ordner `dist` befindet sich eine ausführbare `.exe`.
 
 Diese wurde mit **PyInstaller** erstellt und kann ohne Python gestartet werden.
 
+Beim Start wird automatisch:
+
+- die Datenbank erstellt
+- die GUI gestartet
+
+```
+def main():
+    init_db()
+    start_gui()
+```
+
 ---
 
 # Ausführen aus dem Source-Code
 
 Abhängigkeiten installieren:
 
-```
+```bash
 pip install -r requirements.txt
-playwright install
 ```
 
 Zusätzlich wird eine `.env` Datei benötigt:
 
 ```
 LEETIFY_API=dein_api_key
+```
+
+---
+
+# Build mit PyInstaller
+
+Internomat kann als standalone `.exe` gebaut werden.
+
+Build Command:
+
+```bash
+python -m PyInstaller main.py --onefile --windowed --name Internomat_1.x.x --icon=assets/duck_icon.ico --collect-all selenium --add-data ".env;." --clean
+```
+
+Der Build erzeugt:
+
+```
+dist/
+  Internomat_1.x.x.exe
 ```
 
 ---
@@ -142,9 +240,17 @@ main.py
 gui.py
 core.py
 db.py
+
+tabs/
+  team_builder.py
+  map_roulette.py
+
+assets/
+  duck_icon.ico
 ```
 
-- **main.py** – Einstiegspunkt  
-- **gui.py** – Benutzeroberfläche  
-- **core.py** – API & Team-Balancing  
-- **db.py** – Datenbank
+---
+
+# Lizenz
+
+Dieses Projekt ist ein Hobbyprojekt und wird ohne Garantie bereitgestellt.
