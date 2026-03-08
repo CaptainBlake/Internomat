@@ -3,11 +3,16 @@ import random
 import re
 import xml.etree.ElementTree as ET
 import os
-import asyncio
 
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
-from playwright.async_api import async_playwright
+
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 load_dotenv()
 
@@ -101,34 +106,39 @@ def get_leetify_player(steam_id):
     }
 
 # Fallback method using web scraping for players not having a profile
-async def _fetch_leetify_profile_html(steam_id):
+def _fetch_leetify_profile_html(steam_id):
 
     url = f"https://leetify.com/app/profile/{steam_id}#rank-summary"
 
-    async with async_playwright() as p:
+    options = Options()
+    options.add_argument("--headless=new")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
 
-        browser = await p.chromium.launch(headless=True)
+    driver = webdriver.Chrome(options=options)
 
-        page = await browser.new_page()
+    try:
+        driver.get(url)
 
-        await page.goto(url)
-
-        # Wait until rank summary exists instead of sleeping
+        # wait until rank summary section loads
         try:
-            await page.wait_for_selector("#rank-summary", timeout=10000)
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.ID, "rank-summary"))
+            )
         except:
             pass
 
-        html = await page.content()
+        html = driver.page_source
 
-        await browser.close()
+    finally:
+        driver.quit()
 
     return html
 
 
 def _get_leetify_profile_fallback(steam_id):
 
-    html = asyncio.run(_fetch_leetify_profile_html(steam_id))
+    html = _fetch_leetify_profile_html(steam_id)
 
     player = _parse_leetify_profile(html, steam_id)
 
