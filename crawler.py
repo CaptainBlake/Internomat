@@ -4,6 +4,7 @@ import time
 import requests
 from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
+import os
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -12,12 +13,10 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-import os
 from dotenv import load_dotenv
+import logger
 
-import core
-
-# env handle
+# ENV & CONFIG
 def resource_path(relative_path):
     """Get absolute path to resource for dev and PyInstaller"""
     if getattr(sys, "frozen", False):
@@ -27,10 +26,11 @@ def resource_path(relative_path):
 
     return os.path.join(base_path, relative_path)
 
-
 env_path = resource_path(".env")
 load_dotenv(env_path)
 
+# CONSTANTS
+DEFAULT_RATING = 10000  # fallback rating for players without data
 LEETIFY_API = os.getenv("LEETIFY_API")
 
 if not LEETIFY_API:
@@ -94,6 +94,7 @@ def get_leetify_player(steam_id):
 
     # Player not available in API
     if r.status_code == 404: 
+        logger.log_event("API_FALLBACK", {"steam_id": steam_id})
         return _get_leetify_profile_fallback(steam_id)
 
     if r.status_code != 200:
@@ -106,6 +107,7 @@ def get_leetify_player(steam_id):
 
     # If player has no premier rating yet
     if premier is None:
+        logger.log_event("NO_PREMIER_FALLBACK", {"steam_id": steam_id})
         return _get_leetify_profile_fallback(steam_id)
 
     return {
@@ -162,11 +164,12 @@ def _get_leetify_profile_fallback(steam_id):
 
     #  case - alex
     if not player:
+        logger.log_warning(f"Fallback failed, using default rating for {steam_id}")
         return {
             "steam64_id": steam_id,
             "leetify_id": None,
             "name": steam_id,
-            "premier_rating": core.DEFAULT_RATING, 
+            "premier_rating": DEFAULT_RATING, 
             "leetify_rating": None,
             "total_matches": None,
             "winrate": None
@@ -280,7 +283,7 @@ def fetch_player(url):
 
 def fetch_players_bulk(steam_ids, delay=1, on_progress=None, on_player=None):
     results = []
-
+    logger.log_event("BULK_FETCH_START", {"count": len(steam_ids)})
     for i, steam_id in enumerate(steam_ids, start=1):
         try:
             player = get_leetify_player(steam_id)
@@ -290,7 +293,7 @@ def fetch_players_bulk(steam_ids, delay=1, on_progress=None, on_player=None):
                 on_player(player)  # 🔑 immediate update
 
         except Exception as e:
-            print(f"[ERROR] Failed for {steam_id}: {e}")
+            logger.log_error(f"Failed for {steam_id}: {e}")
             results.append(None)
 
         if on_progress:
@@ -298,4 +301,5 @@ def fetch_players_bulk(steam_ids, delay=1, on_progress=None, on_player=None):
 
         time.sleep(delay)
 
+    logger.log_event("BULK_FETCH_DONE", {"count": len(results)})
     return results

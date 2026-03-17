@@ -84,8 +84,9 @@ def balance_teams(players, tolerance):
 
     # unpack
     score, team_a, team_b, diff, dist = chosen
-
+    
     # --- logging ---
+    logger.log_balance_summary(team_a, team_b)
     logger.log_team_roll_compact(
         chosen=(score, team_a, team_b),
         team_a=team_a,

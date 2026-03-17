@@ -1,10 +1,10 @@
 import sqlite3
-import os
-from pathlib import Path
 from datetime import datetime, timedelta
 
+# INIT
+
 DB_FILE = "internomat.db"
-# db functions
+
 def get_conn():
     return sqlite3.connect(DB_FILE)
 
@@ -54,7 +54,8 @@ def init_db():
                 [(m,) for m in default_maps]
             )
 
-# player database
+# PLAYER TABLE
+
 def insert_player(player):
 
     now = datetime.utcnow().isoformat()
@@ -184,7 +185,9 @@ def upsert_player(player):
     else:
         insert_player(player)
 
-# map database
+
+# MAP TABLE
+
 def get_maps():
 
     with get_conn() as conn:
