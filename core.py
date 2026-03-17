@@ -1,16 +1,15 @@
 import random
 from itertools import combinations
 
+# TEAM BALANCING
 
 def _normalize_teams(team_a, team_b):
     a = tuple(sorted(p[0] for p in team_a))
     b = tuple(sorted(p[0] for p in team_b))
     return tuple(sorted([a, b]))
 
-
 def _team_sum(team):
     return sum(p[2] for p in team)
-
 
 def balance_teams(players, tolerance):
 
@@ -27,11 +26,10 @@ def balance_teams(players, tolerance):
     half = len(players) // 2
 
     best_score = None
-    best_diff = None  # keep for logging
     candidates = []
     seen = set()
 
-    DIST_WEIGHT = 0.25  # 🔥 tune this (0.05–0.2 recommended)
+    DIST_WEIGHT = 0.25  # tune this 
 
     # --- generate all unique team splits ---
     for combo in combinations(players, half):
@@ -52,12 +50,11 @@ def balance_teams(players, tolerance):
         diff = abs(sum_a - sum_b)
         dist = _distribution_score_raw(team_a, team_b)
 
-        # 🔥 NEW: combined score
+        # combined score
         score = diff + dist * DIST_WEIGHT
 
         if best_score is None or score < best_score:
             best_score = score
-            best_diff = diff  # track pure diff of best
 
         candidates.append((score, team_a, team_b, diff, dist))
 
