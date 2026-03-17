@@ -7,10 +7,10 @@ import threading
 import crawler
 import core
 
-
+BALANCED_THRESHOLD = 2500
+ACCEPTABLE_THRESHOLD = 5000
 
 update_running = False
-
 
 def sort_treeview(tree, col, reverse):
 
@@ -26,8 +26,9 @@ def sort_treeview(tree, col, reverse):
 
     tree.heading(col, command=lambda: sort_treeview(tree, col, not reverse))
 
-
 def build_team_tab(root, parent):
+
+    tolerance_var = tk.IntVar(value=1000)
 
     def update_players():
 
@@ -190,55 +191,6 @@ def build_team_tab(root, parent):
 
         return players
 
-    def run_balancer():
-
-        players = get_pool_players()
-
-        if len(players) < 2:
-            messagebox.showerror("Error", "Add players to pool first")
-            return
-
-        if len(players) % 2 != 0:
-            messagebox.showerror("Error", "Player count must be even")
-            return
-
-        # calling core function for balancing alg.
-        (team_a, team_b), diff = core.balance_teams(players)
-
-        for row in team_a_tree.get_children():
-            team_a_tree.delete(row)
-
-        for row in team_b_tree.get_children():
-            team_b_tree.delete(row)
-
-        team_a = sorted(team_a, key=lambda p: p[2], reverse=True)
-        team_b = sorted(team_b, key=lambda p: p[2], reverse=True)
-
-        sum_a = 0
-        for p in team_a:
-            team_a_tree.insert("", "end", values=(p[1], p[2]))
-            sum_a += p[2]
-
-        sum_b = 0
-        for p in team_b:
-            team_b_tree.insert("", "end", values=(p[1], p[2]))
-            sum_b += p[2]
-
-        team_a_total.config(text=f"Total: {sum_a}")
-        team_b_total.config(text=f"Total: {sum_b}")
-
-        if diff < 500:
-            color = "green"
-            text = f"Balanced ✔  (Difference: {diff})"
-        elif diff < 1500:
-            color = "orange"
-            text = f"Acceptable ⚠  (Difference: {diff})"
-        else:
-            color = "red"
-            text = f"Unbalanced ✖  (Difference: {diff})"
-
-        diff_label.config(text=text, fg=color)
-
     def run_async(task, on_success=None, on_error=None):
         def wrapper():
             try:
@@ -277,6 +229,61 @@ def build_team_tab(root, parent):
         update_button.pack(side="left", padx=5)
 
         return entry, add_button, update_button
+
+    def run_balancer():
+
+        players = get_pool_players()
+
+        if len(players) < 2:
+            messagebox.showerror("Error", "Add players to pool first")
+            return
+
+        if len(players) % 2 != 0:
+            messagebox.showerror("Error", "Player count must be even")
+            return
+
+        # calling core function for balancing alg.
+        tolerance = tolerance_var.get()
+
+
+        (team_a, team_b), diff = core.balance_teams(
+            players,
+            tolerance=tolerance
+        )
+
+        for row in team_a_tree.get_children():
+            team_a_tree.delete(row)
+
+        for row in team_b_tree.get_children():
+            team_b_tree.delete(row)
+
+        team_a = sorted(team_a, key=lambda p: p[2], reverse=True)
+        team_b = sorted(team_b, key=lambda p: p[2], reverse=True)
+
+        sum_a = 0
+        for p in team_a:
+            team_a_tree.insert("", "end", values=(p[1], p[2]))
+            sum_a += p[2]
+
+        sum_b = 0
+        for p in team_b:
+            team_b_tree.insert("", "end", values=(p[1], p[2]))
+            sum_b += p[2]
+
+        team_a_total.config(text=f"Total: {sum_a}")
+        team_b_total.config(text=f"Total: {sum_b}")
+
+        if diff < BALANCED_THRESHOLD:
+            color = "green"
+            text = f"Balanced ✔  (Difference: {diff})"
+        elif diff < ACCEPTABLE_THRESHOLD:
+            color = "orange"
+            text = f"Acceptable ⚠  (Difference: {diff})"
+        else:
+            color = "red"
+            text = f"Unbalanced ✖  (Difference: {diff})"
+
+        diff_label.config(text=text, fg=color)
 
 
     # --- DATABASE VIEW ---
@@ -373,7 +380,43 @@ def build_team_tab(root, parent):
 
     # --- RESULTS VIEW ---
     def create_results_view():
-        tk.Button(parent, text="Generate Teams", command=run_balancer).pack(pady=10)
+        control_frame = tk.Frame(parent)
+        control_frame.pack(pady=10)
+
+        # --- tolerance description ---
+        tk.Label(
+            control_frame,
+            text="Tolerance:",
+            font=("Segoe UI", 9)
+        ).pack(side="left", padx=(0, 5))
+
+        # --- tolerance value ---
+        tolerance_label = tk.Label(
+            control_frame,
+            text=str(tolerance_var.get()),
+            width=5
+        )
+        tolerance_label.pack(side="left", padx=(0, 5))
+
+        # --- tolerance slider ---
+        tolerance_slider = tk.Scale(
+            control_frame,
+            from_=0,
+            to=5000,
+            orient="horizontal",
+            variable=tolerance_var,
+            showvalue=False,
+            length=100
+        )
+        tolerance_slider.pack(side="left", padx=5)
+
+        def update_tolerance_label(val):
+            tolerance_label.config(text=str(int(val)))
+
+        tolerance_slider.config(command=update_tolerance_label)
+
+        # --- generate button ---
+        tk.Button(control_frame, text="Generate Teams", command=run_balancer).pack(side="left", padx=10)
 
         result_frame = tk.Frame(parent)
         result_frame.pack(fill="both", padx=10, pady=10)
