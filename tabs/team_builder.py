@@ -1,10 +1,12 @@
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-import core
+
 import db
 import threading
-import time
+import crawler
+import core
+
 
 
 update_running = False
@@ -29,6 +31,19 @@ def build_team_tab(root, parent):
 
     def update_players():
 
+        def success(_):
+            finish()
+
+        def error(e):
+            messagebox.showerror("Error", str(e))
+            finish()
+
+        def finish():
+            global update_running
+            update_running = False
+            update_button.config(state="normal")
+            update_button.config(text="Update")
+     
         global update_running
 
         if update_running:
@@ -40,53 +55,41 @@ def build_team_tab(root, parent):
         update_button.config(state="disabled")
         update_button.config(text="Updating...")
 
-        def finish():
-            global update_running
+        steam_ids = db.get_players_to_update()
+
+        if not steam_ids:
+            messagebox.showinfo(
+                "Update",
+                "All players were updated recently.\nTry again later."
+            )
             update_running = False
-            update_button.config(state="normal")
-            update_button.config(text="Update")
-            refresh_players()
+            finish()
+            return
 
-        def worker():
+        total = len(steam_ids)
+        update_button.config(text=f"Updating 0/{total}")
 
-            try:
-                steam_ids = db.get_players_to_update()
+        def task():
 
-                if not steam_ids:
+            def progress(i, total):
+                root.after(
+                    0,
+                    lambda: update_button.config(text=f"Updating {i}/{total}")
+                )
 
-                    def notify():
-                        messagebox.showinfo(
-                            "Update",
-                            "All players were updated recently.\nTry again later."
-                        )
+            def handle_player(player):
+                if player:
+                    # update DB + UI immediately
+                    root.after(0, lambda: db.update_player(player))
+                    root.after(0, refresh_players)
 
-                    root.after(0, notify)
-                    root.after(0, finish)
-                    return
+            return crawler.fetch_players_bulk(
+                steam_ids,
+                on_progress=progress,
+                on_player=handle_player
+            )
 
-                total = len(steam_ids)
-
-                for i, steam_id in enumerate(steam_ids, start=1):
-
-                    root.after(
-                        0,
-                        lambda i=i, total=total:
-                        update_button.config(text=f"Updating {i}/{total}")
-                    )
-
-                    try:
-                        player = core.get_leetify_player(steam_id)
-                        db.update_player(player)
-
-                    except Exception as e:
-                        print(f"Update failed for {steam_id}: {e}")
-
-                    time.sleep(1)
-
-            finally:
-                root.after(0, finish)
-
-        threading.Thread(target=worker, daemon=True).start()
+        run_async(task, success, error)
 
     def refresh_players():
 
@@ -105,7 +108,6 @@ def build_team_tab(root, parent):
     def add_player():
 
         url = entry.get().strip()
-        url_copy = url
 
         if not url:
             messagebox.showerror("Error", "Enter Steam profile URL")
@@ -113,34 +115,20 @@ def build_team_tab(root, parent):
 
         add_button.config(state="disabled")
 
-        def worker():
+        def task():
+            return crawler.fetch_player(url)
 
-            try:
-                steam_id = core.get_player_identifier(url_copy)
+        def success(player):
+            db.upsert_player(player)
+            refresh_players()
+            entry.delete(0, tk.END)
+            add_button.config(state="normal")
 
-                player = core.get_leetify_player(steam_id)
+        def error(e):
+            messagebox.showerror("Error", str(e))
+            add_button.config(state="normal")
 
-                if db.player_exists(steam_id):
-                    db.update_player(player)
-                else:
-                    db.insert_player(player)
-
-                def finish():
-                    refresh_players()
-                    entry.delete(0, tk.END)
-                    add_button.config(state="normal")
-
-                root.after(0, finish)
-
-            except Exception as e:
-
-                def fail(e=e):
-                    messagebox.showerror("Error", str(e))
-                    add_button.config(state="normal")
-
-                root.after(0, fail)
-
-        threading.Thread(target=worker, daemon=True).start()
+        run_async(task, success, error)
 
     def remove_player():
 
@@ -170,34 +158,35 @@ def build_team_tab(root, parent):
         refresh_players()
 
     def add_to_pool():
-
         for item in db_tree.selection():
-
             values = db_tree.item(item)["values"]
 
             if not pool_tree.exists(item):
-
                 pool_tree.insert(
                     "",
                     "end",
                     iid=item,
-                    values=values
+                    values=("", values[0], values[1])  # FIXED
                 )
 
-    def remove_from_pool():
+        refresh_pool_display()
 
+    def remove_from_pool():
         for item in pool_tree.selection():
             pool_tree.delete(item)
 
-    def get_pool_players():
+        refresh_pool_display()
 
+    def get_pool_players():
         players = []
 
         for item in pool_tree.get_children():
-
             values = pool_tree.item(item)["values"]
 
-            players.append((item, values[0], int(values[1])))
+            name = values[1]
+            rating = int(values[2])
+
+            players.append((item, name, rating))
 
         return players
 
@@ -250,119 +239,200 @@ def build_team_tab(root, parent):
 
         diff_label.config(text=text, fg=color)
 
-    # UI
+    def run_async(task, on_success=None, on_error=None):
+        def wrapper():
+            try:
+                result = task()
+                if on_success:
+                    root.after(0, lambda: on_success(result))
+            except Exception as e:
+                if on_error:
+                    root.after(0, lambda: on_error(e))
 
-    top_frame = tk.Frame(parent)
-    top_frame.pack(fill="x", padx=10, pady=10)
+        threading.Thread(target=wrapper, daemon=True).start()
+    
+    # --- TOP CONTROLS ---
+    def create_top_controls():
+        top_frame = tk.Frame(parent)
+        top_frame.pack(fill="x", padx=10, pady=10)
 
-    def limit_length(new_value):
-        return len(new_value) <= 80
+        def limit_length(new_value):
+            return len(new_value) <= 80
 
-    vcmd = root.register(limit_length)
+        vcmd = root.register(limit_length)
 
-    entry = tk.Entry(
-        top_frame,
-        validate="key",
-        validatecommand=(vcmd, "%P")
-    )
+        entry = tk.Entry(
+            top_frame,
+            validate="key",
+            validatecommand=(vcmd, "%P")
+        )
+        entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
-    entry.pack(side="left", fill="x", expand=True, padx=(0,10))
+        add_button = tk.Button(top_frame, text="Add Player", command=add_player)
+        add_button.pack(side="left", padx=5)
 
-    add_button = tk.Button(top_frame, text="Add Player", command=add_player)
-    add_button.pack(side="left", padx=5)
+        tk.Button(top_frame, text="Remove Player", command=remove_player).pack(side="left", padx=5)
 
-    tk.Button(top_frame, text="Remove Player", command=remove_player).pack(side="left", padx=5)
+        update_button = tk.Button(top_frame, text="Update", command=update_players)
+        update_button.pack(side="left", padx=5)
 
-    update_button = tk.Button(top_frame, text="Update", command=update_players)
-    update_button.pack(side="left", padx=5)
+        return entry, add_button, update_button
+
+
+    # --- DATABASE VIEW ---
+    def create_database_view(lists_frame):
+        db_frame = tk.Frame(lists_frame)
+        db_frame.pack(side="left", fill="both", expand=True)
+
+        tk.Label(db_frame, text="Player Database").pack()
+
+        db_tree = ttk.Treeview(
+            db_frame,
+            columns=("name", "rating"),
+            show="headings",
+            selectmode="extended"
+        )
+
+        db_tree.heading("name", text="Player", command=lambda: sort_treeview(db_tree, "name", False))
+        db_tree.heading("rating", text="Rating", command=lambda: sort_treeview(db_tree, "rating", True))
+
+        db_tree.bind("<Double-1>", lambda e: add_to_pool() if db_tree.selection() else None)
+
+        db_scroll = ttk.Scrollbar(db_frame, orient="vertical", command=db_tree.yview)
+        db_tree.configure(yscrollcommand=db_scroll.set)
+
+        db_scroll.pack(side="right", fill="y")
+        db_tree.pack(fill="both", expand=True)
+
+        return db_tree
+
+
+    # --- PLAYER POOL ---
+    def create_pool_view(lists_frame):
+        pool_frame = tk.Frame(lists_frame)
+        pool_frame.pack(side="left", fill="both", expand=True)
+
+        tk.Label(pool_frame, text="Player Pool").pack()
+
+        pool_tree = ttk.Treeview(
+            pool_frame,
+            columns=("index", "name", "rating"),
+            show="headings",
+            selectmode="extended"
+        )
+
+        pool_tree.heading("index", text="#")
+        pool_tree.heading("name", text="Player", command=lambda: sort_treeview(pool_tree, "name", False))
+        pool_tree.heading("rating", text="Rating", command=lambda: sort_treeview(pool_tree, "rating", True))
+
+        pool_tree.column("index", width=40, anchor="center")
+        pool_tree.column("name", width=140)
+        pool_tree.column("rating", width=80, anchor="center")
+
+        # zebra stripes
+        pool_tree.tag_configure("even", background="#f2f2f2")
+        pool_tree.tag_configure("odd", background="#ffffff")
+
+        pool_scroll = ttk.Scrollbar(pool_frame, orient="vertical", command=pool_tree.yview)
+        pool_tree.configure(yscrollcommand=pool_scroll.set)
+
+        pool_tree.bind("<Double-1>", lambda e: remove_from_pool() if pool_tree.selection() else None)
+
+        # --- DRAG & DROP ---
+        def on_drag_start(event):
+            pool_tree._drag_item = pool_tree.identify_row(event.y)
+
+        def on_drag_motion(event):
+            row = pool_tree.identify_row(event.y)
+
+            if row and hasattr(pool_tree, "_drag_item"):
+                if row != pool_tree._drag_item:
+                    pool_tree.move(pool_tree._drag_item, "", pool_tree.index(row))
+
+        def on_drag_drop(event):
+            refresh_pool_display()
+
+        pool_tree.bind("<ButtonPress-1>", on_drag_start)
+        pool_tree.bind("<B1-Motion>", on_drag_motion)
+        pool_tree.bind("<ButtonRelease-1>", on_drag_drop)
+
+        pool_scroll.pack(side="right", fill="y")
+        pool_tree.pack(fill="both", expand=True)
+
+        return pool_tree
+
+
+    # --- MID CONTROLS ---
+    def create_mid_controls(lists_frame):
+        mid_frame = tk.Frame(lists_frame)
+        mid_frame.pack(side="left", padx=10)
+
+        tk.Button(mid_frame, text=">", width=4, command=add_to_pool).pack(pady=5)
+        tk.Button(mid_frame, text="<", width=4, command=remove_from_pool).pack(pady=5)
+
+
+    # --- RESULTS VIEW ---
+    def create_results_view():
+        tk.Button(parent, text="Generate Teams", command=run_balancer).pack(pady=10)
+
+        result_frame = tk.Frame(parent)
+        result_frame.pack(fill="both", padx=10, pady=10)
+
+        team_a_frame = tk.LabelFrame(result_frame, text="Counter Terrorists", bg="#bfd7ff", padx=5, pady=5)
+        team_a_frame.pack(side="left", fill="both", expand=True, padx=5)
+
+        team_b_frame = tk.LabelFrame(result_frame, text="Terrorists", bg="#ffc4c4", padx=5, pady=5)
+        team_b_frame.pack(side="left", fill="both", expand=True, padx=5)
+
+        team_a_tree = ttk.Treeview(team_a_frame, columns=("name", "rating"), show="headings", height=6)
+        team_b_tree = ttk.Treeview(team_b_frame, columns=("name", "rating"), show="headings", height=6)
+
+        for tree in (team_a_tree, team_b_tree):
+            tree.heading("name", text="Player")
+            tree.heading("rating", text="Rating")
+            tree.pack(fill="both", expand=True)
+
+        team_a_total = tk.Label(team_a_frame, text="Total: 0", bg="#e8f1ff", font=("Segoe UI", 9, "bold"))
+        team_a_total.pack(pady=4)
+
+        team_b_total = tk.Label(team_b_frame, text="Total: 0", bg="#ffecec", font=("Segoe UI", 9, "bold"))
+        team_b_total.pack(pady=4)
+
+        balance_frame = tk.Frame(parent)
+        balance_frame.pack(pady=(0, 10))
+
+        ttk.Separator(balance_frame, orient="horizontal").pack(fill="x", pady=5)
+
+        diff_label = tk.Label(balance_frame, text="Rating Difference: 0", font=("Segoe UI", 10, "bold"))
+        diff_label.pack()
+
+        return team_a_tree, team_b_tree, team_a_total, team_b_total, diff_label
+
+
+    # --- POOL REFRESH ---
+    def refresh_pool_display():
+        for i, item in enumerate(pool_tree.get_children(), start=1):
+            values = pool_tree.item(item)["values"]
+
+            tag = "even" if i % 2 == 0 else "odd"
+
+            pool_tree.item(
+                item,
+                values=(i, values[1], values[2]),
+                tags=(tag,)
+            )
+
+
+    # --- BUILD UI ---
+    entry, add_button, update_button = create_top_controls()
 
     lists_frame = tk.Frame(parent)
     lists_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
-    db_frame = tk.Frame(lists_frame)
-    db_frame.pack(side="left", fill="both", expand=True)
+    db_tree = create_database_view(lists_frame)
+    create_mid_controls(lists_frame)
+    pool_tree = create_pool_view(lists_frame)
 
-    tk.Label(db_frame, text="Player Database").pack()
-
-    db_tree = ttk.Treeview(
-        db_frame,
-        columns=("name", "rating"),
-        show="headings",
-        selectmode="extended"
-    )
-
-    db_tree.heading("name", text="Player", command=lambda: sort_treeview(db_tree, "name", False))
-    db_tree.heading("rating", text="Rating", command=lambda: sort_treeview(db_tree, "rating", True))
-    db_tree.bind("<Double-1>", lambda e: add_to_pool() if db_tree.selection() else None)
-
-    db_scroll = ttk.Scrollbar(db_frame, orient="vertical", command=db_tree.yview)
-    db_tree.configure(yscrollcommand=db_scroll.set)
-
-    db_scroll.pack(side="right", fill="y")
-    db_tree.pack(fill="both", expand=True)
-
-    mid_frame = tk.Frame(lists_frame)
-    mid_frame.pack(side="left", padx=10)
-
-    tk.Button(mid_frame, text=">", width=4, command=add_to_pool).pack(pady=5)
-    tk.Button(mid_frame, text="<", width=4, command=remove_from_pool).pack(pady=5)
-
-    pool_frame = tk.Frame(lists_frame)
-    pool_frame.pack(side="left", fill="both", expand=True)
-
-    tk.Label(pool_frame, text="Player Pool").pack()
-
-    pool_tree = ttk.Treeview(
-        pool_frame,
-        columns=("name", "rating"),
-        show="headings",
-        selectmode="extended"
-    )
-
-    pool_tree.heading("name", text="Player")
-    pool_tree.heading("rating", text="Rating")
-
-    pool_scroll = ttk.Scrollbar(pool_frame, orient="vertical", command=pool_tree.yview)
-    pool_tree.configure(yscrollcommand=pool_scroll.set)
-    pool_tree.bind("<Double-1>", lambda e: remove_from_pool() if pool_tree.selection() else None)
-
-    pool_scroll.pack(side="right", fill="y")
-    pool_tree.pack(fill="both", expand=True)
-
-    tk.Button(parent, text="Generate Teams", command=run_balancer).pack(pady=10)
-
-    result_frame = tk.Frame(parent)
-    result_frame.pack(fill="both", padx=10, pady=10)
-
-    team_a_frame = tk.LabelFrame(result_frame, text="TEAM A", bg="#e8f1ff", padx=5, pady=5)
-    team_a_frame.pack(side="left", fill="both", expand=True, padx=5)
-
-    team_b_frame = tk.LabelFrame(result_frame, text="TEAM B", bg="#ffecec", padx=5, pady=5)
-    team_b_frame.pack(side="left", fill="both", expand=True, padx=5)
-
-    team_a_tree = ttk.Treeview(team_a_frame, columns=("name", "rating"), show="headings", height=6)
-    team_a_tree.heading("name", text="Player")
-    team_a_tree.heading("rating", text="Rating")
-    team_a_tree.pack(fill="both", expand=True)
-
-    team_b_tree = ttk.Treeview(team_b_frame, columns=("name", "rating"), show="headings", height=6)
-    team_b_tree.heading("name", text="Player")
-    team_b_tree.heading("rating", text="Rating")
-    team_b_tree.pack(fill="both", expand=True)
-
-    team_a_total = tk.Label(team_a_frame, text="Total: 0", bg="#e8f1ff", font=("Segoe UI", 9, "bold"))
-    team_a_total.pack(pady=4)
-
-    team_b_total = tk.Label(team_b_frame, text="Total: 0", bg="#ffecec", font=("Segoe UI", 9, "bold"))
-    team_b_total.pack(pady=4)
-
-    balance_frame = tk.Frame(parent)
-    balance_frame.pack(pady=(0,10))
-
-    separator = ttk.Separator(balance_frame, orient="horizontal")
-    separator.pack(fill="x", pady=5)
-
-    diff_label = tk.Label(balance_frame, text="Rating Difference: 0", font=("Segoe UI", 10, "bold"))
-    diff_label.pack()
+    team_a_tree, team_b_tree, team_a_total, team_b_total, diff_label = create_results_view()
 
     refresh_players()

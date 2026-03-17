@@ -178,6 +178,12 @@ def player_exists(steam_id):
 
         return cur.fetchone() is not None
     
+def upsert_player(player):
+    if player_exists(player["steam64_id"]):
+        update_player(player)
+    else:
+        insert_player(player)
+
 # map database
 def get_maps():
 
