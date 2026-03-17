@@ -153,6 +153,25 @@ def _fetch_leetify_profile_html(steam_id):
 
     return html
 
+def _get_steam_name(steam_id):
+
+    url = f"https://steamcommunity.com/profiles/{steam_id}?xml=1"
+
+    try:
+        r = requests.get(url, timeout=5)
+
+        if r.status_code != 200:
+            return steam_id
+
+        root = ET.fromstring(r.text)
+
+        name = root.findtext("steamID")
+
+        return name if name else steam_id
+
+    except Exception:
+        return steam_id
+    
 def _get_leetify_profile_fallback(steam_id):
 
     html = _fetch_leetify_profile_html(steam_id)
@@ -165,10 +184,16 @@ def _get_leetify_profile_fallback(steam_id):
     #  case - alex
     if not player:
         logger.log_warning(f"Fallback failed, using default rating for {steam_id}")
+        # try to get player name from steam profile as a last resort
+        name = _get_steam_name(steam_id)
+        print(f"Using name '{name}' for steam ID {steam_id}")
+        if not name:
+            name = steam_id
+
         return {
             "steam64_id": steam_id,
             "leetify_id": None,
-            "name": steam_id,
+            "name": name,
             "premier_rating": DEFAULT_RATING, 
             "leetify_rating": None,
             "total_matches": None,

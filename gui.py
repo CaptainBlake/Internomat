@@ -22,6 +22,6 @@ def start_gui():
     notebook.add(map_tab, text="Map Roulette")
 
     build_team_tab(root, team_tab)
-    build_map_tab(root, map_tab)
+    build_map_tab(map_tab)
 
     root.mainloop()
