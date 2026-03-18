@@ -1,410 +1,423 @@
-import tkinter as tk
-from tkinter import messagebox, ttk
+import threading
+
+from PySide6.QtCore import Qt, Signal, QObject
+from PySide6.QtWidgets import (
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QMessageBox,
+    QSlider,
+    QTableWidget,
+    QTableWidgetItem,
+    QHeaderView,
+    QFrame,
+)
 
 import db
-import threading
 import crawler
 import core
 
-BALANCED_THRESHOLD = 2500
-ACCEPTABLE_THRESHOLD = 5000
 
 update_running = False
 
 
-def sort_treeview(tree, col, reverse):
-    data = [(tree.set(k, col), k) for k in tree.get_children('')]
-
-    if col == "rating":
-        data.sort(key=lambda x: int(x[0]), reverse=reverse)
-    else:
-        data.sort(key=lambda x: x[0].lower(), reverse=reverse)
-
-    for index, (val, k) in enumerate(data):
-        tree.move(k, '', index)
-
-    tree.heading(col, command=lambda: sort_treeview(tree, col, not reverse))
+class UiDispatcher(QObject):
+    add_player_success = Signal(object)
+    add_player_error = Signal(object)
+    update_progress = Signal(int, int)
+    update_player_ready = Signal(object)
+    update_finished = Signal()
+    update_error = Signal(object)
 
 
-def build_team_tab(root, parent):
+def build_team_tab(parent):
+    dispatcher = UiDispatcher(parent)
 
-    tolerance_var = tk.IntVar(value=1000)
+    layout = QVBoxLayout(parent)
+    layout.setContentsMargins(20, 20, 20, 20)
+    layout.setSpacing(10)
 
-    # --- ASYNC ---
-    def run_async(task, on_success=None, on_error=None):
-        def wrapper():
-            try:
-                result = task()
-                if on_success:
-                    root.after(0, lambda: on_success(result))
-            except Exception as e:
-                if on_error:
-                    root.after(0, lambda: on_error(e))
+    top_frame = QFrame()
+    top_layout = QHBoxLayout(top_frame)
+    top_layout.setContentsMargins(0, 0, 0, 0)
+    top_layout.setSpacing(8)
 
-        threading.Thread(target=wrapper, daemon=True).start()
+    entry = QLineEdit()
+    entry.setPlaceholderText("Steam profile URL")
 
-    # --- PLAYER DATABASE ---
+    add_button = QPushButton("Add Player")
+    update_button = QPushButton("Update")
+
+    top_layout.addWidget(entry, 1)
+    top_layout.addWidget(add_button)
+    top_layout.addWidget(update_button)
+    layout.addWidget(top_frame)
+
+    lists_frame = QFrame()
+    lists_layout = QHBoxLayout(lists_frame)
+    lists_layout.setContentsMargins(0, 0, 0, 0)
+    lists_layout.setSpacing(10)
+
+    db_tree = QTableWidget(0, 2)
+    db_tree.setHorizontalHeaderLabels(["Player", "Rating"])
+    db_tree.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+    db_tree.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+    db_tree.verticalHeader().setVisible(False)
+    db_tree.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+    db_tree.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+
+    pool_tree = QTableWidget(0, 3)
+    pool_tree.setHorizontalHeaderLabels(["#", "Player", "Rating"])
+    pool_tree.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+    pool_tree.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+    pool_tree.verticalHeader().setVisible(False)
+    pool_tree.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+    pool_tree.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+    pool_tree.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+
+    btn_frame = QFrame()
+    btn_layout = QVBoxLayout(btn_frame)
+    btn_layout.setContentsMargins(0, 0, 0, 0)
+    btn_layout.setSpacing(8)
+
+    add_to_pool_button = QPushButton(">")
+    remove_from_pool_button = QPushButton("<")
+    add_to_pool_button.setFixedWidth(44)
+    remove_from_pool_button.setFixedWidth(44)
+
+    btn_layout.addStretch(1)
+    btn_layout.addWidget(add_to_pool_button, alignment=Qt.AlignmentFlag.AlignHCenter)
+    btn_layout.addWidget(remove_from_pool_button, alignment=Qt.AlignmentFlag.AlignHCenter)
+    btn_layout.addStretch(1)
+
+    lists_layout.addWidget(db_tree, 2)
+    lists_layout.addWidget(btn_frame, 0)
+    lists_layout.addWidget(pool_tree, 2)
+    layout.addWidget(lists_frame, 1)
+
+    control_frame = QFrame()
+    control_frame.setStyleSheet("""
+        QFrame {
+            background: #ECEFF1;
+            border-radius: 12px;
+        }
+    """)
+    control_layout = QHBoxLayout(control_frame)
+    control_layout.setContentsMargins(16, 12, 16, 12)
+    control_layout.setSpacing(10)
+
+    tolerance_value = QLabel("1000")
+    tolerance_value.setFixedWidth(50)
+    tolerance_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    tolerance_slider = QSlider(Qt.Orientation.Horizontal)
+    tolerance_slider.setRange(0, 5000)
+    tolerance_slider.setValue(1000)
+    tolerance_slider.setFixedWidth(240)
+
+    def update_tolerance_value(value):
+        tolerance_value.setText(str(value))
+
+    tolerance_slider.valueChanged.connect(update_tolerance_value)
+    update_tolerance_value(tolerance_slider.value())
+
+    generate_button = QPushButton("Generate Teams")
+
+    control_layout.addStretch(1)
+    control_layout.addWidget(QLabel("Tolerance:"))
+    control_layout.addWidget(tolerance_value)
+    control_layout.addWidget(tolerance_slider)
+    control_layout.addWidget(generate_button)
+    control_layout.addStretch(1)
+    layout.addWidget(control_frame)
+
+    result_frame = QFrame()
+    result_layout = QHBoxLayout(result_frame)
+    result_layout.setContentsMargins(0, 0, 0, 0)
+    result_layout.setSpacing(10)
+
+    ct_frame = QFrame()
+    t_frame = QFrame()
+
+    ct_layout = QVBoxLayout(ct_frame)
+    t_layout = QVBoxLayout(t_frame)
+
+    ct_title = QLabel("Counter Terrorists")
+    t_title = QLabel("Terrorists")
+    ct_total = QLabel("Total: 0")
+    t_total = QLabel("Total: 0")
+
+    team_a_tree = QTableWidget(0, 2)
+    team_b_tree = QTableWidget(0, 2)
+
+    for tree in (team_a_tree, team_b_tree):
+        tree.setHorizontalHeaderLabels(["Player", "Rating"])
+        tree.verticalHeader().setVisible(False)
+        tree.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        tree.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        tree.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+
+    ct_layout.addWidget(ct_title)
+    ct_layout.addWidget(team_a_tree, 1)
+    ct_layout.addWidget(ct_total)
+
+    t_layout.addWidget(t_title)
+    t_layout.addWidget(team_b_tree, 1)
+    t_layout.addWidget(t_total)
+
+    result_layout.addWidget(ct_frame, 1)
+    result_layout.addWidget(t_frame, 1)
+    layout.addWidget(result_frame, 1)
+
+    diff_label = QLabel("Rating Difference: 0")
+    diff_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    layout.addWidget(diff_label)
+
     def refresh_players():
-        for row in db_tree.get_children():
-            db_tree.delete(row)
-
+        db_tree.setRowCount(0)
         for p in db.get_players():
-            db_tree.insert("", "end", iid=str(p[0]), values=(p[1], p[2]))
+            row = db_tree.rowCount()
+            db_tree.insertRow(row)
+
+            name_item = QTableWidgetItem(str(p[1]))
+            name_item.setData(Qt.ItemDataRole.UserRole, str(p[0]))
+
+            rating_item = QTableWidgetItem(str(p[2]))
+            rating_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            db_tree.setItem(row, 0, name_item)
+            db_tree.setItem(row, 1, rating_item)
+
+    def refresh_pool_display():
+        for i in range(pool_tree.rowCount()):
+            pool_tree.item(i, 0).setText(str(i + 1))
+
+    def clear_table(table):
+        table.setRowCount(0)
+
+    def get_pool_players():
+        players = []
+        for row in range(pool_tree.rowCount()):
+            pid = str(pool_tree.item(row, 0).data(Qt.ItemDataRole.UserRole))
+            name = pool_tree.item(row, 1).text()
+            rating = int(pool_tree.item(row, 2).text())
+            players.append((pid, name, rating))
+        return players
+
+    def show_error(title, text):
+        QMessageBox.critical(parent, title, text)
+
+    def show_info(title, text):
+        QMessageBox.information(parent, title, text)
 
     def add_player():
-        url = entry.get().strip()
-
+        url = entry.text().strip()
         if not url:
-            messagebox.showerror("Error", "Enter Steam profile URL")
+            show_error("Error", "Enter Steam profile URL")
             return
 
-        add_button.config(state="disabled")
+        add_button.setEnabled(False)
 
-        def task():
-            return crawler.fetch_player(url)
+        def worker():
+            try:
+                player = crawler.fetch_player(url)
+                dispatcher.add_player_success.emit(player)
+            except Exception as e:
+                dispatcher.add_player_error.emit(e)
 
-        def success(player):
-            db.upsert_player(player)
-            refresh_players()
-            entry.delete(0, tk.END)
-            add_button.config(state="normal")
+        threading.Thread(target=worker, daemon=True).start()
 
-        def error(e):
-            messagebox.showerror("Error", str(e))
-            add_button.config(state="normal")
-
-        run_async(task, success, error)
-
-    def remove_player():
-        selected = db_tree.selection()
-
-        if not selected:
-            messagebox.showerror("Error", "Select a player to remove")
-            return
-
-        confirm = messagebox.askyesno("Confirm", "Remove selected player(s) from database?")
-        if not confirm:
-            return
-
-        for item in selected:
-            db.delete_player(item)
-            if pool_tree.exists(item):
-                pool_tree.delete(item)
-
+    def on_add_player_success(player):
+        db.upsert_player(player)
         refresh_players()
+        entry.clear()
+        add_button.setEnabled(True)
 
-    def update_players():
+    def on_add_player_error(e):
+        show_error("Error", str(e))
+        add_button.setEnabled(True)
 
-        def success(_):
-            finish()
+    dispatcher.add_player_success.connect(on_add_player_success)
+    dispatcher.add_player_error.connect(on_add_player_error)
 
-        def error(e):
-            messagebox.showerror("Error", str(e))
-            finish()
-
-        def finish():
-            global update_running
-            update_running = False
-            update_button.config(state="normal")
-            update_button.config(text="Update")
-
-        global update_running
-
-        if update_running:
-            messagebox.showinfo("Update", "Update already running")
-            return
-
-        update_running = True
-        update_button.config(state="disabled", text="Updating...")
-
-        steam_ids = db.get_players_to_update()
-
-        if not steam_ids:
-            messagebox.showinfo("Update", "All players were updated recently.\nTry again later.")
-            update_running = False
-            finish()
-            return
-
-        total = len(steam_ids)
-        update_button.config(text=f"Updating 0/{total}")
-
-        def task():
-
-            def progress(i, total):
-                root.after(0, lambda: update_button.config(text=f"Updating {i}/{total}"))
-
-            def handle_player(player):
-                if player:
-                    root.after(0, lambda: db.update_player(player))
-                    root.after(0, refresh_players)
-
-            return crawler.fetch_players_bulk(
-                steam_ids,
-                on_progress=progress,
-                on_player=handle_player
-            )
-
-        run_async(task, success, error)
-
-    # --- POOL ---
     def add_to_pool():
-        for item in db_tree.selection():
-            values = db_tree.item(item)["values"]
+        selected_rows = db_tree.selectionModel().selectedRows()
+        for row in selected_rows:
+            pid_item = db_tree.item(row.row(), 0)
+            rating_item = db_tree.item(row.row(), 1)
 
-            if not pool_tree.exists(item):
-                pool_tree.insert("", "end", iid=item, values=("", values[0], values[1]))
+            pid = str(pid_item.data(Qt.ItemDataRole.UserRole))
+            name = pid_item.text()
+            rating = rating_item.text()
+
+            if any(str(pool_tree.item(r, 0).data(Qt.ItemDataRole.UserRole)) == pid for r in range(pool_tree.rowCount())):
+                continue
+
+            new_row = pool_tree.rowCount()
+            pool_tree.insertRow(new_row)
+
+            index_item = QTableWidgetItem(str(new_row + 1))
+            index_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            index_item.setData(Qt.ItemDataRole.UserRole, pid)
+
+            name_item = QTableWidgetItem(name)
+            rating_out = QTableWidgetItem(str(rating))
+            rating_out.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            pool_tree.setItem(new_row, 0, index_item)
+            pool_tree.setItem(new_row, 1, name_item)
+            pool_tree.setItem(new_row, 2, rating_out)
 
         refresh_pool_display()
 
     def remove_from_pool():
-        for item in pool_tree.selection():
-            pool_tree.delete(item)
-
+        rows = sorted({r.row() for r in pool_tree.selectionModel().selectedRows()}, reverse=True)
+        for row in rows:
+            pool_tree.removeRow(row)
         refresh_pool_display()
 
-    def get_pool_players():
-        players = []
+    def remove_player():
+        rows = sorted({r.row() for r in db_tree.selectionModel().selectedRows()}, reverse=True)
+        if not rows:
+            show_error("Error", "Select a player to remove")
+            return
 
-        for item in pool_tree.get_children():
-            values = pool_tree.item(item)["values"]
-            players.append((item, values[1], int(values[2])))
+        confirm = QMessageBox.question(
+            parent,
+            "Confirm",
+            "Remove selected player(s) from database?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
 
-        return players
+        ids = []
+        for row in rows:
+            pid = db_tree.item(row, 0).data(Qt.ItemDataRole.UserRole)
+            ids.append(str(pid))
 
-    def refresh_pool_display():
-        for i, item in enumerate(pool_tree.get_children(), start=1):
-            values = pool_tree.item(item)["values"]
-            tag = "even" if i % 2 == 0 else "odd"
+        for pid in ids:
+            db.delete_player(pid)
+            for row in range(pool_tree.rowCount() - 1, -1, -1):
+                if str(pool_tree.item(row, 0).data(Qt.ItemDataRole.UserRole)) == pid:
+                    pool_tree.removeRow(row)
 
-            pool_tree.item(item, values=(i, values[1], values[2]), tags=(tag,))
+        refresh_players()
+        refresh_pool_display()
 
-    # --- BALANCER ---
+    def update_players():
+        global update_running
+
+        if update_running:
+            show_info("Update", "Update already running")
+            return
+
+        update_running = True
+        update_button.setEnabled(False)
+        update_button.setText("Updating...")
+
+        steam_ids = db.get_players_to_update()
+        if not steam_ids:
+            show_info("Update", "All players were updated recently.\nTry again later.")
+            update_running = False
+            update_button.setEnabled(True)
+            update_button.setText("Update")
+            return
+
+        total = len(steam_ids)
+        update_button.setText(f"Updating 0/{total}")
+
+        def on_progress(i, total_count):
+            update_button.setText(f"Updating {i}/{total_count}")
+
+        def on_player(player):
+            if player:
+                db.update_player(player)
+                refresh_players()
+
+        def finish():
+            global update_running
+            update_running = False
+            update_button.setEnabled(True)
+            update_button.setText("Update")
+
+        def on_error(e):
+            show_error("Error", str(e))
+            finish()
+
+        def worker():
+            try:
+                for i, steam_id in enumerate(steam_ids, start=1):
+                    try:
+                        player = crawler.get_leetify_player(steam_id)
+                        dispatcher.update_player_ready.emit(player)
+                    except Exception as e:
+                        dispatcher.update_error.emit(e)
+                        return
+                    dispatcher.update_progress.emit(i, total)
+                dispatcher.update_finished.emit()
+            except Exception as e:
+                dispatcher.update_error.emit(e)
+
+        dispatcher.update_progress.connect(on_progress)
+        dispatcher.update_player_ready.connect(on_player)
+        dispatcher.update_error.connect(on_error)
+        dispatcher.update_finished.connect(finish)
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def run_balancer():
-
         players = get_pool_players()
 
         if len(players) < 2:
-            messagebox.showerror("Error", "Add players to pool first")
+            show_error("Error", "Add players to pool first")
             return
 
         if len(players) % 2 != 0:
-            messagebox.showerror("Error", "Player count must be even")
+            show_error("Error", "Player count must be even")
             return
 
-        tolerance = tolerance_var.get()
-
+        tolerance = tolerance_slider.value()
         (team_a, team_b), diff = core.balance_teams(players, tolerance=tolerance)
 
-        for row in team_a_tree.get_children():
-            team_a_tree.delete(row)
-
-        for row in team_b_tree.get_children():
-            team_b_tree.delete(row)
+        clear_table(team_a_tree)
+        clear_table(team_b_tree)
 
         team_a = sorted(team_a, key=lambda p: p[2], reverse=True)
         team_b = sorted(team_b, key=lambda p: p[2], reverse=True)
 
         sum_a = 0
         for p in team_a:
-            team_a_tree.insert("", "end", values=(p[1], p[2]))
+            row = team_a_tree.rowCount()
+            team_a_tree.insertRow(row)
+            team_a_tree.setItem(row, 0, QTableWidgetItem(p[1]))
+            rating_item = QTableWidgetItem(str(p[2]))
+            rating_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            team_a_tree.setItem(row, 1, rating_item)
             sum_a += p[2]
 
         sum_b = 0
         for p in team_b:
-            team_b_tree.insert("", "end", values=(p[1], p[2]))
+            row = team_b_tree.rowCount()
+            team_b_tree.insertRow(row)
+            team_b_tree.setItem(row, 0, QTableWidgetItem(p[1]))
+            rating_item = QTableWidgetItem(str(p[2]))
+            rating_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            team_b_tree.setItem(row, 1, rating_item)
             sum_b += p[2]
 
-        team_a_total.config(text=f"Total: {sum_a}")
-        team_b_total.config(text=f"Total: {sum_b}")
+        ct_total.setText(f"Total: {sum_a}")
+        t_total.setText(f"Total: {sum_b}")
+        diff_label.setText(f"Rating Difference: {diff}")
 
-        if diff < BALANCED_THRESHOLD:
-            color = "green"
-            text = f"Balanced ✔  (Difference: {diff})"
-        elif diff < ACCEPTABLE_THRESHOLD:
-            color = "orange"
-            text = f"Acceptable ⚠  (Difference: {diff})"
-        else:
-            color = "red"
-            text = f"Unbalanced ✖  (Difference: {diff})"
-
-        diff_label.config(text=text, fg=color)
-
-    # --- UI ---
-    def create_top_controls():
-        top_frame = tk.Frame(parent)
-        top_frame.pack(fill="x", padx=10, pady=10)
-
-        def limit_length(new_value):
-            return len(new_value) <= 80
-
-        vcmd = root.register(limit_length)
-
-        entry = tk.Entry(top_frame, validate="key", validatecommand=(vcmd, "%P"))
-        entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
-
-        add_button = tk.Button(top_frame, text="Add Player", command=add_player)
-        add_button.pack(side="left", padx=5)
-
-        tk.Button(top_frame, text="Remove Player", command=remove_player).pack(side="left", padx=5)
-
-        update_button = tk.Button(top_frame, text="Update", command=update_players)
-        update_button.pack(side="left", padx=5)
-
-        return entry, add_button, update_button
-
-    def create_database_view(lists_frame):
-        db_frame = tk.Frame(lists_frame)
-        db_frame.pack(side="left", fill="both", expand=True)
-
-        tk.Label(db_frame, text="Player Database").pack()
-
-        db_tree = ttk.Treeview(
-            db_frame,
-            columns=("name", "rating"),
-            show="headings",
-            selectmode="extended"
-        )
-
-        db_tree.heading("name", text="Player", command=lambda: sort_treeview(db_tree, "name", False))
-        db_tree.heading("rating", text="Rating", command=lambda: sort_treeview(db_tree, "rating", True))
-
-        db_tree.bind("<Double-1>", lambda e: add_to_pool() if db_tree.selection() else None)
-
-        db_scroll = ttk.Scrollbar(db_frame, orient="vertical", command=db_tree.yview)
-        db_tree.configure(yscrollcommand=db_scroll.set)
-
-        db_scroll.pack(side="right", fill="y")
-        db_tree.pack(fill="both", expand=True)
-
-        return db_tree
-
-    def create_pool_view(lists_frame):
-        pool_frame = tk.Frame(lists_frame)
-        pool_frame.pack(side="left", fill="both", expand=True)
-
-        tk.Label(pool_frame, text="Player Pool").pack()
-
-        pool_tree = ttk.Treeview(
-            pool_frame,
-            columns=("index", "name", "rating"),
-            show="headings",
-            selectmode="extended"
-        )
-
-        pool_tree.heading("index", text="#")
-        pool_tree.heading("name", text="Player", command=lambda: sort_treeview(pool_tree, "name", False))
-        pool_tree.heading("rating", text="Rating", command=lambda: sort_treeview(pool_tree, "rating", True))
-
-        pool_tree.column("index", width=40, anchor="center")
-        pool_tree.column("name", width=140)
-        pool_tree.column("rating", width=80, anchor="center")
-
-        pool_tree.tag_configure("even", background="#f2f2f2")
-        pool_tree.tag_configure("odd", background="#ffffff")
-
-        pool_scroll = ttk.Scrollbar(pool_frame, orient="vertical", command=pool_tree.yview)
-        pool_tree.configure(yscrollcommand=pool_scroll.set)
-
-        pool_tree.bind("<Double-1>", lambda e: remove_from_pool() if pool_tree.selection() else None)
-
-        def on_drag_start(event):
-            pool_tree._drag_item = pool_tree.identify_row(event.y)
-
-        def on_drag_motion(event):
-            row = pool_tree.identify_row(event.y)
-            if row and hasattr(pool_tree, "_drag_item"):
-                if row != pool_tree._drag_item:
-                    pool_tree.move(pool_tree._drag_item, "", pool_tree.index(row))
-
-        def on_drag_drop(event):
-            refresh_pool_display()
-
-        pool_tree.bind("<ButtonPress-1>", on_drag_start)
-        pool_tree.bind("<B1-Motion>", on_drag_motion)
-        pool_tree.bind("<ButtonRelease-1>", on_drag_drop)
-
-        pool_scroll.pack(side="right", fill="y")
-        pool_tree.pack(fill="both", expand=True)
-
-        return pool_tree
-
-    def create_mid_controls(lists_frame):
-        mid_frame = tk.Frame(lists_frame)
-        mid_frame.pack(side="left", padx=10)
-
-        tk.Button(mid_frame, text=">", width=4, command=add_to_pool).pack(pady=5)
-        tk.Button(mid_frame, text="<", width=4, command=remove_from_pool).pack(pady=5)
-
-    def create_results_view():
-        control_frame = tk.Frame(parent)
-        control_frame.pack(pady=10)
-
-        tk.Label(control_frame, text="Tolerance:", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-
-        tolerance_label = tk.Label(control_frame, text=str(tolerance_var.get()), width=5)
-        tolerance_label.pack(side="left", padx=(0, 5))
-
-        tolerance_slider = tk.Scale(
-            control_frame,
-            from_=0,
-            to=5000,
-            orient="horizontal",
-            variable=tolerance_var,
-            showvalue=False,
-            length=100
-        )
-        tolerance_slider.pack(side="left", padx=5)
-
-        def update_tolerance_label(val):
-            tolerance_label.config(text=str(int(val)))
-
-        tolerance_slider.config(command=update_tolerance_label)
-
-        tk.Button(control_frame, text="Generate Teams", command=run_balancer).pack(side="left", padx=10)
-
-        result_frame = tk.Frame(parent)
-        result_frame.pack(fill="both", padx=10, pady=10)
-
-        team_a_frame = tk.LabelFrame(result_frame, text="Counter Terrorists", bg="#bfd7ff", padx=5, pady=5)
-        team_a_frame.pack(side="left", fill="both", expand=True, padx=5)
-
-        team_b_frame = tk.LabelFrame(result_frame, text="Terrorists", bg="#ffc4c4", padx=5, pady=5)
-        team_b_frame.pack(side="left", fill="both", expand=True, padx=5)
-
-        team_a_tree = ttk.Treeview(team_a_frame, columns=("name", "rating"), show="headings", height=6)
-        team_b_tree = ttk.Treeview(team_b_frame, columns=("name", "rating"), show="headings", height=6)
-
-        for tree in (team_a_tree, team_b_tree):
-            tree.heading("name", text="Player")
-            tree.heading("rating", text="Rating")
-            tree.pack(fill="both", expand=True)
-
-        team_a_total = tk.Label(team_a_frame, text="Total: 0", bg="#e8f1ff", font=("Segoe UI", 9, "bold"))
-        team_a_total.pack(pady=4)
-
-        team_b_total = tk.Label(team_b_frame, text="Total: 0", bg="#ffecec", font=("Segoe UI", 9, "bold"))
-        team_b_total.pack(pady=4)
-
-        balance_frame = tk.Frame(parent)
-        balance_frame.pack(pady=(0, 10))
-
-        ttk.Separator(balance_frame, orient="horizontal").pack(fill="x", pady=5)
-
-        diff_label = tk.Label(balance_frame, text="Rating Difference: 0", font=("Segoe UI", 10, "bold"))
-        diff_label.pack()
-
-        return team_a_tree, team_b_tree, team_a_total, team_b_total, diff_label
-
-    # --- BUILD ---
-    entry, add_button, update_button = create_top_controls()
-
-    lists_frame = tk.Frame(parent)
-    lists_frame.pack(fill="both", expand=True, padx=10, pady=5)
-
-    db_tree = create_database_view(lists_frame)
-    create_mid_controls(lists_frame)
-    pool_tree = create_pool_view(lists_frame)
-
-    team_a_tree, team_b_tree, team_a_total, team_b_total, diff_label = create_results_view()
+    add_button.clicked.connect(add_player)
+    update_button.clicked.connect(update_players)
+    add_to_pool_button.clicked.connect(add_to_pool)
+    remove_from_pool_button.clicked.connect(remove_from_pool)
+    generate_button.clicked.connect(run_balancer)
+    db_tree.itemDoubleClicked.connect(lambda _: add_to_pool())
+    pool_tree.itemDoubleClicked.connect(lambda _: remove_from_pool())
 
     refresh_players()

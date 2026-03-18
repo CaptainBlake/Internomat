@@ -1,179 +1,284 @@
-import tkinter as tk
-from tkinter import messagebox, ttk
+import math
+import random
+
+from PySide6.QtCore import Qt, QEasingCurve, Property, QPointF, QPropertyAnimation
+from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QPainterPath
+from PySide6.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QFrame,
+)
 
 import db
 import core
 
 
-def build_map_tab(parent):
+class WheelWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._rotation = 0.0
+        self.highlight_index = None
+        self.animation = None
+        self.setMinimumSize(520, 520)
+        self.spin_callback = None
 
-    # --- DATA FUNCTIONS ---
+    def getRotation(self):
+        return self._rotation
 
-    def refresh_maps():
-        for row in map_list.get_children():
-            map_list.delete(row)
+    def setRotation(self, value):
+        self._rotation = float(value) % 360.0
+        self.update()
 
-        for m in db.get_maps():
-            map_list.insert("", "end", iid=m, values=(m,))
+    rotation = Property(float, getRotation, setRotation)
 
-
-    def add_map():
-        name = entry.get().strip()
-
-        if not name:
+    def mousePressEvent(self, event):
+        if self.spin_callback is None:
             return
 
-        db.add_map(name)
-        entry.delete(0, tk.END)
-        refresh_maps()
+        rect = self.rect().adjusted(24, 24, -24, -24)
+        size = min(rect.width(), rect.height())
+        cx = rect.center().x()
+        cy = rect.center().y()
 
+        center_radius = 42
+        dx = event.position().x() - cx
+        dy = event.position().y() - cy
+        distance = math.hypot(dx, dy)
 
-    def remove_map():
-        selected = map_list.selection()
+        if distance <= center_radius:
+            self.spin_callback()
 
-        if not selected:
-            return
+    def color_for_index(self, i):
+        palette = [
+            "#1E88E5", "#E53935", "#43A047", "#8E24AA",
+            "#FB8C00", "#00ACC1", "#6D4C41", "#546E7A",
+            "#D81B60", "#5E35B1",
+        ]
+        return QColor(palette[i % len(palette)])
 
-        for item in selected:
-            db.delete_map(item)
-
-        refresh_maps()
-
-
-    def spin():
+    def paintEvent(self, event):
         maps = db.get_maps()
 
-        try:
-            winner = core.choose_random_map(maps)
-        except ValueError as e:
-            messagebox.showerror("Error", str(e))
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+
+        painter.fillRect(self.rect(), self.palette().window())
+
+        rect = self.rect().adjusted(24, 24, -24, -24)
+        size = min(rect.width(), rect.height())
+        cx = rect.center().x()
+        cy = rect.center().y()
+        radius = int(size * 0.42)
+
+        if not maps:
+            painter.setBrush(QColor("#CFD8DC"))
+            painter.setPen(QPen(QColor("#B0BEC5"), 3))
+            painter.drawEllipse(cx - radius, cy - radius, radius * 2, radius * 2)
+
+            font = QFont("Segoe UI", 12)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.setPen(QColor("#455A64"))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No maps available")
             return
 
-        result_label.config(text=f"Selected Map: {winner}")
+        angle_per_item = 360.0 / len(maps)
+        start_angle = self._rotation
+
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor("#B0BEC5"), 3))
+        painter.drawEllipse(cx - radius - 6, cy - radius - 6, radius * 2 + 12, radius * 2 + 12)
+
+        font = QFont("Segoe UI", 11)
+        font.setBold(True)
+        painter.setFont(font)
+
+        for i, map_name in enumerate(maps):
+            fill = self.color_for_index(i).lighter(115)
+            if self.highlight_index is not None and i == self.highlight_index:
+                fill = QColor("#FFD54F")
+
+            painter.setBrush(QBrush(fill))
+            painter.setPen(QPen(QColor("#FFFFFF"), 2))
+            painter.drawPie(
+                cx - radius, cy - radius, radius * 2, radius * 2,
+                int((-start_angle) * 16), int((-angle_per_item) * 16)
+            )
+
+            mid_angle_deg = start_angle + angle_per_item / 2.0
+            mid_angle_rad = math.radians(mid_angle_deg)
+            text_radius = radius * 0.66
+
+            tx = cx + math.cos(mid_angle_rad) * text_radius
+            ty = cy + math.sin(mid_angle_rad) * text_radius
+
+            label = map_name.replace("de_", "")
+            painter.setPen(QColor("#FFFFFF"))
+            painter.drawText(int(tx - 80), int(ty - 10), 160, 20, Qt.AlignmentFlag.AlignCenter, label)
+
+            start_angle += angle_per_item
+
+        center_radius = 42
+        painter.setBrush(QColor("#CFD8DC"))
+        painter.setPen(QPen(QColor("#B0BEC5"), 2))
+        painter.drawEllipse(cx - center_radius, cy - center_radius, center_radius * 2, center_radius * 2)
+
+        font = QFont("Segoe UI", 11)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QColor("#455A64"))
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "SPIN")
+
+        painter.setBrush(QColor("#263238"))
+        painter.setPen(Qt.PenStyle.NoPen)
+        path = QPainterPath()
+        path.moveTo(cx, cy - radius - 8)
+        path.lineTo(cx - 12, cy - radius - 32)
+        path.lineTo(cx + 12, cy - radius - 32)
+        path.closeSubpath()
+        painter.drawPath(path)
+
+        if self.highlight_index is not None:
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor("#FFD54F"), 4))
+            painter.drawEllipse(cx - radius - 12, cy - radius - 12, radius * 2 + 24, radius * 2 + 24)
 
 
-    # --- WHEEL AREA ---
+def build_map_tab(parent):
+    layout = QVBoxLayout(parent)
+    layout.setContentsMargins(24, 24, 24, 24)
+    layout.setSpacing(14)
 
-    def create_wheel_area():
-        wheel_frame = tk.Frame(parent)
-        wheel_frame.pack(pady=20)
+    title = QLabel("Map Roulette")
+    title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    title.setStyleSheet("font-size: 16px; font-weight: 700;")
+    layout.addWidget(title)
 
-        tk.Label(
-            wheel_frame,
-            text="Map Roulette",
-            font=("Segoe UI", 11, "bold")
-        ).pack()
+    wheel = WheelWidget()
+    layout.addWidget(wheel, 2, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-        canvas = tk.Canvas(
-            wheel_frame,
-            width=350,
-            height=350,
-            bg="white"
-        )
-        canvas.pack(pady=10)
+    result_label = QLabel("Selected Map: -")
+    result_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    result_label.setStyleSheet("font-size: 12px; font-weight: 700;")
+    layout.addWidget(result_label)
 
-        canvas.create_text(
-            175,
-            175,
-            text="Wheel\n(coming soon)",
-            font=("Segoe UI", 11),
-            justify="center"
-        )
+    controls = QHBoxLayout()
+    controls.setSpacing(10)
 
-        tk.Button(
-            wheel_frame,
-            text="Spin",
-            command=spin
-        ).pack(pady=5)
+    entry = QLineEdit()
+    entry.setPlaceholderText("Add map name")
+    controls.addWidget(entry, 1)
 
-        result_label = tk.Label(
-            wheel_frame,
-            text="Selected Map: -",
-            font=("Segoe UI", 10, "bold")
-        )
-        result_label.pack()
+    add_button = QPushButton("Add")
+    remove_button = QPushButton("Remove")
+    spin_button = QPushButton("Spin")
 
-        return canvas, result_label
+    controls.addWidget(add_button)
+    controls.addWidget(remove_button)
+    controls.addWidget(spin_button)
+    layout.addLayout(controls)
 
+    list_frame = QFrame()
+    list_frame.setStyleSheet("""
+        QFrame {
+            background: #ECEFF1;
+            border-radius: 12px;
+        }
+    """)
+    list_layout = QVBoxLayout(list_frame)
+    list_layout.setContentsMargins(12, 12, 12, 12)
 
-    # --- MAP POOL ---
+    map_list = QListWidget()
+    map_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+    list_layout.addWidget(map_list)
+    layout.addWidget(list_frame, 1)
 
-    def create_map_pool(bottom_frame):
-        pool_frame = tk.Frame(bottom_frame)
-        pool_frame.pack(side="left", fill="both", expand=True)
+    current_rotation = 0.0
+    spinning = False
 
-        tk.Label(
-            pool_frame,
-            text="Map Pool",
-            font=("Segoe UI", 10)
-        ).pack()
+    def refresh_maps():
+        map_list.clear()
+        for m in db.get_maps():
+            map_list.addItem(QListWidgetItem(m))
+        wheel.update()
 
-        map_list = ttk.Treeview(
-            pool_frame,
-            columns=("name",),
-            show="headings",
-            height=6,
-            selectmode="extended"
-        )
+    def add_map():
+        name = entry.text().strip()
+        if not name:
+            return
+        db.add_map(name)
+        entry.clear()
+        refresh_maps()
 
-        map_list.heading("name", text="Map")
+    def remove_map():
+        items = map_list.selectedItems()
+        if not items:
+            return
+        for item in items:
+            db.delete_map(item.text())
+        refresh_maps()
 
-        scroll = ttk.Scrollbar(pool_frame, orient="vertical", command=map_list.yview)
-        map_list.configure(yscrollcommand=scroll.set)
+    def spin():
+        nonlocal current_rotation, spinning
 
-        scroll.pack(side="right", fill="y")
-        map_list.pack(fill="both", expand=True)
+        maps = db.get_maps()
+        if not maps:
+            QMessageBox.critical(parent, "Error", "No maps available")
+            return
+        if spinning:
+            return
 
-        return map_list
+        spinning = True
+        wheel.highlight_index = None
 
+        winner = core.choose_random_map(maps)
+        winner_index = maps.index(winner)
 
-    # --- MAP CONTROLS ---
+        angle_per_item = 360.0 / len(maps)
 
-    def create_map_controls(bottom_frame):
-        control_frame = tk.Frame(bottom_frame)
-        control_frame.pack(side="left", padx=20)
+        # Center angle of the winning slice in the wheel's coordinate system
+        winner_center_angle = winner_index * angle_per_item + angle_per_item / 2.0
 
-        tk.Label(
-            control_frame,
-            text="Add Map",
-            font=("Segoe UI", 10)
-        ).pack(pady=(0, 5))
+        # Pointer is at the top of the wheel (270° in this coordinate system)
+        pointer_angle = 270.0
 
-        entry = tk.Entry(control_frame, width=20)
-        entry.pack(pady=5)
+        # We need to rotate the wheel so the winner center ends up under the pointer
+        normalized_current = current_rotation % 360.0
+        target_rotation = (pointer_angle - winner_center_angle - normalized_current) % 360.0
 
-        tk.Button(
-            control_frame,
-            text="Add",
-            width=12,
-            command=add_map
-        ).pack(pady=5)
+        # Add a few full turns for the animation
+        extra_turns = random.randint(6, 9) * 360.0
+        final_rotation = current_rotation + extra_turns + target_rotation
 
-        tk.Button(
-            control_frame,
-            text="Remove",
-            width=12,
-            command=remove_map
-        ).pack(pady=5)
+        wheel.animation = QPropertyAnimation(wheel, b"rotation", parent)
+        wheel.animation.setDuration(7000)
+        wheel.animation.setStartValue(current_rotation)
+        wheel.animation.setEndValue(final_rotation)
+        wheel.animation.setEasingCurve(QEasingCurve.Type.OutCubic)
 
-        return entry
+        def finished():
+            nonlocal current_rotation, spinning
+            current_rotation = final_rotation % 360.0
+            wheel.highlight_index = winner_index
+            wheel.rotation = current_rotation
+            wheel.update()
+            result_label.setText(f"Selected Map: {winner}")
+            spinning = False
 
+        wheel.animation.finished.connect(finished)
+        result_label.setText("Spinning...")
+        wheel.animation.start()
 
-    # --- BOTTOM AREA ---
-
-    def create_bottom_area():
-        bottom_frame = tk.Frame(parent)
-        bottom_frame.pack(fill="both", expand=True, padx=20, pady=10)
-
-        map_list = create_map_pool(bottom_frame)
-        entry = create_map_controls(bottom_frame)
-
-        return map_list, entry
-
-
-    # --- BUILD UI ---
-
-    canvas, result_label = create_wheel_area()
-    map_list, entry = create_bottom_area()
+    add_button.clicked.connect(add_map)
+    remove_button.clicked.connect(remove_map)
+    spin_button.clicked.connect(spin)
 
     refresh_maps()
