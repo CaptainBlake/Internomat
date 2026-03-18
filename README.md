@@ -221,7 +221,7 @@ Internomat kann als standalone `.exe` gebaut werden.
 Build Command:
 
 ```bash
-python -m PyInstaller main.py --onefile --windowed --name Internomat_1.x.x --icon=assets/duck_icon.ico --collect-all selenium --add-data ".env;." --clean
+python -m PyInstaller main.py --onefile --windowed --name Internomat --icon=assets/duck_icon.ico --collect-all selenium --add-data ".env;." --clean
 ```
 
 Der Build erzeugt:
