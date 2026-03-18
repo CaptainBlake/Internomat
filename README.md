@@ -228,7 +228,7 @@ Der Build erzeugt:
 
 ```
 dist/
-  Internomat_1.x.x.exe
+  Internomat.exe
 ```
 ---
 
