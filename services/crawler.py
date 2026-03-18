@@ -14,7 +14,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 from dotenv import load_dotenv
-import logger
+import services.logger as logger
 
 # ENV & CONFIG
 def resource_path(relative_path):

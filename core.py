@@ -1,5 +1,5 @@
 import random
-import logger
+import services.logger as logger
 from itertools import combinations
 
 # TEAM BALANCING

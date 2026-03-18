@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 # INIT
 
 DB_FILE = "internomat.db"
-
+UPDATE_COOLDOWN_MINUTES = 0 # normal: 10 , debug: 0
 def get_conn():
     return sqlite3.connect(DB_FILE)
 
@@ -35,6 +35,45 @@ def init_db():
         )
         """)
 
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS matches (
+            match_id TEXT PRIMARY KEY,
+            created_at TEXT
+        )
+        """)
+
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS match_player_stats (
+            steamid64 TEXT,
+            match_id TEXT,
+            map_number INTEGER,
+
+            name TEXT,
+            team TEXT,
+
+            kills INTEGER,
+            deaths INTEGER,
+            assists INTEGER,
+            damage INTEGER,
+
+            headshots INTEGER,
+            flash_successes INTEGER,
+            enemies_flashed INTEGER,
+
+            entry_wins INTEGER,
+            entry_count INTEGER,
+
+            v1_wins INTEGER,
+            v1_count INTEGER,
+            v2_wins INTEGER,
+            v2_count INTEGER,
+
+            cash_earned INTEGER,
+
+            PRIMARY KEY (steamid64, match_id, map_number)
+        )
+        """)
+        
         cur = conn.execute("SELECT COUNT(*) FROM maps")
         count = cur.fetchone()[0]
 
@@ -53,6 +92,8 @@ def init_db():
                 "INSERT INTO maps(name) VALUES(?)",
                 [(m,) for m in default_maps]
             )
+
+        
 
 # PLAYER TABLE
 
@@ -134,7 +175,7 @@ def update_player(player):
             )
         )
 
-def get_players_to_update(max_age_minutes=10):
+def get_players_to_update(max_age_minutes=UPDATE_COOLDOWN_MINUTES):
 
     cutoff = (datetime.utcnow() - timedelta(minutes=max_age_minutes)).isoformat()
 
@@ -185,6 +226,61 @@ def upsert_player(player):
     else:
         insert_player(player)
 
+# MATCH TABLE
+
+def insert_match(match_id):
+    with get_conn() as conn:
+        conn.execute("""
+        INSERT OR IGNORE INTO matches (match_id, created_at)
+        VALUES (?, datetime('now'))
+        """, (match_id,))
+
+def insert_match_player_stats(data):
+    with get_conn() as conn:
+        conn.execute("""
+        INSERT OR REPLACE INTO match_player_stats (
+            steamid64,
+            match_id,
+            map_number,
+            name,
+            team,
+            kills,
+            deaths,
+            assists,
+            damage,
+            headshots,
+            flash_successes,
+            enemies_flashed,
+            entry_wins,
+            entry_count,
+            v1_wins,
+            v1_count,
+            v2_wins,
+            v2_count,
+            cash_earned
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            data["steamid64"],
+            data["match_id"],
+            data["map_number"],
+            data["name"],
+            data["team"],
+            data["kills"],
+            data["deaths"],
+            data["assists"],
+            data["damage"],
+            data["headshots"],
+            data["flash_successes"],
+            data["enemies_flashed"],
+            data["entry_wins"],
+            data["entry_count"],
+            data["v1_wins"],
+            data["v1_count"],
+            data["v2_wins"],
+            data["v2_count"],
+            data["cash_earned"],
+        ))
 
 # MAP TABLE
 

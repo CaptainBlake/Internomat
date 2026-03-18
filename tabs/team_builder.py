@@ -3,7 +3,8 @@ from tkinter import messagebox, ttk
 
 import db
 import threading
-import crawler
+import services.crawler as crawler
+import services.matchzy_db as matchzy
 import core
 
 BALANCED_THRESHOLD = 2500
@@ -39,7 +40,7 @@ def build_team_tab(root, parent):
                     root.after(0, lambda: on_success(result))
             except Exception as e:
                 if on_error:
-                    root.after(0, lambda: on_error(e))
+                    root.after(0, lambda e=e: on_error(e))
 
         threading.Thread(target=wrapper, daemon=True).start()
 
@@ -70,6 +71,7 @@ def build_team_tab(root, parent):
             add_button.config(state="normal")
 
         def error(e):
+            print("REAL ERROR:", repr(e))
             messagebox.showerror("Error", str(e))
             add_button.config(state="normal")
 
@@ -138,11 +140,13 @@ def build_team_tab(root, parent):
                     root.after(0, lambda: db.update_player(player))
                     root.after(0, refresh_players)
 
-            return crawler.fetch_players_bulk(
-                steam_ids,
-                on_progress=progress,
-                on_player=handle_player
-            )
+            # --- EXISTING: update players ---
+            crawler.fetch_players_bulk(steam_ids, on_progress=progress, on_player=handle_player)
+
+            # --- NEW: sync match data ---
+            matchzy.sync()
+
+            return True
 
         run_async(task, success, error)
 
