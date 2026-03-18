@@ -4,6 +4,7 @@ from mysql.connector import Error
 from dotenv import load_dotenv
 
 import db
+from services.logger import log, log_event, log_warning, log_error
 
 load_dotenv()
 
@@ -25,9 +26,16 @@ class MatchZyDB:
                 database=os.getenv("MATCHZY_DB_NAME"),
                 autocommit=True
             )
+
+            log_event("MYSQL_CONNECTED", {
+                "host": os.getenv("MATCHZY_DB_HOST"),
+                "db": os.getenv("MATCHZY_DB_NAME")
+            }, level="INFO")
+
             return self.conn
 
         except Error as e:
+            log_error(f"MySQL connection failed: {e}")
             raise RuntimeError(f"MatchZy DB connection failed: {e}")
 
     # --- QUERY ---
@@ -46,30 +54,31 @@ class MatchZyDB:
         tables_raw = self._query("SHOW TABLES")
         tables = [t[0] for t in tables_raw]
 
-        print("\n[MYSQL] All tables:")
+        log_event("MYSQL_TABLES_FOUND", {"count": len(tables)}, level="DEBUG")
+
         for t in tables:
-            print(" -", t)
+            log(f"[MYSQL_TABLE] {t}", level="DEBUG")
 
         match_tables = [t for t in tables if t.startswith("match_data_map")]
 
-        print("\n[MATCHZY] Detected match tables:")
-        for t in match_tables:
-            print(" -", t)
+        log_event("MATCHZY_TABLES_FILTERED", {"count": len(match_tables)}, level="INFO")
 
         if not match_tables:
-            print("⚠️ No match_data_map tables found!")
+            log_warning("No match_data_map tables found")
 
         return match_tables
 
-    # --- PARSE TABLE (NO PANDAS) ---
+    # --- PARSE TABLE ---
     def parse_table(self, table_name):
         rows = self._query(f"SELECT * FROM {table_name}")
 
         if not rows:
+            log_warning(f"Empty table: {table_name}")
             return []
 
-        # first row = header
         header = [str(col) for col in rows[0]]
+
+        # log_event("TABLE_HEADER", {"table": table_name,"columns": header}, level="DEBUG")
 
         parsed_rows = []
 
@@ -78,14 +87,14 @@ class MatchZyDB:
 
             for i, value in enumerate(raw_row):
                 key = header[i]
-
-                # basic cleanup
-                if value is None:
-                    row_dict[key] = None
-                else:
-                    row_dict[key] = value
+                row_dict[key] = value if value is not None else None
 
             parsed_rows.append(row_dict)
+
+        log_event("TABLE_PARSED", {
+            "table": table_name,
+            "rows": len(parsed_rows)
+        }, level="INFO")
 
         return parsed_rows
 
@@ -98,13 +107,22 @@ class MatchZyDB:
 
     # --- MAIN SYNC ---
     def sync_to_local(self):
-        
-        print("Fetching MatchZy data...")
+
+        log_event("MATCHZY_SYNC_START")
+
         tables = self.get_match_tables()
 
         total_rows = 0
+        total_tables = len(tables)
 
-        for table in tables:
+        for idx, table in enumerate(tables, start=1):
+
+            log_event("PROCESS_TABLE", {
+                "table": table,
+                "index": idx,
+                "total": total_tables
+            }, level="INFO")
+
             try:
                 parsed_rows = self.parse_table(table)
 
@@ -148,9 +166,12 @@ class MatchZyDB:
                     total_rows += 1
 
             except Exception as e:
-                print(f"[SKIP TABLE] {table}: {e}")
+                log_error(f"Failed processing table {table}: {e}")
 
-        print(f"Synced {total_rows} rows to local SQLite")
+        log_event("MATCHZY_SYNC_DONE", {
+            "tables": total_tables,
+            "rows": total_rows
+        }, level="INFO")
 
 
 # --- ENTRY POINT FOR GUI ---
