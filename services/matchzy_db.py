@@ -10,9 +10,6 @@ from services.logger import log, log_event, log_warning, log_error
 ## build fix: 
 # ENV & CONFIG
 
-os.environ["LANG"] = "en_US.UTF-8"
-os.environ["LC_ALL"] = "en_US.UTF-8"
-
 def resource_path(relative_path):
     """Get absolute path to resource for dev and PyInstaller"""
     if getattr(sys, "frozen", False):

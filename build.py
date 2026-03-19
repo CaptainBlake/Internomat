@@ -9,7 +9,7 @@ cmd = [
     "--name", "Internomat",
     "--icon=assets/duck_icon.ico",
     "--collect-all", "selenium",
-    "--collect-all", "mysql",
+    "--collect-all", "mysql.connector",
     "--add-data", ".env;.",
     "--clean"
 ]
