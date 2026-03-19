@@ -50,10 +50,12 @@ def build_team_tab(parent):
     entry.setPlaceholderText("Steam profile URL")
 
     add_button = QPushButton("Add Player")
+    remove_button = QPushButton("Remove Player")   
     update_button = QPushButton("Update")
 
     top_layout.addWidget(entry, 1)
     top_layout.addWidget(add_button)
+    top_layout.addWidget(remove_button)            
     top_layout.addWidget(update_button)
     layout.addWidget(top_frame)
 
@@ -416,6 +418,7 @@ def build_team_tab(parent):
 
     add_button.clicked.connect(add_player)
     update_button.clicked.connect(update_players)
+    remove_button.clicked.connect(remove_player)
     add_to_pool_button.clicked.connect(add_to_pool)
     remove_from_pool_button.clicked.connect(remove_from_pool)
     generate_button.clicked.connect(run_balancer)
