@@ -1,8 +1,8 @@
 import math
 import random
 
-from PySide6.QtCore import Qt, QEasingCurve, Property, QPointF, QPropertyAnimation
-from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QPainterPath
+from PySide6.QtCore import Qt, QTimer, QSize, QPoint
+from PySide6.QtGui import QColor, QPainter, QBrush
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -14,164 +14,494 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QFrame,
+    QSizePolicy,
+    QGraphicsOpacityEffect,
+    QGraphicsBlurEffect,
 )
 
 import db
 import core
 
 
-class WheelWidget(QWidget):
+class MapListWidget(QListWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._rotation = 0.0
-        self.highlight_index = None
-        self.animation = None
-        self.setMinimumSize(520, 520)
-        self.spin_callback = None
+        self._item_height = 48
 
-    def getRotation(self):
-        return self._rotation
+        self.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.setWrapping(False)
+        self.setFlow(QListWidget.Flow.TopToBottom)
+        self.setViewMode(QListWidget.ViewMode.ListMode)
+        self.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.setMovement(QListWidget.Movement.Static)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSpacing(16)
+        self.setUniformItemSizes(True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-    def setRotation(self, value):
-        self._rotation = float(value) % 360.0
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_grid()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._update_grid()
+
+    def _update_grid(self):
+        viewport_width = max(120, self.viewport().width())
+        available_width = max(120, viewport_width - 8)
+
+        self.setGridSize(QSize(available_width, self._item_height))
+
+        for i in range(self.count()):
+            item = self.item(i)
+            item.setSizeHint(QSize(available_width, self._item_height))
+
+    def addItem(self, item):
+        super().addItem(item)
+        self._update_grid()
+
+
+class FireworksWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._particles = []
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._update_particles)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAutoFillBackground(False)
+        self.hide()
+
+    def burst(self):
+        colors = [
+            QColor("#FF5252"),
+            QColor("#FFB300"),
+            QColor("#69F0AE"),
+            QColor("#40C4FF"),
+            QColor("#EA80FC"),
+            QColor("#FFD54F"),
+            QColor("#FFFFFF"),
+        ]
+
+        w = max(1, self.width())
+        h = max(1, self.height())
+        cx = w / 2
+        cy = h / 2
+
+        self._particles = []
+
+        # Big central explosion
+        for _ in range(70):
+            angle = random.uniform(0, 6.283185307179586)
+            speed = random.uniform(2.5, 10.5)
+            self._particles.append({
+                "x": cx + random.uniform(-16, 16),
+                "y": cy + random.uniform(-16, 16),
+                "vx": math.cos(angle) * speed + random.uniform(-1.5, 1.5),
+                "vy": math.sin(angle) * speed + random.uniform(-1.5, 1.5),
+                "life": random.randint(40, 90),
+                "color": random.choice(colors),
+                "size": random.randint(4, 11),
+            })
+
+        # Outer sparks / rockets
+        for _ in range(28):
+            angle = random.uniform(0, 6.283185307179586)
+            speed = random.uniform(4.5, 13.0)
+            self._particles.append({
+                "x": cx + random.uniform(-30, 30),
+                "y": cy + random.uniform(-30, 30),
+                "vx": math.cos(angle) * speed,
+                "vy": math.sin(angle) * speed,
+                "life": random.randint(28, 65),
+                "color": random.choice(colors),
+                "size": random.randint(2, 7),
+            })
+
+        # Side bursts
+        for side in (-1, 1):
+            for _ in range(18):
+                angle = random.uniform(-0.9, 0.9)
+                speed = random.uniform(3.5, 9.5)
+                self._particles.append({
+                    "x": cx + (side * random.uniform(30, 80)),
+                    "y": cy + random.uniform(-20, 20),
+                    "vx": side * abs(math.cos(angle) * speed),
+                    "vy": math.sin(angle) * speed,
+                    "life": random.randint(30, 75),
+                    "color": random.choice(colors),
+                    "size": random.randint(3, 9),
+                })
+
+        if not self._timer.isActive():
+            self._timer.start(25)
+        self.show()
+        self.raise_()
         self.update()
 
-    rotation = Property(float, getRotation, setRotation)
-
-    def mousePressEvent(self, event):
-        if self.spin_callback is None:
+    def _update_particles(self):
+        if not self._particles:
+            self._timer.stop()
+            self.hide()
             return
 
-        rect = self.rect().adjusted(24, 24, -24, -24)
-        size = min(rect.width(), rect.height())
-        cx = rect.center().x()
-        cy = rect.center().y()
+        next_particles = []
+        for p in self._particles:
+            p["x"] += p["vx"]
+            p["y"] += p["vy"]
+            p["vy"] += 0.20
+            p["life"] -= 1
+            if p["life"] > 0:
+                next_particles.append(p)
 
-        center_radius = 42
-        dx = event.position().x() - cx
-        dy = event.position().y() - cy
-        distance = math.hypot(dx, dy)
-
-        if distance <= center_radius:
-            self.spin_callback()
-
-    def color_for_index(self, i):
-        palette = [
-            "#1E88E5", "#E53935", "#43A047", "#8E24AA",
-            "#FB8C00", "#00ACC1", "#6D4C41", "#546E7A",
-            "#D81B60", "#5E35B1",
-        ]
-        return QColor(palette[i % len(palette)])
+        self._particles = next_particles
+        self.update()
 
     def paintEvent(self, event):
-        maps = db.get_maps()
-
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
-
-        painter.fillRect(self.rect(), self.palette().window())
-
-        rect = self.rect().adjusted(24, 24, -24, -24)
-        size = min(rect.width(), rect.height())
-        cx = rect.center().x()
-        cy = rect.center().y()
-        radius = int(size * 0.42)
-
-        if not maps:
-            painter.setBrush(QColor("#CFD8DC"))
-            painter.setPen(QPen(QColor("#B0BEC5"), 3))
-            painter.drawEllipse(cx - radius, cy - radius, radius * 2, radius * 2)
-
-            font = QFont("Segoe UI", 12)
-            font.setBold(True)
-            painter.setFont(font)
-            painter.setPen(QColor("#455A64"))
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No maps available")
+        if not self._particles:
             return
 
-        angle_per_item = 360.0 / len(maps)
-        start_angle = self._rotation
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(QPen(QColor("#B0BEC5"), 3))
-        painter.drawEllipse(cx - radius - 6, cy - radius - 6, radius * 2 + 12, radius * 2 + 12)
+        for p in self._particles:
+            life_ratio = p["life"] / 90
+            alpha = max(0, min(255, int(255 * life_ratio)))
+            color = QColor(p["color"])
+            color.setAlpha(alpha)
 
-        font = QFont("Segoe UI", 11)
-        font.setBold(True)
-        painter.setFont(font)
+            painter.setPen(Qt.PenStyle.NoPen)
 
-        for i, map_name in enumerate(maps):
-            fill = self.color_for_index(i).lighter(115)
-            if self.highlight_index is not None and i == self.highlight_index:
-                fill = QColor("#FFD54F")
+            x = int(p["x"])
+            y = int(p["y"])
+            size = int(p["size"] * (0.75 + (life_ratio * 0.9)))
 
-            painter.setBrush(QBrush(fill))
-            painter.setPen(QPen(QColor("#FFFFFF"), 2))
-            painter.drawPie(
-                cx - radius, cy - radius, radius * 2, radius * 2,
-                int((-start_angle) * 16), int((-angle_per_item) * 16)
-            )
+            glow = QColor(color)
+            glow.setAlpha(max(0, alpha // 3))
+            painter.setBrush(QBrush(glow))
+            painter.drawEllipse(QPoint(x, y), size + 6, size + 6)
 
-            mid_angle_deg = start_angle + angle_per_item / 2.0
-            mid_angle_rad = math.radians(mid_angle_deg)
-            text_radius = radius * 0.66
+            painter.setBrush(QBrush(color))
+            painter.drawEllipse(QPoint(x, y), size, size)
 
-            tx = cx + math.cos(mid_angle_rad) * text_radius
-            ty = cy + math.sin(mid_angle_rad) * text_radius
 
-            label = map_name.replace("de_", "")
-            painter.setPen(QColor("#FFFFFF"))
-            painter.drawText(int(tx - 80), int(ty - 10), 160, 20, Qt.AlignmentFlag.AlignCenter, label)
+class SlotMachineWidget(QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet("""
+            QFrame {
+                background: rgba(255, 255, 255, 0.72);
+                border: 1px solid #BBDEFB;
+                border-radius: 18px;
+            }
+        """)
 
-            start_angle += angle_per_item
+        self._items = []
+        self._running = False
+        self._sequence = []
+        self._step = 0
+        self._display_count = 7
+        self._winner = None
+        self._pulse_active = False
+        self._pulse_phase = 0.0
 
-        center_radius = 42
-        painter.setBrush(QColor("#CFD8DC"))
-        painter.setPen(QPen(QColor("#B0BEC5"), 2))
-        painter.drawEllipse(cx - center_radius, cy - center_radius, center_radius * 2, center_radius * 2)
+        self._pulse_timer = QTimer(self)
+        self._pulse_timer.timeout.connect(self._update_pulse)
 
-        font = QFont("Segoe UI", 11)
-        font.setBold(True)
-        painter.setFont(font)
-        painter.setPen(QColor("#455A64"))
-        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "SPIN")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(4)
 
-        painter.setBrush(QColor("#263238"))
-        painter.setPen(Qt.PenStyle.NoPen)
-        path = QPainterPath()
-        path.moveTo(cx, cy - radius - 8)
-        path.lineTo(cx - 12, cy - radius - 32)
-        path.lineTo(cx + 12, cy - radius - 32)
-        path.closeSubpath()
-        painter.drawPath(path)
+        self.track = QFrame()
+        self.track.setStyleSheet("""
+            QFrame {
+                background: transparent;
+                border: none;
+            }
+        """)
+        track_layout = QVBoxLayout(self.track)
+        track_layout.setContentsMargins(6, 6, 6, 6)
+        track_layout.setSpacing(0)
 
-        if self.highlight_index is not None:
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.setPen(QPen(QColor("#FFD54F"), 4))
-            painter.drawEllipse(cx - radius - 12, cy - radius - 12, radius * 2 + 24, radius * 2 + 24)
+        self.rows = []
+        for _ in range(self._display_count):
+            row = QLabel("—")
+            row.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            row.setMinimumHeight(20)
+            row.setStyleSheet("""
+                QLabel {
+                    background: transparent;
+                    border: none;
+                    padding: 0px 4px;
+                    font-size: 17px;
+                    font-weight: 600;
+                    color: #607D8B;
+                }
+            """)
+
+            opacity = QGraphicsOpacityEffect(row)
+            row.setGraphicsEffect(opacity)
+
+            blur = QGraphicsBlurEffect(row)
+            row._blur_effect = blur
+
+            self.rows.append(row)
+            track_layout.addWidget(row)
+
+        self.center_row = self.rows[3]
+        layout.addWidget(self.track, 1)
+
+        self.fireworks = FireworksWidget(self.track)
+        self.fireworks.hide()
+
+        self._apply_visuals(idle=True)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.fireworks.setGeometry(self.track.rect())
+
+    def set_items(self, items):
+        self._items = [item.replace("de_", "") for item in items]
+        self._fill_idle_state()
+
+    def _update_pulse(self):
+        if not self._pulse_active:
+            self._pulse_timer.stop()
+            return
+
+        self._pulse_phase += 0.16
+        self._apply_visuals(idle=False, winner=self._winner, center_glow=True)
+        self.update()
+
+    def _apply_visuals(self, idle=False, winner=None, center_glow=False):
+        for idx, row in enumerate(self.rows):
+            distance = abs(idx - 3)
+
+            eff = row.graphicsEffect()
+            if isinstance(eff, QGraphicsOpacityEffect):
+                if idx == 3:
+                    eff.setOpacity(1.0)
+                else:
+                    eff.setOpacity(max(0.40, 0.90 - (distance * 0.15)))
+
+            blur = getattr(row, "_blur_effect", None)
+            if blur is not None:
+                if idx == 3:
+                    blur.setBlurRadius(0.0)
+                else:
+                    blur.setBlurRadius(0.85 + (distance * 0.95))
+
+            if idx == 3:
+                if center_glow:
+                    row.setStyleSheet("""
+                        QLabel {
+                            background: transparent;
+                            border: none;
+                            padding: 1px 4px;
+                            font-size: 30px;
+                            font-weight: 900;
+                            color: #0D47A1;
+                        }
+                    """)
+                else:
+                    row.setStyleSheet("""
+                        QLabel {
+                            background: transparent;
+                            border: none;
+                            padding: 0px 4px;
+                            font-size: 27px;
+                            font-weight: 800;
+                            color: #0D47A1;
+                        }
+                    """)
+            else:
+                font_size = max(12, 17 - distance)
+                row.setStyleSheet(f"""
+                    QLabel {{
+                        background: transparent;
+                        border: none;
+                        padding: 0px 4px;
+                        font-size: {font_size}px;
+                        font-weight: 600;
+                        color: #607D8B;
+                    }}
+                """)
+
+        if winner is not None:
+            self.center_row.setStyleSheet("""
+                QLabel {
+                    background: transparent;
+                    border: none;
+                    padding: 1px 4px;
+                    font-size: 30px;
+                    font-weight: 900;
+                    color: #0D47A1;
+                }
+            """)
+
+    def _fill_idle_state(self):
+        if not self._items:
+            for row in self.rows:
+                row.setText("—")
+            self._apply_visuals(idle=True)
+            return
+
+        padded = self._items[:]
+        while len(padded) < self._display_count:
+            padded.extend(self._items)
+        padded = padded[:self._display_count]
+
+        for row, text in zip(self.rows, padded):
+            row.setText(text)
+
+        self._apply_visuals(idle=True)
+
+    def start_spin(self, winner, on_finished):
+        if self._running or not self._items:
+            return
+
+        self._running = True
+        self._step = 0
+        self._winner = winner.replace("de_", "")
+        self.hint.setText("Spinning...")
+        self.fireworks.hide()
+
+        winner_text = self._winner
+        winner_index = self._items.index(winner_text)
+
+        prefix = [random.choice(self._items) for _ in range(random.randint(28, 42))]
+        tail = [
+            self._items[(winner_index - 3) % len(self._items)],
+            self._items[(winner_index - 2) % len(self._items)],
+            self._items[(winner_index - 1) % len(self._items)],
+            winner_text,
+            self._items[(winner_index + 1) % len(self._items)],
+            self._items[(winner_index + 2) % len(self._items)],
+            self._items[(winner_index + 3) % len(self._items)],
+        ]
+        self._sequence = prefix + tail
+
+        def render_window(center_index):
+            indexes = [
+                max(0, center_index - 3),
+                max(0, center_index - 2),
+                max(0, center_index - 1),
+                center_index,
+                min(len(self._sequence) - 1, center_index + 1),
+                min(len(self._sequence) - 1, center_index + 2),
+                min(len(self._sequence) - 1, center_index + 3),
+            ]
+
+            for row_idx, seq_idx in enumerate(indexes):
+                self.rows[row_idx].setText(self._sequence[seq_idx])
+
+            self._apply_visuals(idle=False)
+
+        def tick():
+            if self._step < len(self._sequence):
+                render_window(self._step)
+                self._step += 1
+
+                remaining = len(self._sequence) - self._step
+                if remaining <= 10:
+                    delay = 70 + remaining * 34
+                elif remaining <= 18:
+                    delay = 46
+                else:
+                    delay = 38
+
+                QTimer.singleShot(delay, tick)
+                return
+
+            self.rows[0].setText(self._items[(winner_index - 3) % len(self._items)])
+            self.rows[1].setText(self._items[(winner_index - 2) % len(self._items)])
+            self.rows[2].setText(self._items[(winner_index - 1) % len(self._items)])
+            self.rows[3].setText(winner_text)
+            self.rows[4].setText(self._items[(winner_index + 1) % len(self._items)])
+            self.rows[5].setText(self._items[(winner_index + 2) % len(self._items)])
+            self.rows[6].setText(self._items[(winner_index + 3) % len(self._items)])
+
+            self._pulse_active = True
+            self._pulse_timer.start(55)
+            QTimer.singleShot(1200, self._stop_pulse_and_finish)
+
+        tick()
+
+    def _stop_pulse_and_finish(self):
+        self._pulse_active = False
+        self._pulse_timer.stop()
+        self._apply_visuals(idle=False, winner=self._winner, center_glow=True)
+        self.hint.setText("Winner!")
+        self.fireworks.burst()
+        self._running = False
+        self.update()
 
 
 def build_map_tab(parent):
     layout = QVBoxLayout(parent)
-    layout.setContentsMargins(24, 24, 24, 24)
-    layout.setSpacing(14)
+    layout.setContentsMargins(24, 20, 24, 20)
+    layout.setSpacing(10)
 
     title = QLabel("Map Roulette")
     title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    title.setStyleSheet("font-size: 16px; font-weight: 700;")
+    title.setStyleSheet("font-size: 16px; font-weight: 700; color: #21443C;")
     layout.addWidget(title)
 
-    wheel = WheelWidget()
-    layout.addWidget(wheel, 2, alignment=Qt.AlignmentFlag.AlignHCenter)
+    content = QHBoxLayout()
+    content.setSpacing(10)
 
-    result_label = QLabel("Selected Map: -")
-    result_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    result_label.setStyleSheet("font-size: 12px; font-weight: 700;")
-    layout.addWidget(result_label)
+    left_panel = QVBoxLayout()
+    left_panel.setSpacing(6)
+
+    list_frame = QFrame()
+    list_frame.setStyleSheet("""
+        QFrame {
+            background: rgba(255, 255, 255, 0.82);
+            border: 1px solid #C9ECE2;
+            border-radius: 14px;
+        }
+    """)
+    list_layout = QVBoxLayout(list_frame)
+    list_layout.setContentsMargins(10, 10, 10, 10)
+    list_layout.setSpacing(4)
+
+    map_list = MapListWidget()
+    map_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+    map_list.setStyleSheet("""
+        QListWidget {
+            background: transparent;
+            border: none;
+            padding: 0px;
+        }
+        QListWidget::item {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                        stop:0 #FFFFFF, stop:1 #F7FFFC);
+            border: 1px solid #D7EEE7;
+            border-radius: 12px;
+            padding: 7px 10px;
+            color: #21443C;
+            margin: 1px;
+            margin-bottom: 8px;
+        }
+        QListWidget::item:hover {
+            background: #ECFBF6;
+            border: 1px solid #BEE8D9;
+        }
+        QListWidget::item:selected {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                        stop:0 #D7F5EC, stop:1 #C7F0E4);
+            color: #0C755B;
+            border: 1px solid #9EDCCB;
+        }
+    """)
+    list_layout.addWidget(map_list, 1)
+
+    left_panel.addWidget(list_frame, 0)
 
     controls = QHBoxLayout()
-    controls.setSpacing(10)
+    controls.setSpacing(8)
 
     entry = QLineEdit()
     entry.setPlaceholderText("Add map name")
@@ -184,31 +514,34 @@ def build_map_tab(parent):
     controls.addWidget(add_button)
     controls.addWidget(remove_button)
     controls.addWidget(spin_button)
-    layout.addLayout(controls)
+    left_panel.addLayout(controls)
 
-    list_frame = QFrame()
-    list_frame.setStyleSheet("""
-        QFrame {
-            background: #ECEFF1;
-            border-radius: 12px;
-        }
-    """)
-    list_layout = QVBoxLayout(list_frame)
-    list_layout.setContentsMargins(12, 12, 12, 12)
+    result_label = QLabel("Selected Map: -")
+    result_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    result_label.setStyleSheet("font-size: 12px; font-weight: 700; color: #21443C;")
+    left_panel.addWidget(result_label)
 
-    map_list = QListWidget()
-    map_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-    list_layout.addWidget(map_list)
-    layout.addWidget(list_frame, 1)
+    right_panel = QVBoxLayout()
+    right_panel.setSpacing(6)
 
-    current_rotation = 0.0
+    spin_machine = SlotMachineWidget()
+    right_panel.addWidget(spin_machine, 1)
+
+    content.addLayout(left_panel, 0)
+    content.addLayout(right_panel, 1)
+    layout.addLayout(content)
+
     spinning = False
 
     def refresh_maps():
         map_list.clear()
-        for m in db.get_maps():
-            map_list.addItem(QListWidgetItem(m))
-        wheel.update()
+        maps = db.get_maps()
+        for m in maps:
+            item = QListWidgetItem(m.replace("de_", ""))
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            map_list.addItem(item)
+        map_list._update_grid()
+        spin_machine.set_items(maps)
 
     def add_map():
         name = entry.text().strip()
@@ -226,8 +559,13 @@ def build_map_tab(parent):
             db.delete_map(item.text())
         refresh_maps()
 
+    def finish_spin(winner):
+        nonlocal spinning
+        result_label.setText(f"Selected Map: {winner}")
+        spinning = False
+
     def spin():
-        nonlocal current_rotation, spinning
+        nonlocal spinning
 
         maps = db.get_maps()
         if not maps:
@@ -237,45 +575,11 @@ def build_map_tab(parent):
             return
 
         spinning = True
-        wheel.highlight_index = None
+        result_label.setText("Spinning...")
 
         winner = core.choose_random_map(maps)
-        winner_index = maps.index(winner)
-
-        angle_per_item = 360.0 / len(maps)
-
-        # Center angle of the winning slice in the wheel's coordinate system
-        winner_center_angle = winner_index * angle_per_item + angle_per_item / 2.0
-
-        # Pointer is at the top of the wheel (270° in this coordinate system)
-        pointer_angle = 270.0
-
-        # We need to rotate the wheel so the winner center ends up under the pointer
-        normalized_current = current_rotation % 360.0
-        target_rotation = (pointer_angle - winner_center_angle - normalized_current) % 360.0
-
-        # Add a few full turns for the animation
-        extra_turns = random.randint(6, 9) * 360.0
-        final_rotation = current_rotation + extra_turns + target_rotation
-
-        wheel.animation = QPropertyAnimation(wheel, b"rotation", parent)
-        wheel.animation.setDuration(7000)
-        wheel.animation.setStartValue(current_rotation)
-        wheel.animation.setEndValue(final_rotation)
-        wheel.animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-
-        def finished():
-            nonlocal current_rotation, spinning
-            current_rotation = final_rotation % 360.0
-            wheel.highlight_index = winner_index
-            wheel.rotation = current_rotation
-            wheel.update()
-            result_label.setText(f"Selected Map: {winner}")
-            spinning = False
-
-        wheel.animation.finished.connect(finished)
-        result_label.setText("Spinning...")
-        wheel.animation.start()
+        spin_machine.set_items(maps)
+        spin_machine.start_spin(winner, lambda: finish_spin(winner))
 
     add_button.clicked.connect(add_map)
     remove_button.clicked.connect(remove_map)
