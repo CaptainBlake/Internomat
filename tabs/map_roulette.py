@@ -206,6 +206,7 @@ class SlotMachineWidget(QFrame):
         self._winner = None
         self._pulse_active = False
         self._pulse_phase = 0.0
+        self._on_finished = None
 
         self._pulse_timer = QTimer(self)
         self._pulse_timer.timeout.connect(self._update_pulse)
@@ -213,6 +214,19 @@ class SlotMachineWidget(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(4)
+
+        self.hint = QLabel("Ready")
+        self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hint.setStyleSheet("""
+            QLabel {
+                background: transparent;
+                border: none;
+                color: #607D8B;
+                font-size: 12px;
+                font-weight: 600;
+            }
+        """)
+        layout.addWidget(self.hint)
 
         self.track = QFrame()
         self.track.setStyleSheet("""
