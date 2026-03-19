@@ -1,0 +1,18 @@
+import subprocess
+import sys
+
+cmd = [
+    sys.executable, "-m", "PyInstaller",
+    "main.py",
+    "--onefile",
+    "--windowed",
+    "--name", "Internomat",
+    "--icon=assets/duck_icon.ico",
+    "--collect-all", "selenium",
+    "--collect-all", "mysql",
+    "--add-data", ".env;.",
+    "--clean"
+]
+
+print("Running build with:", sys.executable)
+subprocess.run(cmd, check=True)

@@ -1,6 +1,8 @@
 requests
 python-dotenv
 beautifulsoup4
+selenium
 playwright
 Pillow
 PySide6
+mysql-connector-python

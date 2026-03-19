@@ -34,3 +34,5 @@ dist/__pycache__/
 .vscode/
 internomat.db
 dist/
+internomat.db-shm
+internomat.db-wal

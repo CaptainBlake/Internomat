@@ -1,4 +1,5 @@
 import os
+import sys
 import mysql.connector
 from mysql.connector import Error
 from dotenv import load_dotenv
@@ -6,8 +7,36 @@ from dotenv import load_dotenv
 import db
 from services.logger import log, log_event, log_warning, log_error
 
-load_dotenv()
+## build fix: 
+# ENV & CONFIG
 
+os.environ["LANG"] = "en_US.UTF-8"
+os.environ["LC_ALL"] = "en_US.UTF-8"
+
+def resource_path(relative_path):
+    """Get absolute path to resource for dev and PyInstaller"""
+    if getattr(sys, "frozen", False):
+        base_path = sys._MEIPASS
+    else:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
+env_path = resource_path(".env")
+
+load_dotenv(env_path)
+
+#check if env vars are set
+required_env_vars = [
+    "MATCHZY_DB_HOST",
+    "MATCHZY_DB_USER",
+    "MATCHZY_DB_PASSWORD",
+    "MATCHZY_DB_NAME"
+]
+missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+if missing_vars:
+    log_error(f"Missing required environment variables: {', '.join(missing_vars)}")
+    raise RuntimeError(f"Missing required environment variables: {', '.join(missing_vars)}")
 
 class MatchZyDB:
     def __init__(self):
@@ -24,7 +53,11 @@ class MatchZyDB:
                 user=os.getenv("MATCHZY_DB_USER"),
                 password=os.getenv("MATCHZY_DB_PASSWORD"),
                 database=os.getenv("MATCHZY_DB_NAME"),
-                autocommit=True
+                autocommit=True,
+                connection_timeout=10,
+                use_pure=True,
+                charset="utf8mb4",
+                collation="utf8mb4_general_ci"
             )
 
             log_event("MYSQL_CONNECTED", {

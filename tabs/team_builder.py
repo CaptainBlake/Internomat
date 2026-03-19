@@ -13,12 +13,14 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QHeaderView,
     QFrame,
+    QDialog,
+    QTextEdit
 )
-
 import db
 import threading
 import services.crawler as crawler
 import services.matchzy_db as matchzy
+from services.logger import get_log_history
 import core
 
 
@@ -211,7 +213,39 @@ def build_team_tab(parent):
         return players
 
     def show_error(title, text):
-        QMessageBox.critical(parent, title, text)
+        dialog = QDialog(parent)
+        dialog.setWindowTitle(title)
+        dialog.resize(700, 500)
+
+        layout = QVBoxLayout(dialog)
+
+        text_box = QTextEdit()
+        text_box.setReadOnly(True)
+
+        # --- get last 100 logs ---
+        logs = get_log_history()[-100:]
+        log_text = "\n".join(logs)
+
+        # --- combine error + logs ---
+        full_text = (
+            f"=== ERROR ===\n{text}\n\n"
+            f"=== LAST 100 LOG ENTRIES ===\n{log_text}"
+        )
+
+        text_box.setText(full_text)
+        layout.addWidget(text_box)
+
+        # buttons
+        copy_button = QPushButton("Copy All")
+        copy_button.clicked.connect(lambda: text_box.selectAll() or text_box.copy())
+
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(dialog.accept)
+
+        layout.addWidget(copy_button)
+        layout.addWidget(close_button)
+
+        dialog.exec()
 
     def show_info(title, text):
         QMessageBox.information(parent, title, text)
@@ -353,6 +387,7 @@ def build_team_tab(parent):
 
         def worker():
             try:
+                # --- PLAYER UPDATES ---
                 for i, steam_id in enumerate(steam_ids, start=1):
                     try:
                         player = crawler.get_leetify_player(steam_id)
@@ -360,8 +395,18 @@ def build_team_tab(parent):
                     except Exception as e:
                         dispatcher.update_error.emit(e)
                         return
+
                     dispatcher.update_progress.emit(i, total)
+
+                # --- MATCHZY SYNC (NEW) ---
+                try:
+                    matchzy.sync()
+                except Exception as e:
+                    dispatcher.update_error.emit(e)
+                    return
+
                 dispatcher.update_finished.emit()
+
             except Exception as e:
                 dispatcher.update_error.emit(e)
 
