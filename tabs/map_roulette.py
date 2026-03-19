@@ -375,6 +375,8 @@ class SlotMachineWidget(QFrame):
     def start_spin(self, winner, on_finished):
         if self._running or not self._items:
             return
+        
+        self._on_finished = on_finished
 
         self._running = True
         self._step = 0
@@ -450,6 +452,8 @@ class SlotMachineWidget(QFrame):
         self.hint.setText("Winner!")
         self.fireworks.burst()
         self._running = False
+        if self._on_finished:         
+            self._on_finished()
         self.update()
 
 
