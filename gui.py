@@ -6,8 +6,8 @@ from tabs.map_roulette import build_map_tab
 
 APP_STYLESHEET = """
 QMainWindow, QWidget {
-    background-color: #ECEFF1;
-    color: #263238;
+    background-color: #F4FCF9;
+    color: #20443D;
     font-family: "Segoe UI";
     font-size: 11px;
 }
@@ -19,47 +19,40 @@ QTabWidget::pane {
 }
 
 QTabBar::tab {
-    background: #CFD8DC;
-    color: #455A64;
+    background: #E3F8F1;
+    color: #4D756B;
     min-width: 180px;
-    min-height: 44px;
+    min-height: 40px;
     padding: 10px 18px;
-    margin-right: 4px;
-    border-top-left-radius: 10px;
-    border-top-right-radius: 10px;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
 }
 
 QTabBar::tab:selected {
     background: #FFFFFF;
-    color: #1976D2;
+    color: #6CCFB6;
 }
 
 QTabBar::tab:hover {
-    background: #E3F2FD;
-    color: #1565C0;
+    background: #ECFBF7;
+    color: #5DBEA7;
 }
 
 QLineEdit, QTableWidget, QListWidget {
     background-color: #FFFFFF;
-    border: 1px solid #CFD8DC;
+    border: 1px solid #D5EEE6;
     border-radius: 8px;
     padding: 6px;
-    selection-background-color: #1976D2;
+    selection-background-color: #6CCFB6;
     selection-color: #FFFFFF;
 }
 
-QSlider {
-    background: transparent;
-}
-
 QLineEdit:focus, QTableWidget:focus, QListWidget:focus {
-    border: 1px solid #1976D2;
+    border: 1px solid #6CCFB6;
 }
 
 QPushButton {
-    background-color: #1976D2;
+    background-color: #69CFAC;
     color: #FFFFFF;
     border: none;
     border-radius: 8px;
@@ -68,36 +61,85 @@ QPushButton {
 }
 
 QPushButton:hover {
-    background-color: #1565C0;
+    background-color: #7FD9BF;
 }
 
 QPushButton:pressed {
-    background-color: #0D47A1;
+    background-color: #56BF9B;
 }
 
 QPushButton:disabled {
-    background-color: #90A4AE;
-    color: #ECEFF1;
-}
-
-QLabel {
-    color: #263238;
+    background-color: #C6EADF;
+    color: #F4FCF9;
 }
 
 QHeaderView::section {
-    background-color: #CFD8DC;
-    color: #37474F;
+    background-color: #E3F8F1;
+    color: #4A7168;
     padding: 6px;
     border: none;
     font-weight: 600;
 }
 
 QTableWidget::item:selected, QListWidget::item:selected {
-    background-color: #BBDEFB;
-    color: #0D47A1;
+    background-color: #DFF7EF;
+    color: #4A7168;
+}
+
+QSlider::groove:horizontal {
+    height: 8px;
+    background: #E6F7F2;
+    border-radius: 4px;
+}
+
+QSlider::sub-page:horizontal {
+    background: #8EE0CA;
+    border-radius: 4px;
+}
+
+QSlider::add-page:horizontal {
+    background: #E6F7F2;
+    border-radius: 4px;
+}
+
+QSlider::handle:horizontal {
+    background: #8EE0CA;
+    border: 2px solid #A9E9D7;
+    width: 18px;
+    margin: -6px 0;
+    border-radius: 9px;
+}
+
+QSlider::handle:horizontal:hover {
+    background: #A0E7D5;
 }
 
 QFrame {
+    border: none;
+}
+
+/* Hide scrollbars globally */
+QScrollBar:vertical, QScrollBar:horizontal {
+    width: 0px;
+    height: 0px;
+    background: transparent;
+    border: none;
+}
+
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+    background: transparent;
+    border: none;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical,
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical,
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal,
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal {
+    background: transparent;
     border: none;
 }
 """
@@ -108,8 +150,8 @@ class InternomatWindow(QMainWindow):
         super().__init__()
 
         self.setWindowTitle("Internomat")
-        self.resize(1100, 780)
-        self.setMinimumSize(900, 700)
+        self.resize(1400, 900)
+        self.setMinimumSize(1400, 900)
 
         self.tabs = QTabWidget()
         self.tabs.setTabPosition(QTabWidget.TabPosition.North)
@@ -117,13 +159,13 @@ class InternomatWindow(QMainWindow):
         self.tabs.setMovable(False)
         self.tabs.setTabBarAutoHide(False)
 
+        self.tabs.tabBar().setExpanding(True)
+        self.tabs.tabBar().setUsesScrollButtons(False)
+
         self.tabs.setStyleSheet("""
             QTabBar::tab {
-                flex: 1;
-                min-width: 100%;
                 min-height: 36px;
                 padding: 10px 18px;
-                margin-right: 4px;
                 font-size: 16px;
                 font-weight: 600;
             }
