@@ -21,6 +21,7 @@ import threading
 import services.crawler as crawler
 import services.matchzy_db as matchzy
 from services.logger import get_log_history
+import services.logger as logger
 import core
 
 
@@ -73,6 +74,7 @@ def build_team_tab(parent):
     db_tree.verticalHeader().setVisible(False)
     db_tree.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
     db_tree.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+    db_tree.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
 
     pool_tree = QTableWidget(0, 3)
     pool_tree.setHorizontalHeaderLabels(["#", "Player", "Rating"])
@@ -82,6 +84,7 @@ def build_team_tab(parent):
     pool_tree.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
     pool_tree.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
     pool_tree.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+    pool_tree.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
 
     btn_frame = QFrame()
     btn_layout = QVBoxLayout(btn_frame)
@@ -164,6 +167,7 @@ def build_team_tab(parent):
         tree.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         tree.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         tree.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        tree.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
 
     ct_layout.addWidget(ct_title)
     ct_layout.addWidget(team_a_tree, 1)
@@ -183,7 +187,8 @@ def build_team_tab(parent):
 
     def refresh_players():
         db_tree.setRowCount(0)
-        for p in db.get_players():
+        players = db.get_players()
+        for p in players:
             row = db_tree.rowCount()
             db_tree.insertRow(row)
 
@@ -195,6 +200,8 @@ def build_team_tab(parent):
 
             db_tree.setItem(row, 0, name_item)
             db_tree.setItem(row, 1, rating_item)
+
+        logger.log(f"[UI] Refresh players count={len(players)}", level="DEBUG")
 
     def refresh_pool_display():
         for i in range(pool_tree.rowCount()):
@@ -212,49 +219,21 @@ def build_team_tab(parent):
             players.append((pid, name, rating))
         return players
 
-    def show_error(title, text):
-        dialog = QDialog(parent)
-        dialog.setWindowTitle(title)
-        dialog.resize(700, 500)
-
-        layout = QVBoxLayout(dialog)
-
-        text_box = QTextEdit()
-        text_box.setReadOnly(True)
-
-        # --- get last 100 logs ---
-        logs = get_log_history()[-100:]
-        log_text = "\n".join(logs)
-
-        # --- combine error + logs ---
-        full_text = (
-            f"=== ERROR ===\n{text}\n\n"
-            f"=== LAST 100 LOG ENTRIES ===\n{log_text}"
-        )
-
-        text_box.setText(full_text)
-        layout.addWidget(text_box)
-
-        # buttons
-        copy_button = QPushButton("Copy All")
-        copy_button.clicked.connect(lambda: text_box.selectAll() or text_box.copy())
-
-        close_button = QPushButton("Close")
-        close_button.clicked.connect(dialog.accept)
-
-        layout.addWidget(copy_button)
-        layout.addWidget(close_button)
-
-        dialog.exec()
-
+    def show_error_popup(parent, title, message):
+        logger.log_error(f"{title}: {message}")
+        QMessageBox.critical(parent, title, message)
+        
     def show_info(title, text):
+        logger.log(f"[UI] {title}: {text}", level="INFO")
         QMessageBox.information(parent, title, text)
 
     def add_player():
         url = entry.text().strip()
         if not url:
-            show_error("Error", "Enter Steam profile URL")
+            show_error_popup(parent, "Error", "Enter Steam profile URL")
             return
+
+        logger.log_user_action("Add Player", url)
 
         add_button.setEnabled(False)
 
@@ -273,8 +252,11 @@ def build_team_tab(parent):
         entry.clear()
         add_button.setEnabled(True)
 
+        logger.log(f"[UI] Player added {player.get('name')}", level="INFO")
+
     def on_add_player_error(e):
-        show_error("Error", str(e))
+        logger.log_error(f"Add player failed: {e}")
+        show_error_popup(parent, "Error", str(e))
         add_button.setEnabled(True)
 
     dispatcher.add_player_success.connect(on_add_player_success)
@@ -282,6 +264,8 @@ def build_team_tab(parent):
 
     def add_to_pool():
         selected_rows = db_tree.selectionModel().selectedRows()
+        logger.log_user_action("Add to Pool", f"count={len(selected_rows)}")
+
         for row in selected_rows:
             pid_item = db_tree.item(row.row(), 0)
             rating_item = db_tree.item(row.row(), 1)
@@ -312,6 +296,8 @@ def build_team_tab(parent):
 
     def remove_from_pool():
         rows = sorted({r.row() for r in pool_tree.selectionModel().selectedRows()}, reverse=True)
+        logger.log_user_action("Remove from Pool", f"count={len(rows)}")
+
         for row in rows:
             pool_tree.removeRow(row)
         refresh_pool_display()
@@ -319,8 +305,10 @@ def build_team_tab(parent):
     def remove_player():
         rows = sorted({r.row() for r in db_tree.selectionModel().selectedRows()}, reverse=True)
         if not rows:
-            show_error("Error", "Select a player to remove")
+            show_error_popup(parent, "Error", "Select a player to remove")
             return
+
+        logger.log_user_action("Remove Player", f"count={len(rows)}")
 
         confirm = QMessageBox.question(
             parent,
@@ -352,6 +340,8 @@ def build_team_tab(parent):
             show_info("Update", "Update already running")
             return
 
+        logger.log_user_action("Update Players")
+
         update_running = True
         update_button.setEnabled(False)
         update_button.setText("Updating...")
@@ -380,14 +370,17 @@ def build_team_tab(parent):
             update_running = False
             update_button.setEnabled(True)
             update_button.setText("Update")
+            logger.log("[UPDATE] Finished", level="INFO")
 
         def on_error(e):
-            show_error("Error", str(e))
+            logger.log_error(f"Update failed: {e}")
+            show_error_popup(parent, "Error", str(e))
             finish()
 
         def worker():
             try:
-                # --- PLAYER UPDATES ---
+                logger.log(f"[UPDATE] Players to update={len(steam_ids)}", level="INFO")
+
                 for i, steam_id in enumerate(steam_ids, start=1):
                     try:
                         player = crawler.get_leetify_player(steam_id)
@@ -398,8 +391,8 @@ def build_team_tab(parent):
 
                     dispatcher.update_progress.emit(i, total)
 
-                # --- MATCHZY SYNC (NEW) ---
                 try:
+                    logger.log("[UPDATE] Starting MatchZy sync", level="INFO")
                     matchzy.sync()
                 except Exception as e:
                     dispatcher.update_error.emit(e)
@@ -421,14 +414,20 @@ def build_team_tab(parent):
         players = get_pool_players()
 
         if len(players) < 2:
-            show_error("Error", "Add players to pool first")
+            show_error_popup(parent, "Error", "Add players to pool first")
             return
 
         if len(players) % 2 != 0:
-            show_error("Error", "Player count must be even")
+            show_error_popup(parent, "Error", "Player count must be even")
             return
 
         tolerance = tolerance_slider.value()
+
+        logger.log_user_action(
+            "Generate Teams",
+            f"players={len(players)} tolerance={tolerance}"
+        )
+
         (team_a, team_b), diff = core.balance_teams(players, tolerance=tolerance)
 
         clear_table(team_a_tree)

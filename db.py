@@ -1,14 +1,22 @@
 import sqlite3
 from datetime import datetime, timedelta
 
+import services.logger as logger
+
+
 # INIT
 
 DB_FILE = "internomat.db"
-UPDATE_COOLDOWN_MINUTES = 0 # normal: 10 , debug: 0
+UPDATE_COOLDOWN_MINUTES = 0  # normal: 10 , debug: 0
+
+
 def get_conn():
     return sqlite3.connect(DB_FILE)
 
+
 def init_db():
+
+    logger.log("[DB] Initializing database", level="INFO")
 
     with get_conn() as conn:
 
@@ -47,33 +55,26 @@ def init_db():
             steamid64 TEXT,
             match_id TEXT,
             map_number INTEGER,
-
             name TEXT,
             team TEXT,
-
             kills INTEGER,
             deaths INTEGER,
             assists INTEGER,
             damage INTEGER,
-
             headshots INTEGER,
             flash_successes INTEGER,
             enemies_flashed INTEGER,
-
             entry_wins INTEGER,
             entry_count INTEGER,
-
             v1_wins INTEGER,
             v1_count INTEGER,
             v2_wins INTEGER,
             v2_count INTEGER,
-
             cash_earned INTEGER,
-
             PRIMARY KEY (steamid64, match_id, map_number)
         )
         """)
-        
+
         cur = conn.execute("SELECT COUNT(*) FROM maps")
         count = cur.fetchone()[0]
 
@@ -93,13 +94,17 @@ def init_db():
                 [(m,) for m in default_maps]
             )
 
-        
+            logger.log(f"[DB] Inserted default maps count={len(default_maps)}", level="INFO")
+
+    logger.log("[DB] Initialization complete", level="INFO")
+
 
 # PLAYER TABLE
 
 def insert_player(player):
 
     now = datetime.utcnow().isoformat()
+    steam_id = logger.redact(player["steam64_id"])
 
     with get_conn() as conn:
 
@@ -132,7 +137,12 @@ def insert_player(player):
             )
         )
 
+    logger.log(f"[DB] Insert player {steam_id}", level="INFO")
+
+
 def delete_player(steam_id):
+
+    redacted = logger.redact(steam_id)
 
     conn = get_conn()
 
@@ -144,9 +154,13 @@ def delete_player(steam_id):
     conn.commit()
     conn.close()
 
+    logger.log(f"[DB] Delete player {redacted}", level="INFO")
+
+
 def update_player(player):
-   
+
     now = datetime.utcnow().isoformat()
+    steam_id = logger.redact(player["steam64_id"])
 
     with get_conn() as conn:
 
@@ -175,6 +189,9 @@ def update_player(player):
             )
         )
 
+    logger.log(f"[DB] Update player {steam_id}", level="INFO")
+
+
 def get_players_to_update(max_age_minutes=UPDATE_COOLDOWN_MINUTES):
 
     cutoff = (datetime.utcnow() - timedelta(minutes=max_age_minutes)).isoformat()
@@ -188,7 +205,12 @@ def get_players_to_update(max_age_minutes=UPDATE_COOLDOWN_MINUTES):
                OR last_updated < ?
         """, (cutoff,))
 
-        return [r[0] for r in cur.fetchall()]
+        result = [r[0] for r in cur.fetchall()]
+
+    logger.log(f"[DB] Players to update count={len(result)}", level="DEBUG")
+
+    return result
+
 
 def get_players():
 
@@ -207,7 +229,12 @@ def get_players():
         ORDER BY rating DESC
         """)
 
-        return cur.fetchall()
+        result = cur.fetchall()
+
+    logger.log(f"[DB] Load players count={len(result)}", level="DEBUG")
+
+    return result
+
 
 def player_exists(steam_id):
 
@@ -218,13 +245,22 @@ def player_exists(steam_id):
             (steam_id,)
         )
 
-        return cur.fetchone() is not None
-    
+        exists = cur.fetchone() is not None
+
+    return exists
+
+
 def upsert_player(player):
+
+    steam_id = logger.redact(player["steam64_id"])
+
     if player_exists(player["steam64_id"]):
+        logger.log(f"[DB] Upsert -> update {steam_id}", level="DEBUG")
         update_player(player)
     else:
+        logger.log(f"[DB] Upsert -> insert {steam_id}", level="DEBUG")
         insert_player(player)
+
 
 # MATCH TABLE
 
@@ -234,6 +270,9 @@ def insert_match(match_id):
         INSERT OR IGNORE INTO matches (match_id, created_at)
         VALUES (?, datetime('now'))
         """, (match_id,))
+
+    logger.log(f"[DB] Insert match {match_id[:6]}****", level="DEBUG")
+
 
 def insert_match_player_stats(data):
     with get_conn() as conn:
@@ -282,6 +321,9 @@ def insert_match_player_stats(data):
             data["cash_earned"],
         ))
 
+    logger.log(f"[DB] Insert match stats match={data['match_id'][:6]}****", level="DEBUG")
+
+
 # MAP TABLE
 
 def get_maps():
@@ -294,8 +336,13 @@ def get_maps():
             ORDER BY name
         """)
 
-        return [r[0] for r in cur.fetchall()]
-    
+        result = [r[0] for r in cur.fetchall()]
+
+    logger.log(f"[DB] Load maps count={len(result)}", level="DEBUG")
+
+    return result
+
+
 def add_map(name):
 
     with get_conn() as conn:
@@ -304,6 +351,9 @@ def add_map(name):
             "INSERT OR IGNORE INTO maps(name) VALUES(?)",
             (name.strip(),)
         )
+
+    logger.log(f"[DB] Add map {name}", level="INFO")
+
 
 def delete_map(name):
 
@@ -314,6 +364,9 @@ def delete_map(name):
             (name,)
         )
 
+    logger.log(f"[DB] Delete map {name}", level="INFO")
+
+
 def map_exists(name):
 
     with get_conn() as conn:
@@ -323,4 +376,6 @@ def map_exists(name):
             (name,)
         )
 
-        return cur.fetchone() is not None
+        exists = cur.fetchone() is not None
+
+    return exists

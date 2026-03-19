@@ -5,13 +5,12 @@ from mysql.connector import Error
 from dotenv import load_dotenv
 
 import db
-from services.logger import log, log_event, log_warning, log_error
+import services.logger as logger
 
-## build fix: 
+
 # ENV & CONFIG
 
 def resource_path(relative_path):
-    """Get absolute path to resource for dev and PyInstaller"""
     if getattr(sys, "frozen", False):
         base_path = sys._MEIPASS
     else:
@@ -19,21 +18,24 @@ def resource_path(relative_path):
 
     return os.path.join(base_path, relative_path)
 
-env_path = resource_path(".env")
 
+env_path = resource_path(".env")
 load_dotenv(env_path)
 
-#check if env vars are set
+
 required_env_vars = [
     "MATCHZY_DB_HOST",
     "MATCHZY_DB_USER",
     "MATCHZY_DB_PASSWORD",
     "MATCHZY_DB_NAME"
 ]
+
 missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+
 if missing_vars:
-    log_error(f"Missing required environment variables: {', '.join(missing_vars)}")
+    logger.log_error(f"Missing required environment variables: {', '.join(missing_vars)}")
     raise RuntimeError(f"Missing required environment variables: {', '.join(missing_vars)}")
+
 
 class MatchZyDB:
     def __init__(self):
@@ -45,6 +47,8 @@ class MatchZyDB:
             return self.conn
 
         try:
+            logger.log("[MYSQL] Connecting", level="INFO")
+
             self.conn = mysql.connector.connect(
                 host=os.getenv("MATCHZY_DB_HOST"),
                 user=os.getenv("MATCHZY_DB_USER"),
@@ -57,15 +61,12 @@ class MatchZyDB:
                 collation="utf8mb4_general_ci"
             )
 
-            log_event("MYSQL_CONNECTED", {
-                "host": os.getenv("MATCHZY_DB_HOST"),
-                "db": os.getenv("MATCHZY_DB_NAME")
-            }, level="INFO")
+            logger.log("[MYSQL] Connected", level="INFO")
 
             return self.conn
 
         except Error as e:
-            log_error(f"MySQL connection failed: {e}")
+            logger.log_error(f"MySQL connection failed: {e}")
             raise RuntimeError(f"MatchZy DB connection failed: {e}")
 
     # --- QUERY ---
@@ -81,34 +82,33 @@ class MatchZyDB:
 
     # --- GET TABLES ---
     def get_match_tables(self):
+
         tables_raw = self._query("SHOW TABLES")
         tables = [t[0] for t in tables_raw]
 
-        log_event("MYSQL_TABLES_FOUND", {"count": len(tables)}, level="DEBUG")
-
-        for t in tables:
-            log(f"[MYSQL_TABLE] {t}", level="DEBUG")
+        logger.log(f"[MYSQL] Tables found={len(tables)}", level="DEBUG")
 
         match_tables = [t for t in tables if t.startswith("match_data_map")]
 
-        log_event("MATCHZY_TABLES_FILTERED", {"count": len(match_tables)}, level="INFO")
+        logger.log(f"[MATCHZY] Match tables={len(match_tables)}", level="INFO")
 
         if not match_tables:
-            log_warning("No match_data_map tables found")
+            logger.log_warning("No match_data_map tables found")
 
         return match_tables
 
     # --- PARSE TABLE ---
     def parse_table(self, table_name):
+
+        logger.log(f"[MATCHZY] Parsing table {table_name}", level="DEBUG")
+
         rows = self._query(f"SELECT * FROM {table_name}")
 
         if not rows:
-            log_warning(f"Empty table: {table_name}")
+            logger.log_warning(f"Empty table: {table_name}")
             return []
 
         header = [str(col) for col in rows[0]]
-
-        # log_event("TABLE_HEADER", {"table": table_name,"columns": header}, level="DEBUG")
 
         parsed_rows = []
 
@@ -121,10 +121,7 @@ class MatchZyDB:
 
             parsed_rows.append(row_dict)
 
-        log_event("TABLE_PARSED", {
-            "table": table_name,
-            "rows": len(parsed_rows)
-        }, level="INFO")
+        logger.log(f"[MATCHZY] Parsed rows={len(parsed_rows)} table={table_name}", level="DEBUG")
 
         return parsed_rows
 
@@ -138,7 +135,7 @@ class MatchZyDB:
     # --- MAIN SYNC ---
     def sync_to_local(self):
 
-        log_event("MATCHZY_SYNC_START")
+        logger.log("[MATCHZY] Sync start", level="INFO")
 
         tables = self.get_match_tables()
 
@@ -147,11 +144,10 @@ class MatchZyDB:
 
         for idx, table in enumerate(tables, start=1):
 
-            log_event("PROCESS_TABLE", {
-                "table": table,
-                "index": idx,
-                "total": total_tables
-            }, level="INFO")
+            logger.log(
+                f"[MATCHZY] Processing table {idx}/{total_tables}: {table}",
+                level="INFO"
+            )
 
             try:
                 parsed_rows = self.parse_table(table)
@@ -161,10 +157,8 @@ class MatchZyDB:
                     match_id = str(row.get("matchid"))
                     steamid = str(row.get("steamid64"))
 
-                    # --- MATCH ---
                     db.insert_match(match_id)
 
-                    # --- PLAYER STATS ---
                     db.insert_match_player_stats({
                         "steamid64": steamid,
                         "match_id": match_id,
@@ -196,14 +190,16 @@ class MatchZyDB:
                     total_rows += 1
 
             except Exception as e:
-                log_error(f"Failed processing table {table}: {e}")
+                logger.log_error(f"Failed processing table {table}: {e}")
 
-        log_event("MATCHZY_SYNC_DONE", {
-            "tables": total_tables,
-            "rows": total_rows
-        }, level="INFO")
+        logger.log(
+            f"[MATCHZY] Sync done tables={total_tables} rows={total_rows}",
+            level="INFO"
+        )
 
 
-# --- ENTRY POINT FOR GUI ---
+# ENTRY POINT
+
 def sync():
+    logger.log("[USER] MatchZy sync triggered", level="INFO")
     MatchZyDB().sync_to_local()

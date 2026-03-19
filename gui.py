@@ -3,6 +3,8 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget
 from tabs.team_builder import build_team_tab
 from tabs.map_roulette import build_map_tab
 
+import services.logger as logger
+
 
 APP_STYLESHEET = """
 QMainWindow, QWidget {
@@ -149,6 +151,8 @@ class InternomatWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
+        logger.log("[GUI] Init main window", level="DEBUG")
+
         self.setWindowTitle("Internomat")
         self.resize(1400, 900)
         self.setMinimumSize(1400, 900)
@@ -184,14 +188,31 @@ class InternomatWindow(QMainWindow):
         self.tabs.addTab(self.team_tab, "Team Builder")
         self.tabs.addTab(self.map_tab, "Map Roulette")
 
+        logger.log("[GUI] Tabs created", level="DEBUG")
+
         build_team_tab(self.team_tab)
+        logger.log("[GUI] Team Builder ready", level="INFO")
+
         build_map_tab(self.map_tab)
+        logger.log("[GUI] Map Roulette ready", level="INFO")
+
+        # --- user interaction ---
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+
+    def _on_tab_changed(self, index):
+        tab_name = self.tabs.tabText(index)
+        logger.log_user_action("Switched Tab", tab_name)
 
 
 def start_gui():
+    logger.log("[APP_START]", level="INFO")
+
     app = QApplication.instance() or QApplication([])
     app.setStyleSheet(APP_STYLESHEET)
 
     window = InternomatWindow()
     window.show()
+
+    logger.log("[APP_READY] GUI running", level="INFO")
+
     app.exec()

@@ -6,7 +6,7 @@ LOG_ENABLED = True
 LOG_LEVEL = "DEBUG"  # DEBUG, INFO, OFF
 
 LOG_HISTORY = []  # optional: can be used by GUI later
-MAX_HISTORY = 200
+MAX_HISTORY = 20000
 
 # --- core helpers ---
 
@@ -33,6 +33,32 @@ def get_log_history():
 def clear_log_history():
     LOG_HISTORY.clear()
 
+# --- user actions ---
+def log_user_action(action, details=""):
+    log(f"[USER] {action} {details}".strip())
+
+
+def log_fetch_start(source, identifier=""):
+    log(f"[FETCH_START] {source} {identifier}".strip())
+
+
+def log_fetch_success(source):
+    log(f"[FETCH_SUCCESS] {source}")
+
+
+def log_fetch_fallback(source):
+    log(f"[FETCH_FALLBACK] {source}")
+
+
+def log_fetch_error(source, error):
+    log(f"[FETCH_ERROR] {source} -> {error}")
+
+
+def redact(value, keep=4):
+    if not value:
+        return value
+    return value[:keep] + "****"
+
 # --- team analysis ---
 
 def _team_sum(team):
@@ -56,6 +82,41 @@ def log(message, level="INFO"):
     print(message, flush=True)
     _store_log(message)
 
+def show_debug_popup(parent, title, text, log_history):
+    from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QPushButton
+
+    dialog = QDialog(parent)
+    dialog.setWindowTitle(title)
+    dialog.resize(700, 500)
+
+    layout = QVBoxLayout(dialog)
+
+    text_box = QTextEdit()
+    text_box.setReadOnly(True)
+
+    logs = log_history[-100:]
+    log_text = "\n".join(logs)
+
+    full_text = (
+        f"=== ERROR ===\n{text}\n\n"
+        f"=== LAST 100 LOG ENTRIES ===\n{log_text}"
+    )
+
+    text_box.setText(full_text)
+    layout.addWidget(text_box)
+
+    copy_button = QPushButton("Copy All")
+    copy_button.clicked.connect(lambda: text_box.selectAll() or text_box.copy())
+
+    close_button = QPushButton("Close")
+    close_button.clicked.connect(dialog.accept)
+
+    layout.addWidget(copy_button)
+    layout.addWidget(close_button)
+
+    dialog.exec()
+
+    
 # --- structured event logging ---
 
 def log_event(name, data=None, level="DEBUG"):

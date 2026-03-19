@@ -2,6 +2,10 @@ import random
 import services.logger as logger
 from itertools import combinations
 
+# CONSTANTS
+
+DIST_WEIGHT = 0.25
+
 # TEAM BALANCING
 
 def _normalize_teams(team_a, team_b):
@@ -22,13 +26,19 @@ def _distribution_score_raw(team_a, team_b):
 
 def balance_teams(players, tolerance):
 
+    logger.log_event("BALANCE_START", {
+        "player_count": len(players),
+        "tolerance": tolerance
+    }, level="INFO")
+
     if len(players) < 2:
+        logger.log_error("Balance failed: not enough players")
         raise ValueError("Not enough players")
 
     if len(players) % 2 != 0:
+        logger.log_error("Balance failed: uneven player count")
         raise ValueError("Player count must be even")
 
-    # prevent order bias
     players = players[:]
     random.shuffle(players)
 
@@ -38,9 +48,8 @@ def balance_teams(players, tolerance):
     candidates = []
     seen = set()
 
-    DIST_WEIGHT = 0.25  # tune this 
 
-    # --- generate all unique team splits ---
+
     for combo in combinations(players, half):
 
         team_a = list(combo)
@@ -59,7 +68,6 @@ def balance_teams(players, tolerance):
         diff = abs(sum_a - sum_b)
         dist = _distribution_score_raw(team_a, team_b)
 
-        # combined score
         score = diff + dist * DIST_WEIGHT
 
         if best_score is None or score < best_score:
@@ -68,9 +76,9 @@ def balance_teams(players, tolerance):
         candidates.append((score, team_a, team_b, diff, dist))
 
     if not candidates:
+        logger.log_error("Balance failed: no valid combinations")
         raise Exception("No valid combinations")
 
-    # --- filter by tolerance (now based on score!) ---
     acceptable = [
         c for c in candidates
         if c[0] <= best_score + tolerance
@@ -79,32 +87,35 @@ def balance_teams(players, tolerance):
     if not acceptable:
         acceptable = [min(candidates, key=lambda x: x[0])]
 
-    # --- random pick among acceptable ---
     chosen = random.choice(acceptable)
 
-    # unpack
     score, team_a, team_b, diff, dist = chosen
-    
-    # --- logging ---
-    logger.log_balance_summary(team_a, team_b)
-    logger.log_team_roll_compact(
-        chosen=(score, team_a, team_b),
-        team_a=team_a,
-        team_b=team_b,
-        tolerance=tolerance,
-        best_score=best_score,
-        candidate_count=len(candidates),
-        acceptable_count=len(acceptable),
-        diverse_count=len(acceptable)
-    )
 
-    return (team_a, team_b), diff  # keep returning pure diff for UI
+    logger.log_event("BALANCE_RESULT", {
+        "best_score": best_score,
+        "chosen_score": score,
+        "diff": diff,
+        "candidate_count": len(candidates),
+        "acceptable_count": len(acceptable)
+    }, level="INFO")
+
+    logger.log_balance_summary(team_a, team_b)
+
+    return (team_a, team_b), diff
+
 
 # MAP MANAGEMENT
 def choose_random_map(maps):
 
     if not maps:
+        logger.log_error("Map selection failed: empty pool")
         raise ValueError("No maps in pool")
 
-    return random.choice(maps)
+    choice = random.choice(maps)
 
+    logger.log_event("MAP_SELECTED", {
+        "pool_size": len(maps),
+        "selected": choice
+    }, level="INFO")
+
+    return choice

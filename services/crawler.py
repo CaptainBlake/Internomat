@@ -8,7 +8,6 @@ import os
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -18,7 +17,6 @@ import services.logger as logger
 
 # ENV & CONFIG
 def resource_path(relative_path):
-    """Get absolute path to resource for dev and PyInstaller"""
     if getattr(sys, "frozen", False):
         base_path = sys._MEIPASS
     else:
@@ -30,22 +28,23 @@ env_path = resource_path(".env")
 load_dotenv(env_path)
 
 # CONSTANTS
-DEFAULT_RATING = 10000  # fallback rating for players without data
+DEFAULT_RATING = 10000
 LEETIFY_API = os.getenv("LEETIFY_API")
 
 if not LEETIFY_API:
     raise RuntimeError("Missing LEETIFY_API in .env file")
 
+
 # STEAM PARSING
 
 def get_player_identifier(url):
-
     identifier = _extract_steam_identifier(url)
 
     if identifier.isdigit():
         return identifier
 
     return _resolve_vanity(identifier)
+
 
 def _extract_steam_identifier(url):
 
@@ -63,13 +62,18 @@ def _extract_steam_identifier(url):
 
     return match.group(1)
 
+
 def _resolve_vanity(identifier):
+
+    redacted = logger.redact(identifier)
+    logger.log(f"[FETCH] Resolve vanity {redacted}", level="DEBUG")
 
     url = f"https://steamcommunity.com/id/{identifier}?xml=1"
 
     r = requests.get(url, timeout=5)
 
     if r.status_code != 200:
+        logger.log(f"[FETCH_ERROR] Vanity resolve failed {redacted}", level="INFO")
         raise Exception("Failed to resolve Steam vanity URL")
 
     root = ET.fromstring(r.text)
@@ -81,23 +85,26 @@ def _resolve_vanity(identifier):
 
     return steamid64
 
+
 # LEETIFY API
 
 def get_leetify_player(steam_id):
 
-    url = "https://api-public.cs-prod.leetify.com/v3/profile"
+    redacted = logger.redact(steam_id)
+    logger.log(f"[FETCH] Leetify API start {redacted}", level="DEBUG")
 
+    url = "https://api-public.cs-prod.leetify.com/v3/profile"
     params = {"steam64_id": steam_id}
     headers = {"Authorization": f"Bearer {LEETIFY_API}"}
 
     r = requests.get(url, params=params, headers=headers, timeout=5)
 
-    # Player not available in API
-    if r.status_code == 404: 
-        logger.log_event("API_FALLBACK", {"steam_id": steam_id})
+    if r.status_code == 404:
+        logger.log(f"[FETCH_FALLBACK] API 404 -> fallback {redacted}", level="INFO")
         return _get_leetify_profile_fallback(steam_id)
 
     if r.status_code != 200:
+        logger.log(f"[FETCH_ERROR] API error {r.status_code} for {redacted}", level="INFO")
         raise Exception(f"Leetify API error ({r.status_code})")
 
     data = r.json()
@@ -105,10 +112,11 @@ def get_leetify_player(steam_id):
     premier = data.get("ranks", {}).get("premier")
     leetify = data.get("ranks", {}).get("leetify")
 
-    # If player has no premier rating yet
     if premier is None:
-        logger.log_event("NO_PREMIER_FALLBACK", {"steam_id": steam_id})
+        logger.log(f"[FETCH_FALLBACK] No premier -> fallback {redacted}", level="INFO")
         return _get_leetify_profile_fallback(steam_id)
+
+    logger.log(f"[FETCH_SUCCESS] API success {redacted}", level="DEBUG")
 
     return {
         "steam64_id": steam_id,
@@ -120,7 +128,9 @@ def get_leetify_player(steam_id):
         "winrate": data.get("winrate")
     }
 
-# Fallback method using web scraping for players not having a profile
+
+# FALLBACK (SELENIUM)
+
 def _create_driver():
     options = Options()
     options.add_argument("--headless=new")
@@ -129,22 +139,24 @@ def _create_driver():
 
     return webdriver.Chrome(options=options)
 
+
 def _fetch_leetify_profile_html(steam_id):
 
-    url = f"https://leetify.com/app/profile/{steam_id}#rank-summary"
+    redacted = logger.redact(steam_id)
+    logger.log(f"[FETCH] Selenium load {redacted}", level="DEBUG")
 
+    url = f"https://leetify.com/app/profile/{steam_id}#rank-summary"
     driver = _create_driver()
 
     try:
         driver.get(url)
 
-        # wait until rank summary section loads
         try:
             WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.ID, "rank-summary"))
             )
         except:
-            pass
+            logger.log(f"[FETCH_WARNING] Timeout waiting for rank summary {redacted}", level="DEBUG")
 
         html = driver.page_source
 
@@ -153,7 +165,11 @@ def _fetch_leetify_profile_html(steam_id):
 
     return html
 
+
 def _get_steam_name(steam_id):
+
+    redacted = logger.redact(steam_id)
+    logger.log(f"[FETCH] Steam name lookup {redacted}", level="DEBUG")
 
     url = f"https://steamcommunity.com/profiles/{steam_id}?xml=1"
 
@@ -164,42 +180,44 @@ def _get_steam_name(steam_id):
             return steam_id
 
         root = ET.fromstring(r.text)
-
         name = root.findtext("steamID")
 
         return name if name else steam_id
 
     except Exception:
         return steam_id
-    
+
+
 def _get_leetify_profile_fallback(steam_id):
+
+    redacted = logger.redact(steam_id)
+    logger.log(f"[FETCH_FALLBACK] Start fallback {redacted}", level="INFO")
 
     html = _fetch_leetify_profile_html(steam_id)
 
     try:
         player = _parse_leetify_profile(html, steam_id)
-    except Exception:
+    except Exception as e:
+        logger.log(f"[FETCH_WARNING] Parse failed {redacted}: {e}", level="DEBUG")
         player = None
 
-    #  case - alex
     if not player:
-        logger.log_warning(f"Fallback failed, using default rating for {steam_id}")
-        # try to get player name from steam profile as a last resort
+        logger.log(f"[FETCH_FALLBACK] Default rating used {redacted}", level="INFO")
+
         name = _get_steam_name(steam_id)
-        print(f"Using name '{name}' for steam ID {steam_id}")
-        if not name:
-            name = steam_id
 
         return {
             "steam64_id": steam_id,
             "leetify_id": None,
-            "name": name,
-            "premier_rating": DEFAULT_RATING, 
+            "name": name if name else steam_id,
+            "premier_rating": DEFAULT_RATING,
             "leetify_rating": None,
             "total_matches": None,
             "winrate": None
         }
-    # return last seasons max rank
+
+    logger.log(f"[FETCH_SUCCESS] Fallback success {redacted}", level="DEBUG")
+
     return {
         "steam64_id": steam_id,
         "leetify_id": None,
@@ -210,47 +228,34 @@ def _get_leetify_profile_fallback(steam_id):
         "winrate": None
     }
 
+
 def _parse_leetify_profile(html, steam_id):
 
     soup = BeautifulSoup(html, "html.parser")
 
     season_map = {
-        "One": 1,
-        "Two": 2,
-        "Three": 3,
-        "Four": 4,
-        "Five": 5,
-        "Six": 6,
-        "Seven": 7,
-        "Eight": 8,
-        "Nine": 9,
-        "Ten": 10
+        "One": 1, "Two": 2, "Three": 3, "Four": 4, "Five": 5,
+        "Six": 6, "Seven": 7, "Eight": 8, "Nine": 9, "Ten": 10
     }
 
-    # Player name
     name = steam_id
     title = soup.find("title")
 
     if title:
         name = title.text.split(" - ")[0].strip()
 
-    # find seasons
     seasons = []
 
     for season in soup.select("section.season"):
-
         header = season.find("h4")
-
         if not header:
             continue
 
         match = re.search(r"Season\s+([A-Za-z]+)", header.text)
-
         if not match:
             continue
 
         word = match.group(1)
-
         if word not in season_map:
             continue
 
@@ -261,7 +266,6 @@ def _parse_leetify_profile(html, steam_id):
 
     seasons.sort(reverse=True, key=lambda x: x[0])
 
-    # Find most recent season with a Premier rank and extract rating
     for season_number, season in seasons:
 
         rows = season.select("table.rank-groups tbody tr")
@@ -269,12 +273,10 @@ def _parse_leetify_profile(html, steam_id):
         for row in rows:
 
             th = row.find("th")
-
             if not th or "Premier" not in th.text:
                 continue
 
             cells = row.find_all("td")
-
             if len(cells) < 2:
                 continue
 
@@ -289,7 +291,6 @@ def _parse_leetify_profile(html, steam_id):
             number = (large.text + small.text).replace(",", "").strip()
 
             if number.isdigit():
-
                 return {
                     "steam64_id": steam_id,
                     "name": name,
@@ -297,28 +298,35 @@ def _parse_leetify_profile(html, steam_id):
                     "season": season_number
                 }
 
-
-    # if nothing found, return
     raise Exception("Premier rank not found in profile")
 
-# Fetching stuff
+
+# PUBLIC API
+
 def fetch_player(url):
+    logger.log("[USER] Fetch player from URL", level="INFO")
     steam_id = get_player_identifier(url)
     return get_leetify_player(steam_id)
 
+
 def fetch_players_bulk(steam_ids, delay=1, on_progress=None, on_player=None):
+
+    logger.log(f"[FETCH] Bulk start count={len(steam_ids)}", level="INFO")
+
     results = []
-    logger.log_event("BULK_FETCH_START", {"count": len(steam_ids)})
+
     for i, steam_id in enumerate(steam_ids, start=1):
+        redacted = logger.redact(steam_id)
+
         try:
             player = get_leetify_player(steam_id)
             results.append(player)
 
             if on_player:
-                on_player(player)  # 🔑 immediate update
+                on_player(player)
 
         except Exception as e:
-            logger.log_error(f"Failed for {steam_id}: {e}")
+            logger.log(f"[FETCH_ERROR] Bulk failed {redacted}: {e}", level="INFO")
             results.append(None)
 
         if on_progress:
@@ -326,5 +334,6 @@ def fetch_players_bulk(steam_ids, delay=1, on_progress=None, on_player=None):
 
         time.sleep(delay)
 
-    logger.log_event("BULK_FETCH_DONE", {"count": len(results)})
+    logger.log(f"[FETCH] Bulk done count={len(results)}", level="INFO")
+
     return results
