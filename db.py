@@ -312,8 +312,18 @@ def import_players(filepath):
         players = json.load(f)
 
     count = 0
-
+    required_fields = {
+        "steam64_id", "name"
+    }
     for p in players:
+        # if dict structure is invalid, skip entry
+        if not isinstance(p, dict):
+            continue
+        # if required fields are missing, skip entry
+        if not required_fields.issubset(p):
+            logger.log(f"[DB] Invalid player entry skipped -> {p}", level="ERROR")
+            continue
+        # try to upsert player, if error occurs, log and skip entry
         try:
             upsert_player(p)
             count += 1
