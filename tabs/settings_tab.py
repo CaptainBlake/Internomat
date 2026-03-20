@@ -2,6 +2,7 @@ import threading
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDoubleSpinBox,
     QSizePolicy,
     QWidget,
@@ -117,19 +118,38 @@ def build_settings_tab(parent, on_players_updated=None):
             label.setToolTip(tooltip)
             widget.setToolTip(tooltip)
 
-        def update():
-            value = widget.value()
-            setattr(settings, attr_name, value)
-            logger.log(f"[SETTINGS] {attr_name} set to {value}", level="INFO")
+        if isinstance(widget, QCheckBox):
+            def update():
+                value = widget.isChecked()
+                setattr(settings, attr_name, value)
 
-        widget.editingFinished.connect(update)
+                logger.log(
+                    f"[SETTINGS] {attr_name} set to {value}",
+                    level="INFO"
+                )
+
+            widget.stateChanged.connect(update)
+
+        else:
+            def update():
+                value = widget.value()
+                setattr(settings, attr_name, value)
+
+                logger.log(
+                    f"[SETTINGS] {attr_name} set to {value}",
+                    level="INFO"
+                )
+
+            widget.editingFinished.connect(update)
+
+        if not isinstance(widget, QCheckBox):
+            widget.setFixedWidth(100)
 
         row.addWidget(label)
         row.addWidget(widget)
         row.addStretch()
 
         return row
-
 
     # BUTTONS
 
@@ -167,6 +187,7 @@ def build_settings_tab(parent, on_players_updated=None):
     # SETTINGS
     settings_frame, settings_layout = create_section("Settings")
 
+    
     # cooldown
     spin_cooldown = QSpinBox()
     spin_cooldown.setRange(0, 9999)
@@ -213,7 +234,16 @@ def build_settings_tab(parent, on_players_updated=None):
     layout.addWidget(settings_frame)
     layout.addStretch()
 
+    # allow uneven teams
+    checkbox_uneven = QCheckBox()
+    checkbox_uneven.setChecked(settings.allow_uneven_teams)
 
+    settings_layout.addLayout(create_setting_row(
+        "Allow uneven teams:",
+        checkbox_uneven,
+        "allow_uneven_teams",
+        "Allow uneven teams (e.g. 3 vs 2)"
+    ))
     # ACTIONS
     
     def open_logs():

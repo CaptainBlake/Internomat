@@ -359,6 +359,7 @@ def build_team_tab(parent):
         refresh_pool_display()
     
     def update_players():
+
         global update_running
 
         if update_running:
@@ -370,46 +371,19 @@ def build_team_tab(parent):
         update_running = True
         update_button.setEnabled(False)
 
-        steam_ids = db.get_players_to_update()
-
-        if not steam_ids:
-            show_info("Update", "All players were updated recently.\nTry again later.")
-            update_running = False
-            update_button.setEnabled(True)
-            update_button.setText("Update")
-            return
+        steam_ids = db.get_players_to_update() or []
 
         total = len(steam_ids)
         update_button.setText(f"Updating 0/{total}")
 
         def worker():
-            try:
-                try:
-                    logger.log("[UPDATE] Starting MatchZy sync", level="INFO")
-                    matchzy.sync()
-                except Exception as e:
-                    dispatcher.update_error.emit(e)
-
-                logger.log(f"[UPDATE] Players to update={len(steam_ids)}", level="INFO")
-
-                for i, steam_id in enumerate(steam_ids, start=1):
-                    try:
-                        player = crawler.get_leetify_player(steam_id)
-                        dispatcher.update_player_ready.emit(player)
-                    except Exception as e:
-                        dispatcher.update_error.emit(e)
-                        return
-
-                    dispatcher.update_progress.emit(i, total)
-
-                dispatcher.update_finished.emit()
-
-            except Exception as e:
-                dispatcher.update_error.emit(e)
-
-            finally:
-                crawler.close_driver()
-
+            core.update_players_pipeline(
+                steam_ids,
+                on_progress=lambda i, t: dispatcher.update_progress.emit(i, t),
+                on_player=lambda p: dispatcher.update_player_ready.emit(p),
+                on_error=lambda e: dispatcher.update_error.emit(e),
+                on_finish=lambda: dispatcher.update_finished.emit()
+            )
         threading.Thread(target=worker, daemon=True).start()
 
     # Balancer
@@ -421,9 +395,6 @@ def build_team_tab(parent):
             show_error_popup(parent, "Error", "Add players to pool first")
             return
 
-        if len(players) % 2 != 0:
-            show_error_popup(parent, "Error", "Player count must be even")
-            return
 
         tolerance = tolerance_slider.value()
 

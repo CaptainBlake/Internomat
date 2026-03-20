@@ -5,6 +5,7 @@ class Settings:
         self.log_level = "INFO"
         self.dist_weight = 0.25 
         self.default_rating = 10000
+        self.allow_uneven_teams = False
 
 
 settings = Settings()
