@@ -1,9 +1,20 @@
 from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget
-
+from PySide6.QtGui import QIcon
 from tabs.team_builder import build_team_tab
 from tabs.map_roulette import build_map_tab
 from tabs.settings_tab import build_settings_tab
+from services.settings import settings
 import services.logger as logger
+import os
+import sys
+
+def resource_path(relative_path):
+    if getattr(sys, "frozen", False):
+        base_path = sys._MEIPASS
+    else:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
 
 
 MAIN_WINDOW = None
@@ -185,6 +196,10 @@ class InternomatWindow(QMainWindow):
         self.tabs.tabBar().setExpanding(True)
         self.tabs.tabBar().setUsesScrollButtons(False)
 
+        # important feature!
+        icon_path = resource_path("assets/duck_icon.ico")
+        self.setWindowIcon(QIcon(icon_path))
+
         self.tabs.setStyleSheet("""
             QTabBar::tab {
                 min-height: 36px;
@@ -230,11 +245,16 @@ class InternomatWindow(QMainWindow):
 def start_gui():
     logger.log("[APP_START]", level="INFO")
     global MAIN_WINDOW
-    
+    from PySide6.QtGui import QIcon
     app = QApplication.instance() or QApplication([])
+
+    icon = QIcon(resource_path("assets/duck_icon.ico"))
+    app.setWindowIcon(icon)
+
     app.setStyleSheet(APP_STYLESHEET)
 
     MAIN_WINDOW = InternomatWindow()
+    MAIN_WINDOW.setWindowIcon(icon)
     MAIN_WINDOW.show()
 
     logger.log("[APP_READY] GUI running", level="INFO")

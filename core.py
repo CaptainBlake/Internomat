@@ -1,13 +1,10 @@
 import random
+from services.settings import settings
 import services.logger as logger
 from itertools import combinations
 
-# CONSTANTS
-
-DIST_WEIGHT = 0.25
 
 # TEAM BALANCING
-
 def _normalize_teams(team_a, team_b):
     a = tuple(sorted(p[0] for p in team_a))
     b = tuple(sorted(p[0] for p in team_b))
@@ -45,8 +42,6 @@ def balance_teams(players, tolerance):
     candidates = []
     seen = set()
 
-
-
     for combo in combinations(players, half):
 
         team_a = list(combo)
@@ -65,7 +60,7 @@ def balance_teams(players, tolerance):
         diff = abs(sum_a - sum_b)
         dist = _distribution_score_raw(team_a, team_b)
 
-        score = diff + dist * DIST_WEIGHT
+        score = diff + dist * settings.dist_weight
 
         if best_score is None or score < best_score:
             best_score = score

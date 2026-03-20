@@ -3,6 +3,7 @@ import threading
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDoubleSpinBox,
+    QSizePolicy,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
@@ -14,6 +15,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QFrame,
     QListWidget,
+    QGridLayout,
     QSpinBox
 )
 from PySide6.QtGui import QFont
@@ -22,6 +24,7 @@ from services.logger import get_log_history
 import services.logger as logger
 from db import export_players as db_export_players
 from db import import_players as db_import_players
+from db import export_database, import_database
 from services.matchzy_db import sync
 
 LOG_WINDOW_INSTANCE = None
@@ -33,28 +36,28 @@ def build_settings_tab(parent, on_players_updated=None):
     root_layout.setContentsMargins(20, 20, 20, 20)
     root_layout.setSpacing(20)
 
-
     # SIDEBAR
     sidebar = QListWidget()
     sidebar.setFixedWidth(160)
     sidebar.addItems(["Debug", "Database", "Settings"])
-
     root_layout.addWidget(sidebar)
-
 
     # SCROLL AREA
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
-    
+
     container = QWidget()
     layout = QVBoxLayout(container)
     layout.setSpacing(10)
-    layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+    layout.setAlignment(Qt.AlignTop)
+
     scroll.setWidget(container)
     root_layout.addWidget(scroll, 1)
 
 
     # HELPERS
+
+
     def create_section(title):
         frame = QFrame()
         frame.setStyleSheet("""
@@ -65,193 +68,183 @@ def build_settings_tab(parent, on_players_updated=None):
             }
         """)
 
-        layout = QVBoxLayout(frame)
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(16)
+        section_layout = QVBoxLayout(frame)
+        section_layout.setContentsMargins(12, 8, 12, 8)
+        section_layout.setSpacing(12)
 
         title_label = QLabel(title)
-        title_label.setContentsMargins(0, 2, 0, 2)
         title_label.setStyleSheet("""
             font-size: 14px;
             font-weight: 600;
             color: #20443D;
         """)
 
-        layout.addWidget(title_label)
-        layout.addSpacing(4)
-        return frame, layout
+        section_layout.addWidget(title_label)
+        return frame, section_layout
 
     def small_button(text):
         btn = QPushButton(text)
         btn.setFixedHeight(32)
-        btn.setMinimumWidth(140)
+        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         return btn
+
+    def create_grid_section(title, rows, columns=3):
+        frame, section_layout = create_section(title)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(10)
+
+        for col in range(columns):
+            grid.setColumnStretch(col, 1)
+
+        for r, row in enumerate(rows):
+            for c, widget in enumerate(row):
+                if widget:
+                    grid.addWidget(widget, r, c)
+
+        section_layout.addLayout(grid)
+        layout.addWidget(frame)
+
+    def create_setting_row(label_text, widget, attr_name, tooltip=None):
+        row = QHBoxLayout()
+        row.setSpacing(10)
+
+        label = QLabel(label_text)
+        label.setMinimumWidth(220)
+        label.setStyleSheet("font-weight: 500;")
+
+        if tooltip:
+            label.setToolTip(tooltip)
+            widget.setToolTip(tooltip)
+
+        def update():
+            value = widget.value()
+            setattr(settings, attr_name, value)
+            logger.log(f"[SETTINGS] {attr_name} set to {value}", level="INFO")
+
+        widget.editingFinished.connect(update)
+
+        row.addWidget(label)
+        row.addWidget(widget)
+        row.addStretch()
+
+        return row
 
 
     # BUTTONS
+
+
     open_logs_button = small_button("Open Logs")
-    export_players_button = small_button("Export Playerlist")
-    import_players_button = small_button("Import Playerlist")
     reload_ui_button = small_button("Reload UI")
+
+    import_players_button = small_button("Import Playerlist")
+    export_players_button = small_button("Export Playerlist")
+
+    import_db_button = small_button("Import Database")
+    export_db_button = small_button("Export Database")
+
     sync_matchzy_button = small_button("Sync with Matchzy")
 
-
-    # DEBUG SECTION
-    debug_frame, debug_layout = create_section("Debug")
-
-    debug_layout.addWidget(open_logs_button, alignment=Qt.AlignLeft)
-    debug_layout.addWidget(reload_ui_button, alignment=Qt.AlignLeft)
-
-    layout.addWidget(debug_frame)
+    # disable DB buttons for now
+    import_db_button.setEnabled(False)
+    export_db_button.setEnabled(False)
 
 
-    # DATABASE SECTION
-    db_frame, db_layout = create_section("Database")
-
-    db_layout.addWidget(export_players_button, alignment=Qt.AlignLeft)
-    db_layout.addWidget(import_players_button, alignment=Qt.AlignLeft)
-    db_layout.addWidget(sync_matchzy_button, alignment=Qt.AlignLeft)
-
-    layout.addWidget(db_frame)
+    # SECTIONS
 
 
-    # SETTINGS SECTION
+    # DEBUG
+    create_grid_section("Debug", [
+        [open_logs_button, reload_ui_button]
+    ], columns=2)
+
+    # DATABASE
+    create_grid_section("Database", [
+        [import_players_button, import_db_button, sync_matchzy_button],
+        [export_players_button, export_db_button, None]
+    ])
+
+    # SETTINGS
     settings_frame, settings_layout = create_section("Settings")
 
-    # container for this setting
-    row = QHBoxLayout()
-    row.setSpacing(10)
+    # cooldown
+    spin_cooldown = QSpinBox()
+    spin_cooldown.setRange(0, 9999)
+    spin_cooldown.setValue(settings.update_cooldown_minutes)
+    spin_cooldown.setFixedWidth(100)
+    spin_cooldown.setButtonSymbols(QSpinBox.NoButtons)
 
-    label = QLabel("Update cooldown (minutes):")
-    label.setMinimumWidth(220)
-    label.setStyleSheet("""
-        font-weight: 500;
-        border: none;
-        background: transparent;
-    """)
-    spin = QSpinBox()
-    spin.setRange(0, 9999)
-    spin.setValue(settings.update_cooldown_minutes)
-    spin.setFixedWidth(100)
-    spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
-    def on_cooldown_changed():
-        value = spin.value()
-        settings.update_cooldown_minutes = value
+    settings_layout.addLayout(create_setting_row(
+        "Update cooldown (minutes):",
+        spin_cooldown,
+        "update_cooldown_minutes",
+        "Minimum time between updates\nRecommended: 10"
+    ))
 
-        logger.log(
-            f"[SETTINGS] Cooldown set to {value}",
-            level="INFO"
-        )
+    # dist weight
+    spin_weight = QDoubleSpinBox()
+    spin_weight.setRange(0.0, 0.5)
+    spin_weight.setSingleStep(0.01)
+    spin_weight.setDecimals(2)
+    spin_weight.setValue(settings.dist_weight)
+    spin_weight.setFixedWidth(100)
 
-    spin.editingFinished.connect(on_cooldown_changed)
-    tooltip = "Minimum time between player updates. Set to 0 to disable cooldown.\nRecommended: 10"
-    label.setToolTip(tooltip)
-    spin.setToolTip(tooltip)
-    row.addWidget(label)
-    row.addWidget(spin)
+    settings_layout.addLayout(create_setting_row(
+        "Team balance weight:",
+        spin_weight,
+        "dist_weight",
+        "Higher = more random teams\nRecommended: 0.25"
+    ))
 
-    # DIST WEIGHT
-    row2 = QHBoxLayout()
-    row2.setSpacing(10)
+    # default rating
+    spin_rating = QSpinBox()
+    spin_rating.setRange(0, 50000)
+    spin_rating.setValue(settings.default_rating)
+    spin_rating.setFixedWidth(100)
+    spin_rating.setButtonSymbols(QSpinBox.NoButtons)
 
-    label2 = QLabel("Team balance weight:")
-    label2.setMinimumWidth(220)
-    label2.setStyleSheet("""
-        font-weight: 500;
-        border: none;
-        background: transparent;
-    """)
-
-    spin2 = QDoubleSpinBox()
-    spin2.setRange(0.0, 0.5)
-    spin2.setSingleStep(0.01)
-    spin2.setDecimals(2)
-    spin2.setValue(settings.dist_weight)
-    spin2.setFixedWidth(100)
-
-    def on_dist_weight_changed():
-        value = spin2.value()
-        settings.dist_weight = value
-
-        logger.log(
-            f"[SETTINGS] dist_weight set to {value}",
-            level="INFO"
-        )
-
-    spin2.editingFinished.connect(on_dist_weight_changed)
-    tooltip = "Controls how strongly skill distribution affects team balancing.\nHigher = more random teams, lower = more even teams.\nRecommended: 0.25"
-
-    label2.setToolTip(tooltip)
-    spin2.setToolTip(tooltip)
-    row2.addWidget(label2)
-    row2.addWidget(spin2)
-    row2.addStretch()
-
-    settings_layout.addLayout(row2)
-
-    # spacer?
-    row.addStretch()
-
-    settings_layout.addLayout(row)
+    settings_layout.addLayout(create_setting_row(
+        "Default rating:",
+        spin_rating,
+        "default_rating",
+        "Fallback rating\nRecommended: 10000"
+    ))
 
     layout.addWidget(settings_frame)
-
     layout.addStretch()
-
-    # WINDOW STATE
-    log_window = {"instance": None}
 
 
     # ACTIONS
+    
     def open_logs():
         global LOG_WINDOW_INSTANCE
-
         if LOG_WINDOW_INSTANCE is None or not LOG_WINDOW_INSTANCE.isVisible():
             LOG_WINDOW_INSTANCE = LogWindow()
-
         LOG_WINDOW_INSTANCE.show()
         LOG_WINDOW_INSTANCE.raise_()
         LOG_WINDOW_INSTANCE.activateWindow()
-
-    def export_players():
-        logger.log_user_action("Export Playerlist")
-
-        path, _ = QFileDialog.getSaveFileName(
-            parent,
-            "Export Players",
-            "players.json",
-            "JSON Files (*.json)"
-        )
-
-        if not path:
-            return
-
-        db_export_players(path)
-
-    def import_players():
-        path, _ = QFileDialog.getOpenFileName(
-            parent,
-            "Import Players",
-            "",
-            "JSON Files (*.json)"
-        )
-
-        if not path:
-            return
-
-        db_import_players(path)
-
-        if on_players_updated:
-            on_players_updated()
 
     def reload_ui():
         logger.log_user_action("Reload UI")
         from gui import restart_window
         restart_window()
 
+    def import_players():
+        path, _ = QFileDialog.getOpenFileName(parent, "Import Players", "", "JSON Files (*.json)")
+        if path:
+            db_import_players(path)
+            if on_players_updated:
+                on_players_updated()
+
+    def export_players():
+        path, _ = QFileDialog.getSaveFileName(parent, "Export Players", "players.json", "JSON Files (*.json)")
+        if path:
+            db_export_players(path)
+
     def sync_matchzy_action():
-        logger.log_user_action("Sync Matchzy")
         sync_matchzy_button.setEnabled(False)
+
         def run():
             try:
                 sync()
@@ -265,12 +258,13 @@ def build_settings_tab(parent, on_players_updated=None):
 
 
     # SIGNALS
-    open_logs_button.clicked.connect(open_logs)
-    export_players_button.clicked.connect(export_players)
-    import_players_button.clicked.connect(import_players)
-    reload_ui_button.clicked.connect(reload_ui)
-    sync_matchzy_button.clicked.connect(sync_matchzy_action)
 
+    open_logs_button.clicked.connect(open_logs)
+    reload_ui_button.clicked.connect(reload_ui)
+    import_players_button.clicked.connect(import_players)
+    export_players_button.clicked.connect(export_players)
+    sync_matchzy_button.clicked.connect(sync_matchzy_action)
+        
 
 # LOG WINDOW 
 class LogWindow(QWidget):

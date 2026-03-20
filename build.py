@@ -11,6 +11,7 @@ cmd = [
     "--collect-all", "selenium",
     "--collect-all", "mysql.connector",
     "--add-data", ".env;.",
+    "--add-data", "assets;assets",
     "--clean"
 ]
 

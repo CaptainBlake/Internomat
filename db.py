@@ -8,11 +8,8 @@ from services.settings import settings
 
 DB_FILE = "internomat.db"
 
-
-
 def get_conn():
     return sqlite3.connect(DB_FILE)
-
 
 def init_db():
 
@@ -306,54 +303,6 @@ def get_players_to_update(max_age_minutes=None):
     logger.log(f"[DB] Players to update count={len(result)}", level="DEBUG")
     return result
 
-# player import / export
-
-def export_players(filepath):
-    with get_conn() as conn:
-        cur = conn.execute("""
-            SELECT
-                steam64_id,
-                name
-            FROM players
-        """)
-
-        columns = [c[0] for c in cur.description]
-        rows = cur.fetchall()
-
-        players = [dict(zip(columns, row)) for row in rows]
-
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(players, f, indent=2)
-
-    logger.log(f"[DB] Export players count={len(players)} -> {filepath}", level="INFO")
-
-def import_players(filepath):
-    with open(filepath, "r", encoding="utf-8") as f:
-        players = json.load(f)
-
-    count = 0
-
-    for p in players:
-        if not isinstance(p, dict):
-            continue
-
-        if not p.get("steam64_id") or not p.get("name"):
-            continue
-
-        try:
-            player = {
-                "steam64_id": p["steam64_id"],
-                "name": p["name"]
-            }
-
-            upsert_player(player, mode="import")
-            count += 1
-
-        except Exception as e:
-            logger.log_error(f"Import error {p.get('steam64_id')}", exc=e)
-
-    logger.log(f"[DB] Import players count={count}", level="INFO")
-       
 # MATCH PIPELINE
 
 def insert_match(data):
@@ -488,13 +437,11 @@ def get_maps():
     logger.log(f"[DB] Loaded map-pool = {len(result)}", level="DEBUG")
     return result
 
-
 def add_map(name):
     with get_conn() as conn:
         conn.execute("INSERT OR IGNORE INTO maps(name) VALUES(?)", (name.strip(),))
 
     logger.log(f"[DB] Add map {name}", level="INFO")
-
 
 def delete_map(name):
     with get_conn() as conn:
@@ -502,8 +449,174 @@ def delete_map(name):
 
     logger.log(f"[DB] Delete map {name}", level="INFO")
 
-
 def map_exists(name):
     with get_conn() as conn:
         cur = conn.execute("SELECT 1 FROM maps WHERE name = ?", (name,))
         return cur.fetchone() is not None
+    
+# IMPORT 
+
+def import_players(filepath):
+    
+    with open(filepath, "r", encoding="utf-8") as f:
+        players = json.load(f)
+
+    count = 0
+
+    for p in players:
+        if not isinstance(p, dict):
+            continue
+
+        if not p.get("steam64_id") or not p.get("name"):
+            continue
+
+        try:
+            player = {
+                "steam64_id": p["steam64_id"],
+                "name": p["name"]
+            }
+
+            upsert_player(player, mode="import")
+            count += 1
+
+        except Exception as e:
+            logger.log_error(f"Import error {p.get('steam64_id')}", exc=e)
+
+    logger.log(f"[DB] Import players count={count}", level="INFO")
+       
+# TODO: not working yet
+def import_database(filepath):
+    logger.log("[DB] Import database start", level="INFO")
+
+    with open(filepath, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    matches = data.get("matches", {})
+    players = data.get("players", [])
+    maps = data.get("maps", [])
+
+    conn = get_conn()
+    conn.execute("BEGIN")
+    # --- MAPS ---
+    for m in maps:
+        conn.execute("INSERT OR IGNORE INTO maps(name) VALUES(?)", (m,))
+
+    # --- PLAYERS ---
+    for p in players:
+        try:
+            upsert_player(p, mode="full")
+        except Exception as e:
+            logger.log_error(f"[IMPORT] Player failed {p.get('steam64_id')}", exc=e)
+
+    # --- MATCHES ---
+    for match_id, bundle in matches.items():
+
+        match = bundle.get("match")
+        maps_data = bundle.get("maps", [])
+        players_data = bundle.get("players", [])
+
+        try:
+            # match
+            insert_match(match)
+
+            # maps
+            for m in maps_data:
+                insert_match_map(m)
+
+            # players
+            for p in players_data:
+                insert_match_player_stats(p)
+
+        except Exception as e:
+            logger.log_error(f"[IMPORT] Match failed {match_id}", exc=e)
+
+    conn.commit()
+    conn.close()
+
+    logger.log(
+        f"[DB] Import complete matches={len(matches)} players={len(players)}",
+        level="INFO"
+    )
+
+# EXPORT
+
+def export_players(filepath):
+    with get_conn() as conn:
+        cur = conn.execute("""
+            SELECT
+                steam64_id,
+                name
+            FROM players
+        """)
+
+        columns = [c[0] for c in cur.description]
+        rows = cur.fetchall()
+
+        players = [dict(zip(columns, row)) for row in rows]
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(players, f, indent=2)
+
+    logger.log(f"[DB] Export players count={len(players)} -> {filepath}", level="INFO")
+
+# Same here: TODO: not working yet
+def export_database(filepath):
+    logger.log("[DB] Export database start", level="INFO")
+
+    data = {
+        "schema_version": 1,
+        "exported_at": datetime.utcnow().isoformat(),
+        "matches": {},
+        "players": [],
+        "maps": []
+    }
+
+    with get_conn() as conn:
+
+        # --- PLAYERS ---
+        cur = conn.execute("SELECT * FROM players")
+        cols = [c[0] for c in cur.description]
+        data["players"] = [dict(zip(cols, row)) for row in cur.fetchall()]
+
+        # --- MAP POOL ---
+        cur = conn.execute("SELECT name FROM maps")
+        data["maps"] = [r[0] for r in cur.fetchall()]
+
+        # --- MATCHES ---
+        cur = conn.execute("SELECT * FROM matches")
+        match_cols = [c[0] for c in cur.description]
+        matches = cur.fetchall()
+
+        for match in matches:
+            match_dict = dict(zip(match_cols, match))
+            match_id = match_dict["match_id"]
+
+            # maps
+            cur_maps = conn.execute(
+                "SELECT * FROM match_maps WHERE match_id = ?",
+                (match_id,)
+            )
+            map_cols = [c[0] for c in cur_maps.description]
+            maps = [dict(zip(map_cols, row)) for row in cur_maps.fetchall()]
+
+            # players
+            cur_players = conn.execute(
+                "SELECT * FROM match_player_stats WHERE match_id = ?",
+                (match_id,)
+            )
+            player_cols = [c[0] for c in cur_players.description]
+            players = [dict(zip(player_cols, row)) for row in cur_players.fetchall()]
+
+            data["matches"][match_id] = {
+                "match": match_dict,
+                "maps": maps,
+                "players": players
+            }
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+    logger.log(
+        f"[DB] Export complete matches={len(data['matches'])} players={len(data['players'])}",
+        level="INFO"
+    )

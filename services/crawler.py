@@ -14,6 +14,7 @@ from selenium.webdriver.support import expected_conditions as EC
 
 from dotenv import load_dotenv
 import services.logger as logger
+from services.settings import settings
 
 # ENV & CONFIG
 def resource_path(relative_path):
@@ -26,14 +27,6 @@ def resource_path(relative_path):
 
 env_path = resource_path(".env")
 load_dotenv(env_path)
-
-# CONSTANTS
-DEFAULT_RATING = 10000
-LEETIFY_API = os.getenv("LEETIFY_API")
-
-if not LEETIFY_API:
-    raise RuntimeError("Missing LEETIFY_API in .env file")
-
 
 # STEAM PARSING
 
@@ -89,7 +82,9 @@ def _resolve_vanity(identifier):
 # LEETIFY API
 
 def get_leetify_player(steam_id):
-
+    LEETIFY_API = os.getenv("LEETIFY_API")
+    if not LEETIFY_API:
+        raise RuntimeError("Missing LEETIFY_API in .env file")
     redacted = logger.redact(steam_id)
     logger.log(f"[FETCH] Leetify API start {redacted}", level="DEBUG")
 
@@ -210,7 +205,7 @@ def _get_leetify_profile_fallback(steam_id):
             "steam64_id": steam_id,
             "leetify_id": None,
             "name": name if name else steam_id,
-            "premier_rating": DEFAULT_RATING,
+            "premier_rating": settings.default_rating,
             "leetify_rating": None,
             "total_matches": None,
             "winrate": None
