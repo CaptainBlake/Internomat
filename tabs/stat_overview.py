@@ -15,9 +15,9 @@ import services.logger as logger
 
 
 TOP3_STYLES = {
-    1: {"bg": QColor("#FFF3C4"), "fg": QColor("#7A5A00"), "bold": True},   # Gold
-    2: {"bg": QColor("#E8EEF5"), "fg": QColor("#4A5A6A"), "bold": True},   # Silver
-    3: {"bg": QColor("#F6D9B8"), "fg": QColor("#7A3E00"), "bold": True},   # Bronze
+    1: {"bg": QColor("#FFF3C4"), "fg": QColor("#7A5A00"), "bold": True, "medal": "🥇"},
+    2: {"bg": QColor("#E8EEF5"), "fg": QColor("#4A5A6A"), "bold": True, "medal": "🥈"},
+    3: {"bg": QColor("#F6D9B8"), "fg": QColor("#7A3E00"), "bold": True, "medal": "🥉"},
 }
 
 
@@ -31,7 +31,26 @@ def _style_top3_item(item, place):
 
     font = item.font()
     font.setBold(style["bold"])
+
+    if item.text() in {"🥇", "🥈", "🥉"}:
+        font.setPointSize(15)
+        font.setBold(True)
+
     item.setFont(font)
+    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
+
+def _clear_layout(layout):
+    while layout.count():
+        item = layout.takeAt(0)
+        widget = item.widget()
+        child_layout = item.layout()
+
+        if widget is not None:
+            widget.setParent(None)
+            widget.deleteLater()
+        elif child_layout is not None:
+            _clear_layout(child_layout)
 
 
 def _build_leaderboard(title_text, headers, rows, value_suffix="", top3_colorize=False):
@@ -39,7 +58,7 @@ def _build_leaderboard(title_text, headers, rows, value_suffix="", top3_colorize
     frame.setStyleSheet("""
         QFrame {
             background: rgba(255, 255, 255, 0.92);
-            border: 1px solid #D5EEE6;
+            border: none;
             border-radius: 16px;
         }
     """)
@@ -49,38 +68,92 @@ def _build_leaderboard(title_text, headers, rows, value_suffix="", top3_colorize
     layout.setSpacing(10)
 
     title = QLabel(title_text)
+    title.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
     title.setStyleSheet("font-size: 15px; font-weight: 800; color: #21443C;")
-    layout.addWidget(title)
+    layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignHCenter)
 
     table = QTableWidget(0, len(headers))
-    table.setHorizontalHeaderLabels(headers)
+    table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
     table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
     table.setAlternatingRowColors(True)
     table.setShowGrid(False)
     table.verticalHeader().setVisible(False)
-    table.horizontalHeader().setStretchLastSection(False)
     table.horizontalHeader().setHighlightSections(False)
-    table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-    table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-    table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+    table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
+    table.horizontalHeader().setStretchLastSection(False)
+
+    if len(headers) == 3:
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+    else:
+        for i in range(len(headers)):
+            table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.Stretch)
+
+    header_font = QFont()
+    header_font.setPointSize(12)
+    header_font.setBold(True)
+
+    for i, text in enumerate(headers):
+        header_item = QTableWidgetItem(text)
+        header_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        header_item.setFont(header_font)
+        table.setHorizontalHeaderItem(i, header_item)
+
+    table.horizontalHeader().setStyleSheet("""
+        QHeaderView {
+            border: none;
+            background: transparent;
+        }
+        QHeaderView::section {
+            background: #EAF8F3;
+            color: #4A7168;
+            padding: 10px;
+            border: none;
+            font-size: 12pt;
+            font-weight: 800;
+            text-align: center;
+        }
+    """)
 
     table.setStyleSheet("""
         QTableWidget {
             background: transparent;
             border: none;
+            outline: none;
             alternate-background-color: #F8FCFA;
             color: #20443D;
         }
-        QHeaderView::section {
-            background: #EAF8F3;
-            color: #4A7168;
-            padding: 6px;
+        QTableWidget:focus {
             border: none;
-            font-weight: 700;
+            outline: none;
         }
         QTableWidget::item {
             padding: 6px;
+            border: none;
+            outline: none;
+        }
+        QTableWidget::item:selected {
+            background: #DFF7EF;
+            color: #4A7168;
+            border: none;
+            outline: none;
+        }
+        QTableWidget::item:focus {
+            border: none;
+            outline: none;
+        }
+        QAbstractItemView {
+            outline: none;
+        }
+        QAbstractItemView::item {
+            border: none;
+            outline: none;
+        }
+        QAbstractItemView::item:selected {
+            border: none;
+            outline: none;
         }
     """)
 
@@ -88,11 +161,14 @@ def _build_leaderboard(title_text, headers, rows, value_suffix="", top3_colorize
         row_index = table.rowCount()
         table.insertRow(row_index)
 
-        rank_item = QTableWidgetItem(str(idx))
+        medal = TOP3_STYLES.get(idx, {}).get("medal", str(idx))
+
+        rank_item = QTableWidgetItem(medal)
         player_item = QTableWidgetItem(str(row[0]))
         value_item = QTableWidgetItem(f"{row[2]}{value_suffix}")
 
         rank_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        player_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         value_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
         if top3_colorize:
@@ -175,9 +251,17 @@ def refresh_stat_overview(parent):
 
     while layout.count() > 2:
         item = layout.takeAt(2)
+        if item is None:
+            continue
+
         widget = item.widget()
+        child_layout = item.layout()
+
         if widget is not None:
+            widget.setParent(None)
             widget.deleteLater()
+        elif child_layout is not None:
+            _clear_layout(child_layout)
 
     content = QGridLayout()
     content.setSpacing(12)
