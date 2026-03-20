@@ -1,6 +1,7 @@
 import threading
 
 from PySide6.QtCore import Qt, Signal, QObject
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
@@ -36,6 +37,134 @@ class UiDispatcher(QObject):
     balance_finished = Signal(object, object, int)
     balance_error = Signal(object)
 
+def _apply_table_style(table):
+    table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+    table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+    table.setAlternatingRowColors(True)
+    table.setShowGrid(False)
+    table.verticalHeader().setVisible(False)
+    table.horizontalHeader().setHighlightSections(False)
+    table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
+    table.horizontalHeader().setStretchLastSection(False)
+
+    table.setStyleSheet("""
+        QTableWidget {
+            background: transparent;
+            border: none;
+            outline: none;
+            alternate-background-color: #F8FCFA;
+            color: #20443D;
+        }
+        QTableWidget:focus {
+            border: none;
+            outline: none;
+        }
+        QTableWidget::item {
+            padding: 6px;
+            border: none;
+            outline: none;
+        }
+        QTableWidget::item:selected {
+            background: #DFF7EF;
+            color: #4A7168;
+            border: none;
+            outline: none;
+        }
+        QTableWidget::item:focus {
+            border: none;
+            outline: none;
+        }
+        QAbstractItemView {
+            outline: none;
+        }
+        QAbstractItemView::item {
+            border: none;
+            outline: none;
+        }
+        QAbstractItemView::item:selected {
+            border: none;
+            outline: none;
+        }
+    """)
+
+    table.horizontalHeader().setStyleSheet("""
+        QHeaderView {
+            border: none;
+            background: transparent;
+        }
+        QHeaderView::section {
+            background: #EAF8F3;
+            color: #4A7168;
+            padding: 10px;
+            border: none;
+            font-size: 12pt;
+            font-weight: 800;
+            text-align: center;
+        }
+    """)
+
+    header_font = QFont()
+    header_font.setPointSize(12)
+    header_font.setBold(True)
+
+    for i in range(table.columnCount()):
+        item = table.horizontalHeaderItem(i)
+        if item is not None:
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item.setFont(header_font)
+
+
+def _apply_result_table_style(table):
+    table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+    table.setAlternatingRowColors(True)
+    table.setShowGrid(False)
+    table.verticalHeader().setVisible(False)
+    table.horizontalHeader().hide()
+    table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+
+    table.setStyleSheet("""
+        QTableWidget {
+            background: transparent;
+            border: none;
+            outline: none;
+            alternate-background-color: #F8FCFA;
+            color: #20443D;
+        }
+        QTableWidget:focus {
+            border: none;
+            outline: none;
+        }
+        QTableWidget::item {
+            padding: 8px;
+            border: none;
+            outline: none;
+        }
+        QTableWidget::item:selected {
+            background: #DFF7EF;
+            color: #4A7168;
+            border: none;
+            outline: none;
+        }
+        QTableWidget::item:focus {
+            border: none;
+            outline: none;
+        }
+        QAbstractItemView {
+            outline: none;
+        }
+        QAbstractItemView::item {
+            border: none;
+            outline: none;
+        }
+        QAbstractItemView::item:selected {
+            border: none;
+            outline: none;
+        }
+    """)
+
+
 def build_team_tab(parent):
     dispatcher = UiDispatcher(parent)
 
@@ -67,23 +196,23 @@ def build_team_tab(parent):
     lists_layout.setSpacing(10)
 
     db_tree = QTableWidget(0, 2)
+    db_tree.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     db_tree.setHorizontalHeaderLabels(["Player", "Rating"])
+    _apply_table_style(db_tree)
     db_tree.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
     db_tree.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
-    db_tree.verticalHeader().setVisible(False)
     db_tree.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
     db_tree.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-    db_tree.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
 
     pool_tree = QTableWidget(0, 3)
+    pool_tree.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     pool_tree.setHorizontalHeaderLabels(["#", "Player", "Rating"])
+    _apply_table_style(pool_tree)
     pool_tree.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
     pool_tree.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
-    pool_tree.verticalHeader().setVisible(False)
     pool_tree.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
     pool_tree.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
     pool_tree.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-    pool_tree.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
 
     btn_frame = QFrame()
     btn_layout = QVBoxLayout(btn_frame)
@@ -157,16 +286,50 @@ def build_team_tab(parent):
     ct_total = QLabel("Total: 0")
     t_total = QLabel("Total: 0")
 
-    team_a_tree = QTableWidget(0, 2)
-    team_b_tree = QTableWidget(0, 2)
+    ct_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    t_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    ct_title.setStyleSheet("""
+        QLabel {
+            background: #3A7BD5;
+            color: #FFFFFF;
+            padding: 8px 12px;
+            font-size: 13px;
+            font-weight: 800;
+            border-top-left-radius: 12px;
+            border-top-right-radius: 12px;
+            border-bottom-left-radius: 0px;
+            border-bottom-right-radius: 0px;
+        }
+    """)
+
+    t_title.setStyleSheet("""
+        QLabel {
+            background: #D94A4A;
+            color: #FFFFFF;
+            padding: 8px 12px;
+            font-size: 13px;
+            font-weight: 800;
+            border-top-left-radius: 12px;
+            border-top-right-radius: 12px;
+            border-bottom-left-radius: 0px;
+            border-bottom-right-radius: 0px;
+        }
+    """)
+
+    ct_layout.setContentsMargins(0, 0, 0, 0)
+    ct_layout.setSpacing(0)
+    t_layout.setContentsMargins(0, 0, 0, 0)
+    t_layout.setSpacing(0)
+
+    team_a_tree = QTableWidget(0, 1)
+    team_b_tree = QTableWidget(0, 1)
 
     for tree in (team_a_tree, team_b_tree):
-        tree.setHorizontalHeaderLabels(["Player", "Rating"])
-        tree.verticalHeader().setVisible(False)
-        tree.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        tree.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        tree.setHorizontalHeaderLabels(["Player"])
+        _apply_result_table_style(tree)
         tree.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        tree.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        tree.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
 
     ct_layout.addWidget(ct_title)
     ct_layout.addWidget(team_a_tree, 1)
@@ -184,8 +347,6 @@ def build_team_tab(parent):
     diff_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     layout.addWidget(diff_label)
 
-
-    # Helper functions
     def on_progress(i, total_count):
         update_button.setText(f"Updating {i}/{total_count}")
 
@@ -418,39 +579,49 @@ def build_team_tab(parent):
         threading.Thread(target=worker, daemon=True).start()
 
     def on_balance_finished(team_a, team_b, diff):
-            clear_table(team_a_tree)
-            clear_table(team_b_tree)
+        clear_table(team_a_tree)
+        clear_table(team_b_tree)
 
-            team_a = sorted(team_a, key=lambda p: p[2], reverse=True)
-            team_b = sorted(team_b, key=lambda p: p[2], reverse=True)
+        team_a = sorted(team_a, key=lambda p: p[2], reverse=True)
+        team_b = sorted(team_b, key=lambda p: p[2], reverse=True)
 
-            sum_a = 0
-            for p in team_a:
-                row = team_a_tree.rowCount()
-                team_a_tree.insertRow(row)
-                team_a_tree.setItem(row, 0, QTableWidgetItem(p[1]))
-                rating_item = QTableWidgetItem(str(p[2]))
-                rating_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                team_a_tree.setItem(row, 1, rating_item)
-                sum_a += p[2]
+        sum_a = 0
+        for p in team_a:
+            row = team_a_tree.rowCount()
+            team_a_tree.insertRow(row)
 
-            sum_b = 0
-            for p in team_b:
-                row = team_b_tree.rowCount()
-                team_b_tree.insertRow(row)
-                team_b_tree.setItem(row, 0, QTableWidgetItem(p[1]))
-                rating_item = QTableWidgetItem(str(p[2]))
-                rating_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                team_b_tree.setItem(row, 1, rating_item)
-                sum_b += p[2]
+            name_item = QTableWidgetItem(p[1])
+            name_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            font = name_item.font()
+            font.setPointSize(12)
+            font.setBold(True)
+            name_item.setFont(font)
 
-            ct_total.setText(f"Total: {sum_a}")
-            t_total.setText(f"Total: {sum_b}")
-            diff_label.setText(f"Rating Difference: {diff}")
+            team_a_tree.setItem(row, 0, name_item)
+            sum_a += p[2]
 
-            generate_button.setEnabled(True)
-            generate_button.setText("Generate Teams")
-            generate_button.setFocus()
+        sum_b = 0
+        for p in team_b:
+            row = team_b_tree.rowCount()
+            team_b_tree.insertRow(row)
+
+            name_item = QTableWidgetItem(p[1])
+            name_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            font = name_item.font()
+            font.setPointSize(12)
+            font.setBold(True)
+            name_item.setFont(font)
+
+            team_b_tree.setItem(row, 0, name_item)
+            sum_b += p[2]
+
+        ct_total.setText(f"Total: {sum_a}")
+        t_total.setText(f"Total: {sum_b}")
+        diff_label.setText(f"Rating Difference: {diff}")
+
+        generate_button.setEnabled(True)
+        generate_button.setText("Generate Teams")
+        generate_button.setFocus()
 
 
     def on_balance_error(e):

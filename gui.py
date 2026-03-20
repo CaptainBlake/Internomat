@@ -80,6 +80,48 @@ QLineEdit, QTableWidget, QListWidget {
     selection-color: #FFFFFF;
 }
 
+/* Tables: no focus border / black outline */
+QTableWidget {
+    outline: none;
+}
+
+QTableWidget:focus {
+    border: 1px solid #D5EEE6;
+    outline: none;
+}
+
+QTableWidget::item {
+    color: #20443D;
+    border: none;
+    outline: none;
+}
+
+QTableWidget::item:selected {
+    background-color: #DFF7EF;
+    color: #4A7168;
+    border: none;
+    outline: none;
+}
+
+QTableWidget::item:focus {
+    border: none;
+    outline: none;
+}
+
+QAbstractItemView {
+    outline: none;
+}
+
+QAbstractItemView::item {
+    border: none;
+    outline: none;
+}
+
+QAbstractItemView::item:selected {
+    border: none;
+    outline: none;
+}
+
 QLineEdit:focus, QTableWidget:focus, QListWidget:focus {
     border: 1px solid #6CCFB6;
 }
@@ -112,6 +154,19 @@ QHeaderView::section {
     padding: 6px;
     border: none;
     font-weight: 600;
+}
+
+QHeaderView::section:first {
+    border-top-left-radius: 8px;
+}
+
+QHeaderView::section:last {
+    border-top-right-radius: 8px;
+}
+
+QHeaderView::section:only-one {
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
 }
 
 QTableWidget::item:selected, QListWidget::item:selected {
