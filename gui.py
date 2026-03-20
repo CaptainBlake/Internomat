@@ -266,8 +266,6 @@ def start_gui():
     MAIN_WINDOW.show()
 
     logger.log("[APP_READY] GUI running", level="INFO")
-    from services.crawler import close_driver
-    app.aboutToQuit.connect(close_driver)
     app.exec()
     
 def restart_window():

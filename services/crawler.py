@@ -40,14 +40,12 @@ def get_player_identifier(url):
 
 
 def _extract_steam_identifier(url):
-
     url = url.strip()
 
     if url.isdigit():
         return url
 
     pattern = r"steamcommunity\.com/(?:id|profiles)/([^/?]+)"
-
     match = re.search(pattern, url)
 
     if not match:
@@ -57,12 +55,10 @@ def _extract_steam_identifier(url):
 
 
 def _resolve_vanity(identifier):
-
     redacted = logger.redact(identifier)
     logger.log(f"[FETCH] Resolve vanity {redacted}", level="DEBUG")
 
     url = f"https://steamcommunity.com/id/{identifier}?xml=1"
-
     r = requests.get(url, timeout=5)
 
     if r.status_code != 200:
@@ -70,7 +66,6 @@ def _resolve_vanity(identifier):
         raise Exception("Failed to resolve Steam vanity URL")
 
     root = ET.fromstring(r.text)
-
     steamid64 = root.findtext("steamID64")
 
     if not steamid64:
@@ -89,54 +84,74 @@ def get_driver():
         _driver = _create_driver()
     return _driver
 
+
 def close_driver():
     global _driver
-    if _driver:
-        _driver.quit()
-        _driver = None
-    logger.log("[CRAWLER] Selenium driver closed", level="DEBUG")
 
-def get_leetify_player(steam_id):
+    if _driver:
+        logger.log("[CRAWLER] Closing Selenium driver", level="DEBUG")
+        try:
+            _driver.quit()
+        except Exception as e:
+            logger.log(f"[CRAWLER] Driver quit failed: {e}", level="DEBUG")
+        finally:
+            _driver = None
+    else:
+        logger.log("[CRAWLER] No driver to close", level="DEBUG")
+
+
+def get_leetify_player(steam_id, auto_close=False):
+    """
+    auto_close = False (default): keeps driver alive (used for bulk)
+    auto_close = True: ensures driver cleanup after call
+    """
+
     LEETIFY_API = os.getenv("LEETIFY_API")
     if not LEETIFY_API:
         raise RuntimeError("Missing LEETIFY_API in .env file")
+
     redacted = logger.redact(steam_id)
     logger.log(f"[FETCH] Leetify API start {redacted}", level="DEBUG")
 
-    url = "https://api-public.cs-prod.leetify.com/v3/profile"
-    params = {"steam64_id": steam_id}
-    headers = {"Authorization": f"Bearer {LEETIFY_API}"}
+    try:
+        url = "https://api-public.cs-prod.leetify.com/v3/profile"
+        params = {"steam64_id": steam_id}
+        headers = {"Authorization": f"Bearer {LEETIFY_API}"}
 
-    r = requests.get(url, params=params, headers=headers, timeout=5)
+        r = requests.get(url, params=params, headers=headers, timeout=5)
 
-    if r.status_code == 404:
-        logger.log(f"[FETCH_FALLBACK] API 404 -> fallback {redacted}", level="INFO")
-        return _get_leetify_profile_fallback(steam_id)
+        if r.status_code == 404:
+            logger.log(f"[FETCH_FALLBACK] API 404 -> fallback {redacted}", level="INFO")
+            return _get_leetify_profile_fallback(steam_id)
 
-    if r.status_code != 200:
-        logger.log(f"[FETCH_ERROR] API error {r.status_code} for {redacted}", level="INFO")
-        raise Exception(f"Leetify API error ({r.status_code})")
+        if r.status_code != 200:
+            logger.log(f"[FETCH_ERROR] API error {r.status_code} for {redacted}", level="INFO")
+            raise Exception(f"Leetify API error ({r.status_code})")
 
-    data = r.json()
+        data = r.json()
 
-    premier = data.get("ranks", {}).get("premier")
-    leetify = data.get("ranks", {}).get("leetify")
+        premier = data.get("ranks", {}).get("premier")
+        leetify = data.get("ranks", {}).get("leetify")
 
-    if premier is None:
-        logger.log(f"[FETCH_FALLBACK] No premier -> fallback {redacted}", level="INFO")
-        return _get_leetify_profile_fallback(steam_id)
+        if premier is None:
+            logger.log(f"[FETCH_FALLBACK] No premier -> fallback {redacted}", level="INFO")
+            return _get_leetify_profile_fallback(steam_id)
 
-    logger.log(f"[FETCH_SUCCESS] API success {redacted}", level="DEBUG")
+        logger.log(f"[FETCH_SUCCESS] API success {redacted}", level="DEBUG")
 
-    return {
-        "steam64_id": steam_id,
-        "leetify_id": data.get("id"),
-        "name": data.get("name", steam_id),
-        "premier_rating": premier,
-        "leetify_rating": leetify,
-        "total_matches": data.get("total_matches"),
-        "winrate": data.get("winrate")
-    }
+        return {
+            "steam64_id": steam_id,
+            "leetify_id": data.get("id"),
+            "name": data.get("name", steam_id),
+            "premier_rating": premier,
+            "leetify_rating": leetify,
+            "total_matches": data.get("total_matches"),
+            "winrate": data.get("winrate")
+        }
+
+    finally:
+        if auto_close:
+            close_driver()
 
 
 # FALLBACK (SELENIUM)
@@ -148,11 +163,9 @@ def _create_driver():
     options.add_argument("--no-sandbox")
     logger.log("[CRAWLER] Selenium driver created", level="DEBUG")
     return webdriver.Chrome(options=options)
-    
 
 
 def _fetch_leetify_profile_html(steam_id):
-
     redacted = logger.redact(steam_id)
     logger.log(f"[FETCH] Selenium load {redacted}", level="DEBUG")
 
@@ -162,7 +175,7 @@ def _fetch_leetify_profile_html(steam_id):
     driver.get(url)
 
     try:
-        WebDriverWait(driver, 5).until(
+        WebDriverWait(driver, 2).until(  # reduced from 5 → faster
             EC.presence_of_element_located((By.ID, "rank-summary"))
         )
     except:
@@ -172,7 +185,6 @@ def _fetch_leetify_profile_html(steam_id):
 
 
 def _get_steam_name(steam_id):
-
     redacted = logger.redact(steam_id)
     logger.log(f"[FETCH] Steam name lookup {redacted}", level="DEBUG")
 
@@ -194,7 +206,6 @@ def _get_steam_name(steam_id):
 
 
 def _get_leetify_profile_fallback(steam_id):
-
     redacted = logger.redact(steam_id)
     logger.log(f"[FETCH_FALLBACK] Start fallback {redacted}", level="INFO")
 
@@ -235,7 +246,6 @@ def _get_leetify_profile_fallback(steam_id):
 
 
 def _parse_leetify_profile(html, steam_id):
-
     soup = BeautifulSoup(html, "html.parser")
 
     season_map = {
@@ -272,11 +282,9 @@ def _parse_leetify_profile(html, steam_id):
     seasons.sort(reverse=True, key=lambda x: x[0])
 
     for season_number, season in seasons:
-
         rows = season.select("table.rank-groups tbody tr")
 
         for row in rows:
-
             th = row.find("th")
             if not th or "Premier" not in th.text:
                 continue
@@ -286,7 +294,6 @@ def _parse_leetify_profile(html, steam_id):
                 continue
 
             max_rank_cell = cells[1]
-
             large = max_rank_cell.select_one(".label-large")
             small = max_rank_cell.select_one(".label-small")
 
@@ -311,34 +318,36 @@ def _parse_leetify_profile(html, steam_id):
 def fetch_player(url):
     logger.log("[USER] Fetch player from URL", level="INFO")
     steam_id = get_player_identifier(url)
-    return get_leetify_player(steam_id)
+    return get_leetify_player(steam_id, auto_close=True)
 
 
-def fetch_players_bulk(steam_ids, delay=1, on_progress=None, on_player=None):
-
+def fetch_players_bulk(steam_ids, delay=0.5, on_progress=None, on_player=None):
     logger.log(f"[FETCH] Bulk start count={len(steam_ids)}", level="INFO")
-
     results = []
 
-    for i, steam_id in enumerate(steam_ids, start=1):
-        redacted = logger.redact(steam_id)
+    try:
+        for i, steam_id in enumerate(steam_ids, start=1):
+            redacted = logger.redact(steam_id)
 
-        try:
-            player = get_leetify_player(steam_id)
-            results.append(player)
+            try:
+                player = get_leetify_player(steam_id)
+                results.append(player)
 
-            if on_player:
-                on_player(player)
+                if on_player:
+                    on_player(player)
 
-        except Exception as e:
-            logger.log(f"[FETCH_ERROR] Bulk failed {redacted}: {e}", level="INFO")
-            results.append(None)
+            except Exception as e:
+                logger.log(f"[FETCH_ERROR] Bulk failed {redacted}: {e}", level="INFO")
+                results.append(None)
 
-        if on_progress:
-            on_progress(i, len(steam_ids))
+            if on_progress:
+                on_progress(i, len(steam_ids))
 
-        time.sleep(delay)
+            time.sleep(delay)
+
+    finally:
+        logger.log("[FETCH] Cleaning up Selenium", level="DEBUG")
+        close_driver()
 
     logger.log(f"[FETCH] Bulk done count={len(results)}", level="INFO")
-
     return results

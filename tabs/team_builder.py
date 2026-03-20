@@ -186,6 +186,25 @@ def build_team_tab(parent):
 
 
     # Helper functions
+    def on_progress(i, total_count):
+        update_button.setText(f"Updating {i}/{total_count}")
+
+    def on_player(player):
+        if player:
+            db.update_player(player)
+            refresh_players()
+
+    def finish():
+        global update_running
+        update_running = False
+        update_button.setEnabled(True)
+        update_button.setText("Update")
+        logger.log("[UPDATE] Finished", level="INFO")
+
+    def on_error(e):
+        logger.log_error(f"Update failed: {e}", exc=e)
+        show_error_popup(parent, "Error", str(e))
+        finish()
 
     def refresh_pool_display():
         for i in range(pool_tree.rowCount()):
@@ -193,7 +212,6 @@ def build_team_tab(parent):
 
     def clear_table(table):
         table.setRowCount(0)
-
 
     def show_error_popup(parent, title, message):
         logger.log_error(f"{title}: {message}")
@@ -339,7 +357,7 @@ def build_team_tab(parent):
 
         refresh_players()
         refresh_pool_display()
-
+    
     def update_players():
         global update_running
 
@@ -351,9 +369,9 @@ def build_team_tab(parent):
 
         update_running = True
         update_button.setEnabled(False)
-        update_button.setText("Updating...")
 
         steam_ids = db.get_players_to_update()
+
         if not steam_ids:
             show_info("Update", "All players were updated recently.\nTry again later.")
             update_running = False
@@ -364,35 +382,14 @@ def build_team_tab(parent):
         total = len(steam_ids)
         update_button.setText(f"Updating 0/{total}")
 
-        def on_progress(i, total_count):
-            update_button.setText(f"Updating {i}/{total_count}")
-
-        def on_player(player):
-            if player:
-                db.update_player(player)
-                refresh_players()
-
-        def finish():
-            global update_running
-            update_running = False
-            update_button.setEnabled(True)
-            update_button.setText("Update")
-            logger.log("[UPDATE] Finished", level="INFO")
-
-        def on_error(e):
-            logger.log_error(f"Update failed: {e} ", exc=e)
-            show_error_popup(parent, "Error", str(e))
-            finish()
-
         def worker():
             try:
-
                 try:
                     logger.log("[UPDATE] Starting MatchZy sync", level="INFO")
                     matchzy.sync()
                 except Exception as e:
                     dispatcher.update_error.emit(e)
-                
+
                 logger.log(f"[UPDATE] Players to update={len(steam_ids)}", level="INFO")
 
                 for i, steam_id in enumerate(steam_ids, start=1):
@@ -410,10 +407,8 @@ def build_team_tab(parent):
             except Exception as e:
                 dispatcher.update_error.emit(e)
 
-        dispatcher.update_progress.connect(on_progress)
-        dispatcher.update_player_ready.connect(on_player)
-        dispatcher.update_error.connect(on_error)
-        dispatcher.update_finished.connect(finish)
+            finally:
+                crawler.close_driver()
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -506,6 +501,12 @@ def build_team_tab(parent):
     pool_tree.itemDoubleClicked.connect(lambda _: remove_from_pool())
     dispatcher.balance_finished.connect(on_balance_finished)
     dispatcher.balance_error.connect(on_balance_error)
+    dispatcher.update_progress.connect(on_progress)
+    dispatcher.update_player_ready.connect(on_player)
+    dispatcher.update_error.connect(on_error)
+    dispatcher.update_finished.connect(finish)
+
+
     refresh_players()
 
     return refresh_players
