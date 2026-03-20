@@ -182,12 +182,12 @@ def insert_player(player):
             INSERT INTO players VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             player["steam64_id"],
-            player["leetify_id"],
+            player.get("leetify_id"),
             player["name"],
-            player["premier_rating"],
-            player["leetify_rating"],
-            player["total_matches"],
-            player["winrate"],
+            player.get("premier_rating"),
+            player.get("leetify_rating"),
+            player.get("total_matches"),
+            player.get("winrate"),
             now,
             now
         ))
@@ -239,12 +239,17 @@ def player_exists(steam_id):
         return cur.fetchone() is not None
 
 
-def upsert_player(player):
+def upsert_player(player, mode="full"):
     steam_id = logger.redact(player["steam64_id"])
 
     if player_exists(player["steam64_id"]):
         logger.log(f"[DB] Upsert -> update {steam_id}", level="DEBUG")
-        update_player(player)
+
+        if mode == "import":
+            update_player_name(player)
+        else:
+            update_player(player)
+
     else:
         logger.log(f"[DB] Upsert -> insert {steam_id}", level="DEBUG")
         insert_player(player)
@@ -263,6 +268,23 @@ def get_players():
     logger.log(f"[DB] Loaded players count={len(result)}", level="DEBUG")
     return result
 
+def update_player_name(player):
+    now = datetime.utcnow().isoformat()
+    steam_id = logger.redact(player["steam64_id"])
+
+    with get_conn() as conn:
+        conn.execute("""
+            UPDATE players SET
+                name = ?,
+                last_updated = ?
+            WHERE steam64_id = ?
+        """, (
+            player["name"],
+            now,
+            player["steam64_id"]
+        ))
+
+    logger.log(f"[DB] Update player name {steam_id}", level="INFO")
 
 def get_players_to_update(max_age_minutes=UPDATE_COOLDOWN_MINUTES):
     cutoff = (datetime.utcnow() - timedelta(minutes=max_age_minutes)).isoformat()
@@ -284,14 +306,7 @@ def export_players(filepath):
         cur = conn.execute("""
             SELECT
                 steam64_id,
-                leetify_id,
-                name,
-                premier_rating,
-                leetify_rating,
-                total_matches,
-                winrate,
-                added_at,
-                last_updated
+                name
             FROM players
         """)
 
@@ -306,32 +321,32 @@ def export_players(filepath):
     logger.log(f"[DB] Export players count={len(players)} -> {filepath}", level="INFO")
 
 def import_players(filepath):
-    import json
-
     with open(filepath, "r", encoding="utf-8") as f:
         players = json.load(f)
 
     count = 0
-    required_fields = {
-        "steam64_id", "name"
-    }
+
     for p in players:
-        # if dict structure is invalid, skip entry
         if not isinstance(p, dict):
             continue
-        # if required fields are missing, skip entry
-        if not required_fields.issubset(p):
-            logger.log(f"[DB] Invalid player entry skipped -> {p}", level="ERROR")
+
+        if not p.get("steam64_id") or not p.get("name"):
             continue
-        # try to upsert player, if error occurs, log and skip entry
+
         try:
-            upsert_player(p)
+            player = {
+                "steam64_id": p["steam64_id"],
+                "name": p["name"]
+            }
+
+            upsert_player(player, mode="import")
             count += 1
+
         except Exception as e:
-            logger.log(f"[DB] Import error {p.get('steam64_id')} -> {e}", level="ERROR")
+            logger.log_error(f"Import error {p.get('steam64_id')}", exc=e)
 
     logger.log(f"[DB] Import players count={count}", level="INFO")
-    
+       
 # MATCH PIPELINE
 
 def insert_match(data):
