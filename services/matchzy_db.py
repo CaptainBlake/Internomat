@@ -7,41 +7,23 @@ from dotenv import load_dotenv
 import db
 import services.logger as logger
 
-
-# ENV & CONFIG
-
+# path helper for PyInstaller
 def resource_path(relative_path):
     if getattr(sys, "frozen", False):
         base_path = sys._MEIPASS
     else:
         base_path = os.path.abspath(".")
-
     return os.path.join(base_path, relative_path)
-
 
 env_path = resource_path(".env")
 load_dotenv(env_path)
 
-
-required_env_vars = [
-    "MATCHZY_DB_HOST",
-    "MATCHZY_DB_USER",
-    "MATCHZY_DB_PASSWORD",
-    "MATCHZY_DB_NAME"
-]
-
-missing_vars = [var for var in required_env_vars if not os.getenv(var)]
-
-if missing_vars:
-    logger.log_error(f"Missing required environment variables: {', '.join(missing_vars)}")
-    raise RuntimeError(f"Missing required environment variables: {', '.join(missing_vars)}")
-
-
+# --- MATCHZY DB SERVICE ---
 class MatchZyDB:
+
     def __init__(self):
         self.conn = None
 
-    # --- MYSQL CONNECTION ---
     def connect(self):
         if self.conn and self.conn.is_connected():
             return self.conn
@@ -62,189 +44,182 @@ class MatchZyDB:
             )
 
             logger.log("[MYSQL] Connected", level="INFO")
-
             return self.conn
 
         except Error as e:
             logger.log_error(f"MySQL connection failed: {e}")
             raise RuntimeError(f"MatchZy DB connection failed: {e}")
 
-    # --- QUERY ---
     def _query(self, query):
         conn = self.connect()
         cursor = conn.cursor()
-
         try:
             cursor.execute(query)
             return cursor.fetchall()
         finally:
             cursor.close()
 
-    def get_match_tables(self):
-
-        tables_raw = self._query("SHOW TABLES")
-        tables = [t[0] for t in tables_raw]
-
-        logger.log(f"[MYSQL] Tables found={len(tables)}", level="DEBUG")
-
-        for t in tables:
-            logger.log(f"[MYSQL] Table: {t}", level="DEBUG")
-
-        # --- identify matchzy tables ---
-        matchzy_stats_maps = [t for t in tables if t.startswith("matchzy_stats_maps")]
-        matchzy_stats_players = [t for t in tables if t.startswith("matchzy_stats_players")]
-        matchzy_stats_matches = [t for t in tables if t.startswith("matchzy_stats_matches")]
-
-        # --- debug each table ---
-        def debug_table(table_name):
-
-            try:
-                logger.log(f"[MYSQL] Inspecting table={table_name}", level="DEBUG")
-
-                # --- row count ---
-                count = self._query(f"SELECT COUNT(*) FROM {table_name}")[0][0]
-                logger.log(f"[MYSQL] {table_name} rows={count}", level="DEBUG")
-
-                # --- columns ---
-                columns_raw = self._query(f"SHOW COLUMNS FROM {table_name}")
-                columns = [c[0] for c in columns_raw]
-                logger.log(f"[MYSQL] {table_name} columns={columns}", level="DEBUG")
-
-                # --- sample rows (limited!) ---
-                sample_rows = self._query(f"SELECT * FROM {table_name} LIMIT 3")
-
-                for i, row in enumerate(sample_rows):
-                    preview = {
-                        columns[idx]: str(value)[:50]  # truncate to avoid spam
-                        for idx, value in enumerate(row)
-                    }
-                    logger.log(f"[MYSQL] {table_name} sample[{i}]={preview}", level="DEBUG")
-
-            except Exception as e:
-                logger.log_error(f"[MYSQL] Failed inspecting {table_name}: {e}")
-
-        # inspect all 3 tables
-        for t in matchzy_stats_maps:
-            debug_table(t)
-
-        for t in matchzy_stats_players:
-            debug_table(t)
-
-        for t in matchzy_stats_matches:
-            debug_table(t)
-
-        # --- keep legacy match_data_map support ---
-        match_tables = [t for t in tables if t.startswith("match_data_map")]
-
-        logger.log(f"[MATCHZY] Match tables={len(match_tables)}", level="INFO")
-
-        if not match_tables:
-            logger.log_warning("No match_data_map tables found")
-
-        return match_tables
-
-    # --- PARSE TABLE ---
-    def parse_table(self, table_name):
-
-        logger.log(f"[MATCHZY] Parsing table {table_name}", level="DEBUG")
-
-        rows = self._query(f"SELECT * FROM {table_name}")
-
-        if not rows:
-            logger.log_warning(f"Empty table: {table_name}")
-            return []
-
-        header = [str(col) for col in rows[0]]
-
-        parsed_rows = []
-
-        for raw_row in rows[1:]:
-            row_dict = {}
-
-            for i, value in enumerate(raw_row):
-                key = header[i]
-                row_dict[key] = value if value is not None else None
-
-            parsed_rows.append(row_dict)
-
-        logger.log(f"[MATCHZY] Parsed rows={len(parsed_rows)} table={table_name}", level="DEBUG")
-
-        return parsed_rows
-
-    # --- SAFE INT ---
     def _to_int(self, value):
         try:
             return int(value)
         except (TypeError, ValueError):
             return 0
 
-    # --- MAIN SYNC ---
+    # Main sync function - fetches all data from MatchZy DB and upserts into local DB
     def sync_to_local(self):
 
         logger.log("[MATCHZY] Sync start", level="INFO")
 
-        tables = self.get_match_tables()
+        # --- LOAD TABLES ---
+        maps = self._query("SELECT * FROM matchzy_stats_maps")
+        players = self._query("SELECT * FROM matchzy_stats_players")
+        matches = self._query("SELECT * FROM matchzy_stats_matches")
 
-        total_rows = 0
-        total_tables = len(tables)
+        logger.log(f"[MATCHZY] maps={len(maps)} players={len(players)} matches={len(matches)}", level="DEBUG")
 
-        for idx, table in enumerate(tables, start=1):
+        # --- BUILD INDEXES ---
+        players_by_match_map = {}
 
-            logger.log(
-                f"[MATCHZY] Processing table {idx}/{total_tables}: {table}",
-                level="INFO"
-            )
+        for row in players:
+            matchid = str(row[0])
+            mapnumber = self._to_int(row[1])
+            key = (matchid, mapnumber)
+            players_by_match_map.setdefault(key, []).append(row)
 
-            try:
-                parsed_rows = self.parse_table(table)
+        matches_by_id = {str(m[0]): m for m in matches}
 
-                for row in parsed_rows:
+        total_maps = 0
+        total_players = 0
 
-                    match_id = str(row.get("matchid"))
-                    steamid = str(row.get("steamid64"))
+        # --- PROCESS MAPS ---
+        for map_row in maps:
 
-                    db.insert_match(match_id)
+            matchid = str(map_row[0])  
+            mapnumber = self._to_int(map_row[1])
 
-                    db.insert_match_player_stats({
-                        "steamid64": steamid,
-                        "match_id": match_id,
-                        "map_number": self._to_int(row.get("mapnumber")),
+            start_time = map_row[2]
+            end_time = map_row[3]
 
-                        "name": row.get("name"),
-                        "team": row.get("team"),
+            # look if match id exists in local DB - if yes, skip entire match (maps + players)
+            if db.match_exists(matchid):
+                logger.log(f"[MATCHZY] Skipping match {matchid}. Allready exists in local DB", level="DEBUG")
+                continue
+            
+            if not end_time:
+                logger.log(f"[MATCHZY] Skipping unfinished match {matchid}", level="DEBUG")
+                continue
 
-                        "kills": self._to_int(row.get("kills")),
-                        "deaths": self._to_int(row.get("deaths")),
-                        "assists": self._to_int(row.get("assists")),
-                        "damage": self._to_int(row.get("damage")),
+            winner = map_row[4]
+            mapname = map_row[5]
+            team1_score = self._to_int(map_row[6])
+            team2_score = self._to_int(map_row[7])
 
-                        "headshots": self._to_int(row.get("head_shot_kills")),
-                        "flash_successes": self._to_int(row.get("flash_successes")),
-                        "enemies_flashed": self._to_int(row.get("enemies_flashed")),
+            logger.log(f"[MATCHZY] Processing match={matchid} map={mapname}", level="INFO")
 
-                        "entry_wins": self._to_int(row.get("entry_wins")),
-                        "entry_count": self._to_int(row.get("entry_count")),
+            # MATCH
+         
+            match_data = matches_by_id.get(matchid)
 
-                        "v1_wins": self._to_int(row.get("v1_wins")),
-                        "v1_count": self._to_int(row.get("v1_count")),
-                        "v2_wins": self._to_int(row.get("v2_wins")),
-                        "v2_count": self._to_int(row.get("v2_count")),
+            if match_data:
+                db.insert_match({
+                    "match_id": matchid,
+                    "start_time": match_data[1],
+                    "end_time": match_data[2],
+                    "winner": match_data[3],
+                    "series_type": match_data[4],
+                    "team1_name": match_data[5],
+                    "team1_score": self._to_int(match_data[6]),
+                    "team2_name": match_data[7],
+                    "team2_score": self._to_int(match_data[8]),
+                    "server_ip": match_data[9],
+                })
+            else:
+                db.insert_match({
+                    "match_id": matchid
+                })
 
-                        "cash_earned": self._to_int(row.get("cash_earned")),
-                    })
+            
+            # MAP
+            
+            db.insert_match_map({
+                "match_id": matchid,
+                "map_number": mapnumber,
+                "map_name": mapname,
+                "start_time": start_time,
+                "end_time": end_time,
+                "winner": winner,
+                "team1_score": team1_score,
+                "team2_score": team2_score,
+            })
 
-                    total_rows += 1
+            total_maps += 1
 
-            except Exception as e:
-                logger.log_error(f"Failed processing table {table}: {e}")
+            
+            # PLAYERS
+            
+            key = (matchid, mapnumber)
+            map_players = players_by_match_map.get(key, [])
+
+            for p in map_players:
+
+                db.insert_match_player_stats({
+                    "steamid64": str(p[2]),
+                    "match_id": matchid,
+                    "map_number": mapnumber,
+
+                    "team": p[3],
+                    "name": p[4],
+
+                    "kills": self._to_int(p[5]),
+                    "deaths": self._to_int(p[6]),
+                    "damage": self._to_int(p[7]),
+                    "assists": self._to_int(p[8]),
+
+                    "enemy5ks": self._to_int(p[9]),
+                    "enemy4ks": self._to_int(p[10]),
+                    "enemy3ks": self._to_int(p[11]),
+                    "enemy2ks": self._to_int(p[12]),
+
+                    "utility_count": self._to_int(p[13]),
+                    "utility_damage": self._to_int(p[14]),
+                    "utility_successes": self._to_int(p[15]),
+                    "utility_enemies": self._to_int(p[16]),
+
+                    "flash_count": self._to_int(p[17]),
+                    "flash_successes": self._to_int(p[18]),
+
+                    "health_points_removed_total": self._to_int(p[19]),
+                    "health_points_dealt_total": self._to_int(p[20]),
+
+                    "shots_fired_total": self._to_int(p[21]),
+                    "shots_on_target_total": self._to_int(p[22]),
+
+                    "v1_count": self._to_int(p[23]),
+                    "v1_wins": self._to_int(p[24]),
+                    "v2_count": self._to_int(p[25]),
+                    "v2_wins": self._to_int(p[26]),
+
+                    "entry_count": self._to_int(p[27]),
+                    "entry_wins": self._to_int(p[28]),
+
+                    "equipment_value": self._to_int(p[29]),
+                    "money_saved": self._to_int(p[30]),
+                    "kill_reward": self._to_int(p[31]),
+
+                    "live_time": self._to_int(p[32]),
+                    "head_shot_kills": self._to_int(p[33]),
+                    "cash_earned": self._to_int(p[34]),
+                    "enemies_flashed": self._to_int(p[35]),
+                })
+
+                total_players += 1
 
         logger.log(
-            f"[MATCHZY] Sync done tables={total_tables} rows={total_rows}",
+            f"[MATCHZY] Sync done maps={total_maps} players={total_players}",
             level="INFO"
         )
 
 
-# ENTRY POINT
 
 def sync():
     logger.log("[USER] MatchZy sync triggered", level="INFO")

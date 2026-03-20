@@ -22,20 +22,121 @@ def init_db():
 
         conn.execute("PRAGMA journal_mode=WAL")
 
+        # --- PLAYERS ---
         conn.execute("""
-        CREATE TABLE IF NOT EXISTS players(
-            steam64_id TEXT PRIMARY KEY,
-            leetify_id TEXT,
-            name TEXT,
-            premier_rating INTEGER,
-            leetify_rating REAL,
-            total_matches INTEGER,
-            winrate REAL,
-            added_at TEXT,
-            last_updated TEXT
+            CREATE TABLE IF NOT EXISTS players(
+                steam64_id TEXT PRIMARY KEY,
+                leetify_id TEXT,
+                name TEXT,
+                premier_rating INTEGER,
+                leetify_rating REAL,
+                total_matches INTEGER,
+                winrate REAL,
+                added_at TEXT,
+                last_updated TEXT
+            )
+        """)
+
+        # --- MATCH META ---
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS matches (
+            match_id TEXT PRIMARY KEY,
+
+            start_time TEXT,
+            end_time TEXT,
+
+            winner TEXT,
+            series_type TEXT,
+
+            team1_name TEXT,
+            team1_score INTEGER,
+
+            team2_name TEXT,
+            team2_score INTEGER,
+
+            server_ip TEXT,
+
+            created_at TEXT
         )
         """)
 
+        # --- MAPS PER MATCH ---
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS match_maps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            match_id TEXT,
+            map_number INTEGER,
+            map_name TEXT,
+
+            start_time TEXT,
+            end_time TEXT,
+
+            winner TEXT,
+
+            team1_score INTEGER,
+            team2_score INTEGER,
+
+            UNIQUE(match_id, map_number)
+        )
+        """)
+
+        # --- PLAYER STATS (FULL MATCHZY COVERAGE) ---
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS match_player_stats (
+            steamid64 TEXT,
+            match_id TEXT,
+            map_number INTEGER,
+
+            name TEXT,
+            team TEXT,
+
+            kills INTEGER,
+            deaths INTEGER,
+            assists INTEGER,
+            damage INTEGER,
+
+            enemy5ks INTEGER,
+            enemy4ks INTEGER,
+            enemy3ks INTEGER,
+            enemy2ks INTEGER,
+
+            utility_count INTEGER,
+            utility_damage INTEGER,
+            utility_successes INTEGER,
+            utility_enemies INTEGER,
+
+            flash_count INTEGER,
+            flash_successes INTEGER,
+
+            health_points_removed_total INTEGER,
+            health_points_dealt_total INTEGER,
+
+            shots_fired_total INTEGER,
+            shots_on_target_total INTEGER,
+
+            v1_count INTEGER,
+            v1_wins INTEGER,
+            v2_count INTEGER,
+            v2_wins INTEGER,
+
+            entry_count INTEGER,
+            entry_wins INTEGER,
+
+            equipment_value INTEGER,
+            money_saved INTEGER,
+            kill_reward INTEGER,
+            live_time INTEGER,
+
+            head_shot_kills INTEGER,
+            cash_earned INTEGER,
+            enemies_flashed INTEGER,
+
+            PRIMARY KEY (steamid64, match_id, map_number)
+        )
+        """)
+
+        # --- GLOBAL MAP POOL ---
         conn.execute("""
         CREATE TABLE IF NOT EXISTS maps(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,42 +144,13 @@ def init_db():
         )
         """)
 
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS matches (
-            match_id TEXT PRIMARY KEY,
-            created_at TEXT
-        )
-        """)
+        # --- INDEXES ---
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_match_player_match ON match_player_stats(match_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_match_maps_match ON match_maps(match_id)")
 
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS match_player_stats (
-            steamid64 TEXT,
-            match_id TEXT,
-            map_number INTEGER,
-            name TEXT,
-            team TEXT,
-            kills INTEGER,
-            deaths INTEGER,
-            assists INTEGER,
-            damage INTEGER,
-            headshots INTEGER,
-            flash_successes INTEGER,
-            enemies_flashed INTEGER,
-            entry_wins INTEGER,
-            entry_count INTEGER,
-            v1_wins INTEGER,
-            v1_count INTEGER,
-            v2_wins INTEGER,
-            v2_count INTEGER,
-            cash_earned INTEGER,
-            PRIMARY KEY (steamid64, match_id, map_number)
-        )
-        """)
-
+        # --- DEFAULT MAPS ---
         cur = conn.execute("SELECT COUNT(*) FROM maps")
-        count = cur.fetchone()[0]
-
-        if count == 0:
+        if cur.fetchone()[0] == 0:
             default_maps = [
                 "de_mirage",
                 "de_inferno",
@@ -102,72 +174,34 @@ def init_db():
 # PLAYER TABLE
 
 def insert_player(player):
-
     now = datetime.utcnow().isoformat()
     steam_id = logger.redact(player["steam64_id"])
 
     with get_conn() as conn:
-
-        conn.execute(
-            """
-            INSERT INTO players
-            (
-                steam64_id,
-                leetify_id,
-                name,
-                premier_rating,
-                leetify_rating,
-                total_matches,
-                winrate,
-                added_at,
-                last_updated
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                player["steam64_id"],
-                player["leetify_id"],
-                player["name"],
-                player["premier_rating"],
-                player["leetify_rating"],
-                player["total_matches"],
-                player["winrate"],
-                now,
-                now
-            )
-        )
+        conn.execute("""
+            INSERT INTO players VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            player["steam64_id"],
+            player["leetify_id"],
+            player["name"],
+            player["premier_rating"],
+            player["leetify_rating"],
+            player["total_matches"],
+            player["winrate"],
+            now,
+            now
+        ))
 
     logger.log(f"[DB] Insert player {steam_id}", level="INFO")
 
 
-def delete_player(steam_id):
-
-    redacted = logger.redact(steam_id)
-
-    conn = get_conn()
-
-    conn.execute(
-        "DELETE FROM players WHERE steam64_id = ?",
-        (steam_id,)
-    )
-
-    conn.commit()
-    conn.close()
-
-    logger.log(f"[DB] Delete player {redacted}", level="INFO")
-
-
 def update_player(player):
-
     now = datetime.utcnow().isoformat()
     steam_id = logger.redact(player["steam64_id"])
 
     with get_conn() as conn:
-
-        conn.execute(
-            """
-            UPDATE players
-            SET
+        conn.execute("""
+            UPDATE players SET
                 leetify_id = ?,
                 name = ?,
                 premier_rating = ?,
@@ -176,82 +210,36 @@ def update_player(player):
                 winrate = ?,
                 last_updated = ?
             WHERE steam64_id = ?
-            """,
-            (
-                player["leetify_id"],
-                player["name"],
-                player["premier_rating"],
-                player["leetify_rating"],
-                player["total_matches"],
-                player["winrate"],
-                now,
-                player["steam64_id"]
-            )
-        )
+        """, (
+            player["leetify_id"],
+            player["name"],
+            player["premier_rating"],
+            player["leetify_rating"],
+            player["total_matches"],
+            player["winrate"],
+            now,
+            player["steam64_id"]
+        ))
 
     logger.log(f"[DB] Update player {steam_id}", level="INFO")
 
 
-def get_players_to_update(max_age_minutes=UPDATE_COOLDOWN_MINUTES):
-
-    cutoff = (datetime.utcnow() - timedelta(minutes=max_age_minutes)).isoformat()
-
-    with get_conn() as conn:
-
-        cur = conn.execute("""
-            SELECT steam64_id
-            FROM players
-            WHERE last_updated IS NULL
-               OR last_updated < ?
-        """, (cutoff,))
-
-        result = [r[0] for r in cur.fetchall()]
-
-    logger.log(f"[DB] Players to update count={len(result)}", level="DEBUG")
-
-    return result
-
-
-def get_players():
+def delete_player(steam_id):
+    redacted = logger.redact(steam_id)
 
     with get_conn() as conn:
+        conn.execute("DELETE FROM players WHERE steam64_id = ?", (steam_id,))
 
-        cur = conn.execute("""
-        SELECT
-            steam64_id,
-            name,
-            COALESCE(
-                premier_rating,
-                CAST(leetify_rating * 10000 AS INTEGER),
-                0
-            ) as rating
-        FROM players
-        ORDER BY rating DESC
-        """)
-
-        result = cur.fetchall()
-
-    logger.log(f"[DB] Load players count={len(result)}", level="DEBUG")
-
-    return result
+    logger.log(f"[DB] Delete player {redacted}", level="INFO")
 
 
 def player_exists(steam_id):
-
     with get_conn() as conn:
-
-        cur = conn.execute(
-            "SELECT 1 FROM players WHERE steam64_id = ?",
-            (steam_id,)
-        )
-
-        exists = cur.fetchone() is not None
-
-    return exists
+        cur = conn.execute("SELECT 1 FROM players WHERE steam64_id = ?", (steam_id,))
+        return cur.fetchone() is not None
 
 
 def upsert_player(player):
-
     steam_id = logger.redact(player["steam64_id"])
 
     if player_exists(player["steam64_id"]):
@@ -262,120 +250,184 @@ def upsert_player(player):
         insert_player(player)
 
 
-# MATCH TABLE
+def get_players():
+    with get_conn() as conn:
+        cur = conn.execute("""
+        SELECT steam64_id, name,
+        COALESCE(premier_rating, CAST(leetify_rating * 10000 AS INTEGER), 0)
+        FROM players
+        ORDER BY 3 DESC
+        """)
+        result = cur.fetchall()
 
-def insert_match(match_id):
+    logger.log(f"[DB] Load players count={len(result)}", level="DEBUG")
+    return result
+
+
+def get_players_to_update(max_age_minutes=UPDATE_COOLDOWN_MINUTES):
+    cutoff = (datetime.utcnow() - timedelta(minutes=max_age_minutes)).isoformat()
+
+    with get_conn() as conn:
+        cur = conn.execute("""
+            SELECT steam64_id FROM players
+            WHERE last_updated IS NULL OR last_updated < ?
+        """, (cutoff,))
+        result = [r[0] for r in cur.fetchall()]
+
+    logger.log(f"[DB] Players to update count={len(result)}", level="DEBUG")
+    return result
+
+
+# MATCH PIPELINE
+
+def insert_match(data):
     with get_conn() as conn:
         conn.execute("""
-        INSERT OR IGNORE INTO matches (match_id, created_at)
-        VALUES (?, datetime('now'))
-        """, (match_id,))
+        INSERT INTO matches (
+            match_id,
+            start_time,
+            end_time,
+            winner,
+            series_type,
+            team1_name,
+            team1_score,
+            team2_name,
+            team2_score,
+            server_ip,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(match_id) DO UPDATE SET
+            end_time=excluded.end_time,
+            winner=excluded.winner,
+            team1_score=excluded.team1_score,
+            team2_score=excluded.team2_score
+        """, (
+            data["match_id"],
+            data.get("start_time"),
+            data.get("end_time"),
+            data.get("winner"),
+            data.get("series_type"),
+            data.get("team1_name"),
+            data.get("team1_score"),
+            data.get("team2_name"),
+            data.get("team2_score"),
+            data.get("server_ip"),
+        ))
 
-    logger.log(f"[DB] Insert match {match_id[:6]}", level="DEBUG")
+    logger.log(f"[DB] Upsert match {data['match_id']}", level="DEBUG")
 
+def insert_match_map(data):
+    with get_conn() as conn:
+        conn.execute("""
+        INSERT INTO match_maps (
+            match_id,
+            map_number,
+            map_name,
+            start_time,
+            end_time,
+            winner,
+            team1_score,
+            team2_score
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(match_id, map_number) DO UPDATE SET
+            end_time=excluded.end_time,
+            winner=excluded.winner,
+            team1_score=excluded.team1_score,
+            team2_score=excluded.team2_score
+        """, (
+            data["match_id"],
+            data["map_number"],
+            data["map_name"],
+            data.get("start_time"),
+            data.get("end_time"),
+            data.get("winner"),
+            data.get("team1_score"),
+            data.get("team2_score"),
+        ))
+
+    logger.log(f"[DB] Upsert map match={data['match_id']} map={data['map_number']}", level="DEBUG")
 
 def insert_match_player_stats(data):
     with get_conn() as conn:
         conn.execute("""
-        INSERT OR REPLACE INTO match_player_stats (
-            steamid64,
-            match_id,
-            map_number,
-            name,
-            team,
-            kills,
-            deaths,
-            assists,
-            damage,
-            headshots,
-            flash_successes,
-            enemies_flashed,
-            entry_wins,
-            entry_count,
-            v1_wins,
-            v1_count,
-            v2_wins,
-            v2_count,
-            cash_earned
+        INSERT INTO match_player_stats (
+            steamid64, match_id, map_number,
+            name, team,
+            kills, deaths, assists, damage,
+            enemy5ks, enemy4ks, enemy3ks, enemy2ks,
+            utility_count, utility_damage, utility_successes, utility_enemies,
+            flash_count, flash_successes,
+            health_points_removed_total, health_points_dealt_total,
+            shots_fired_total, shots_on_target_total,
+            v1_count, v1_wins, v2_count, v2_wins,
+            entry_count, entry_wins,
+            equipment_value, money_saved, kill_reward, live_time,
+            head_shot_kills, cash_earned, enemies_flashed
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(steamid64, match_id, map_number) DO UPDATE SET
+            kills=excluded.kills,
+            deaths=excluded.deaths,
+            assists=excluded.assists,
+            damage=excluded.damage,
+            cash_earned=excluded.cash_earned
         """, (
-            data["steamid64"],
-            data["match_id"],
-            data["map_number"],
-            data["name"],
-            data["team"],
-            data["kills"],
-            data["deaths"],
-            data["assists"],
-            data["damage"],
-            data["headshots"],
-            data["flash_successes"],
-            data["enemies_flashed"],
-            data["entry_wins"],
-            data["entry_count"],
-            data["v1_wins"],
-            data["v1_count"],
-            data["v2_wins"],
-            data["v2_count"],
-            data["cash_earned"],
+            data["steamid64"], data["match_id"], data["map_number"],
+            data["name"], data["team"],
+            data["kills"], data["deaths"], data["assists"], data["damage"],
+            data["enemy5ks"], data["enemy4ks"], data["enemy3ks"], data["enemy2ks"],
+            data["utility_count"], data["utility_damage"], data["utility_successes"], data["utility_enemies"],
+            data["flash_count"], data["flash_successes"],
+            data["health_points_removed_total"], data["health_points_dealt_total"],
+            data["shots_fired_total"], data["shots_on_target_total"],
+            data["v1_count"], data["v1_wins"], data["v2_count"], data["v2_wins"],
+            data["entry_count"], data["entry_wins"],
+            data["equipment_value"], data["money_saved"], data["kill_reward"], data["live_time"],
+            data["head_shot_kills"], data["cash_earned"], data["enemies_flashed"]
         ))
 
-    logger.log(f"[DB] Insert match stats match={data['match_id'][:6]}", level="DEBUG")
+    # logger.log(f"[DB] Upsert player stats match={data['match_id']}", level="DEBUG")
 
+def match_exists(match_id):
+    with get_conn() as conn:
+        cur = conn.execute(
+            "SELECT 1 FROM matches WHERE match_id = ? LIMIT 1",
+            (match_id,)
+        )
+        exists = cur.fetchone() is not None
 
-# MAP TABLE
+    logger.log(f"[DB] Match exists={exists} match={str(match_id)[:6]}", level="DEBUG")
+
+    return exists
+
+# MAP POOL
 
 def get_maps():
-
     with get_conn() as conn:
-
-        cur = conn.execute("""
-            SELECT name
-            FROM maps
-            ORDER BY name
-        """)
-
+        cur = conn.execute("SELECT name FROM maps ORDER BY name")
         result = [r[0] for r in cur.fetchall()]
 
     logger.log(f"[DB] Load maps count={len(result)}", level="DEBUG")
-
     return result
 
 
 def add_map(name):
-
     with get_conn() as conn:
-
-        conn.execute(
-            "INSERT OR IGNORE INTO maps(name) VALUES(?)",
-            (name.strip(),)
-        )
+        conn.execute("INSERT OR IGNORE INTO maps(name) VALUES(?)", (name.strip(),))
 
     logger.log(f"[DB] Add map {name}", level="INFO")
 
 
 def delete_map(name):
-
     with get_conn() as conn:
-
-        conn.execute(
-            "DELETE FROM maps WHERE name = ?",
-            (name,)
-        )
+        conn.execute("DELETE FROM maps WHERE name = ?", (name,))
 
     logger.log(f"[DB] Delete map {name}", level="INFO")
 
 
 def map_exists(name):
-
     with get_conn() as conn:
-
-        cur = conn.execute(
-            "SELECT 1 FROM maps WHERE name = ?",
-            (name,)
-        )
-
-        exists = cur.fetchone() is not None
-
-    return exists
+        cur = conn.execute("SELECT 1 FROM maps WHERE name = ?", (name,))
+        return cur.fetchone() is not None

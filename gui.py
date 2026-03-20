@@ -2,7 +2,7 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget
 
 from tabs.team_builder import build_team_tab
 from tabs.map_roulette import build_map_tab
-
+from tabs.settings import build_settings_tab
 import services.logger as logger
 
 
@@ -184,9 +184,11 @@ class InternomatWindow(QMainWindow):
 
         self.team_tab = QWidget()
         self.map_tab = QWidget()
+        self.settings_tab = QWidget()
 
         self.tabs.addTab(self.team_tab, "Team Builder")
         self.tabs.addTab(self.map_tab, "Map Roulette")
+        self.tabs.addTab(self.settings_tab, "Settings")
 
         logger.log("[GUI] Tabs created", level="DEBUG")
 
@@ -195,6 +197,8 @@ class InternomatWindow(QMainWindow):
 
         build_map_tab(self.map_tab)
         logger.log("[GUI] Map Roulette ready", level="INFO")
+        build_settings_tab(self.settings_tab)
+        logger.log("[GUI] Settings ready", level="INFO")
 
         # --- user interaction ---
         self.tabs.currentChanged.connect(self._on_tab_changed)

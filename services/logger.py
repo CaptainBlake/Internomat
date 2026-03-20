@@ -34,6 +34,25 @@ def get_log_history():
 def clear_log_history():
     LOG_HISTORY.clear()
 
+_subscribers = []
+
+
+def subscribe(callback):
+    _subscribers.append(callback)
+
+
+def unsubscribe(callback):
+    if callback in _subscribers:
+        _subscribers.remove(callback)
+
+
+def _notify(log_entry):
+    for cb in _subscribers:
+        try:
+            cb(log_entry)
+        except Exception:
+            pass
+
 # --- user actions ---
 def log_user_action(action, details=""):
     log(f"[USER] {action} {details}".strip())
@@ -80,8 +99,15 @@ def log(message, level="INFO"):
     if not _should_log(level):
         return
 
-    print(message, flush=True)
-    _store_log(message)
+    entry = f"[{level}] {message}"
+
+    print(entry)
+
+    LOG_HISTORY.append(entry)
+    if len(LOG_HISTORY) > MAX_HISTORY:
+        LOG_HISTORY.pop(0)
+
+    _notify(entry)
 
 def show_debug_popup(parent, title, text, log_history):
     from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QPushButton
