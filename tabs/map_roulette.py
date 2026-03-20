@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 import db
 import core
 
+# TODO: add map display for map in database & a seperate display for map pool from which to gamble from
 
 class MapListWidget(QListWidget):
     def __init__(self, parent=None):
