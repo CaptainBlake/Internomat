@@ -1,4 +1,5 @@
 from core import _distribution_score_raw
+import traceback
 
 # --- config ---
 
@@ -11,17 +12,22 @@ MAX_HISTORY = 20000
 
 # --- core helpers ---
 
+LOG_LEVELS = {
+    "DEBUG": 1,
+    "INFO": 2,
+    "ERROR": 3,
+    "OFF": 4
+}
+
+
 def _should_log(level):
-    if not LOG_ENABLED or LOG_LEVEL == "OFF":
+    if not LOG_ENABLED:
         return False
 
-    if LOG_LEVEL == "DEBUG":
-        return True
+    current = LOG_LEVELS.get(LOG_LEVEL, 2)
+    incoming = LOG_LEVELS.get(level, 2)
 
-    if LOG_LEVEL == "INFO":
-        return level != "DEBUG"
-
-    return True
+    return incoming >= current
 
 def _store_log(entry):
     LOG_HISTORY.append(entry)
@@ -265,5 +271,9 @@ def log_balance_summary(team_a, team_b):
 def log_warning(message):
     log(f"[WARNING] {message}", level="INFO")
 
-def log_error(message):
-    log(f"[ERROR] {message}", level="INFO")
+def log_error(message, exc=None):
+    if exc:
+        stack = traceback.format_exc()
+        message = f"{message}\n{stack}"
+
+    log(f"[ERROR] {message}", level="ERROR")

@@ -47,7 +47,7 @@ class MatchZyDB:
             return self.conn
 
         except Error as e:
-            logger.log_error(f"MySQL connection failed: {e}")
+            logger.log_error(f"MySQL connection failed: {e}", exc=e)
             raise RuntimeError(f"MatchZy DB connection failed: {e}")
 
     def _query(self, query):

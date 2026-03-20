@@ -1,6 +1,6 @@
 import sqlite3
 from datetime import datetime, timedelta
-
+import json
 import services.logger as logger
 
 
@@ -260,7 +260,7 @@ def get_players():
         """)
         result = cur.fetchall()
 
-    logger.log(f"[DB] Load players count={len(result)}", level="DEBUG")
+    logger.log(f"[DB] Loaded players count={len(result)}", level="DEBUG")
     return result
 
 
@@ -277,7 +277,51 @@ def get_players_to_update(max_age_minutes=UPDATE_COOLDOWN_MINUTES):
     logger.log(f"[DB] Players to update count={len(result)}", level="DEBUG")
     return result
 
+# player import / export
 
+def export_players(filepath):
+    with get_conn() as conn:
+        cur = conn.execute("""
+            SELECT
+                steam64_id,
+                leetify_id,
+                name,
+                premier_rating,
+                leetify_rating,
+                total_matches,
+                winrate,
+                added_at,
+                last_updated
+            FROM players
+        """)
+
+        columns = [c[0] for c in cur.description]
+        rows = cur.fetchall()
+
+        players = [dict(zip(columns, row)) for row in rows]
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(players, f, indent=2)
+
+    logger.log(f"[DB] Export players count={len(players)} -> {filepath}", level="INFO")
+
+def import_players(filepath):
+    import json
+
+    with open(filepath, "r", encoding="utf-8") as f:
+        players = json.load(f)
+
+    count = 0
+
+    for p in players:
+        try:
+            upsert_player(p)
+            count += 1
+        except Exception as e:
+            logger.log(f"[DB] Import error {p.get('steam64_id')} -> {e}", level="ERROR")
+
+    logger.log(f"[DB] Import players count={count}", level="INFO")
+    
 # MATCH PIPELINE
 
 def insert_match(data):
@@ -409,7 +453,7 @@ def get_maps():
         cur = conn.execute("SELECT name FROM maps ORDER BY name")
         result = [r[0] for r in cur.fetchall()]
 
-    logger.log(f"[DB] Load maps count={len(result)}", level="DEBUG")
+    logger.log(f"[DB] Loaded map-pool = {len(result)}", level="DEBUG")
     return result
 
 

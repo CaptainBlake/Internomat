@@ -10,17 +10,25 @@ APP_STYLESHEET = """
 
 QMainWindow {
     background-color: #F4FCF9;
-    color: #20443D;
 }
 
 QWidget {
+    background-color: #F4FCF9;
     font-family: Segoe UI;
     font-size: 10pt;
 }
 
+QMainWindow, QWidget {
+    color: #20443D;
+}
+
 QTextEdit {
-    font-family: Consolas;
-    font-size: 10pt;
+    background-color: #FFFFFF;
+    color: #20443D;
+}
+
+QTableWidget::item {
+    color: #20443D;
 }
 
 QTabWidget::pane {
@@ -51,6 +59,7 @@ QTabBar::tab:hover {
 
 QLineEdit, QTableWidget, QListWidget {
     background-color: #FFFFFF;
+    color: #20443D;
     border: 1px solid #D5EEE6;
     border-radius: 8px;
     padding: 6px;
@@ -201,12 +210,12 @@ class InternomatWindow(QMainWindow):
 
         logger.log("[GUI] Tabs created", level="DEBUG")
 
-        build_team_tab(self.team_tab)
+        refresh_players = build_team_tab(self.team_tab)
         logger.log("[GUI] Team Builder ready", level="INFO")
 
         build_map_tab(self.map_tab)
         logger.log("[GUI] Map Roulette ready", level="INFO")
-        build_settings_tab(self.settings_tab)
+        build_settings_tab(self.settings_tab, on_players_updated=refresh_players)
         logger.log("[GUI] Settings ready", level="INFO")
 
         # --- user interaction ---
@@ -215,7 +224,7 @@ class InternomatWindow(QMainWindow):
     def _on_tab_changed(self, index):
         tab_name = self.tabs.tabText(index)
         logger.log_user_action("Switched Tab", tab_name)
-
+        #TODO: maybe add some kind of auto-refresh here
 
 def start_gui():
     logger.log("[APP_START]", level="INFO")

@@ -183,6 +183,7 @@ def build_team_tab(parent):
     diff_label = QLabel("Rating Difference: 0")
     diff_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     layout.addWidget(diff_label)
+    
 
     # Helper functions
 
@@ -259,7 +260,7 @@ def build_team_tab(parent):
         logger.log(f"[UI] Player added {player.get('name')}", level="INFO")
 
     def on_add_player_error(e):
-        logger.log_error(f"Add player failed: {e}")
+        logger.log_error(f"Add player failed: {e}", exc=e)
         show_error_popup(parent, "Error", str(e))
         add_button.setEnabled(True)
 
@@ -379,7 +380,7 @@ def build_team_tab(parent):
             logger.log("[UPDATE] Finished", level="INFO")
 
         def on_error(e):
-            logger.log_error(f"Update failed: {e}")
+            logger.log_error(f"Update failed: {e} ", exc=e)
             show_error_popup(parent, "Error", str(e))
             finish()
 
@@ -487,7 +488,7 @@ def build_team_tab(parent):
 
 
     def on_balance_error(e):
-        logger.log_error(f"Balance failed: {e}")
+        logger.log_error(f"Balance failed: {e}", exc=e)
         show_error_popup(parent, "Error", str(e))
 
         generate_button.setEnabled(True)
@@ -507,3 +508,5 @@ def build_team_tab(parent):
     dispatcher.balance_error.connect(on_balance_error)
     
     refresh_players()
+
+    return refresh_players
