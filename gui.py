@@ -3,6 +3,7 @@ from PySide6.QtGui import QIcon
 from tabs.team_builder import build_team_tab
 from tabs.map_roulette import build_map_tab
 from tabs.settings_tab import build_settings_tab
+from tabs.stat_overview import build_stat_overview_tab, refresh_stat_overview
 from services.settings import settings
 import services.logger as logger
 import os
@@ -219,9 +220,11 @@ class InternomatWindow(QMainWindow):
         self.team_tab = QWidget()
         self.map_tab = QWidget()
         self.settings_tab = QWidget()
+        self.stat_tab = QWidget()
 
         self.tabs.addTab(self.team_tab, "Team Builder")
         self.tabs.addTab(self.map_tab, "Map Roulette")
+        self.tabs.addTab(self.stat_tab, "Stat Overview")
         self.tabs.addTab(self.settings_tab, "Settings")
 
         logger.log("[GUI] Tabs created", level="DEBUG")
@@ -231,6 +234,10 @@ class InternomatWindow(QMainWindow):
 
         build_map_tab(self.map_tab)
         logger.log("[GUI] Map Roulette ready", level="INFO")
+
+        build_stat_overview_tab(self.stat_tab)
+        logger.log("[GUI] Stat Overview ready", level="INFO")
+
         build_settings_tab(self.settings_tab, on_players_updated=refresh_players)
         logger.log("[GUI] Settings ready", level="INFO")
 
@@ -240,6 +247,8 @@ class InternomatWindow(QMainWindow):
     def _on_tab_changed(self, index):
         tab_name = self.tabs.tabText(index)
         logger.log_user_action("Switched Tab", tab_name)
+        if tab_name == "Stat Overview":
+            refresh_stat_overview(self.stat_tab)
         #TODO: maybe add some kind of auto-refresh here
 
     def closeEvent(self, event):
