@@ -1,5 +1,3 @@
-import threading
-
 from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
@@ -16,10 +14,9 @@ from PySide6.QtWidgets import (
     QFrame
 )
 
-import db
+import db.players as player_db
 import threading
 import services.crawler as crawler
-import services.matchzy_db as matchzy
 import services.logger as logger
 import core
 
@@ -352,7 +349,7 @@ def build_team_tab(parent):
 
     def on_player(player):
         if player:
-            db.update_player(player)
+            player_db.update_player(player)
             refresh_players()
 
     def finish():
@@ -395,7 +392,7 @@ def build_team_tab(parent):
 
     def refresh_players():
         db_tree.setRowCount(0)
-        players = db.get_players()
+        players = player_db.get_players()
         for p in players:
             row = db_tree.rowCount()
             db_tree.insertRow(row)
@@ -431,7 +428,7 @@ def build_team_tab(parent):
         threading.Thread(target=worker, daemon=True).start()
 
     def on_add_player_success(player):
-        db.upsert_player(player)
+        player_db.upsert_player(player)
         refresh_players()
         entry.clear()
         add_button.setEnabled(True)
@@ -511,7 +508,7 @@ def build_team_tab(parent):
             ids.append(str(pid))
 
         for pid in ids:
-            db.delete_player(pid)
+            player_db.delete_player(pid)
             for row in range(pool_tree.rowCount() - 1, -1, -1):
                 if str(pool_tree.item(row, 0).data(Qt.ItemDataRole.UserRole)) == pid:
                     pool_tree.removeRow(row)
@@ -532,7 +529,7 @@ def build_team_tab(parent):
         update_running = True
         update_button.setEnabled(False)
 
-        steam_ids = db.get_players_to_update() or []
+        steam_ids = player_db.get_players_to_update() or []
 
         total = len(steam_ids)
         update_button.setText(f"Updating 0/{total}")

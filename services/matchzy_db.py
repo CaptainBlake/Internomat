@@ -4,7 +4,7 @@ import mysql.connector
 from mysql.connector import Error
 from dotenv import load_dotenv
 
-import db
+import db.matches as match_db
 import services.logger as logger
 
 # path helper for PyInstaller
@@ -101,8 +101,8 @@ class MatchZyDB:
             end_time = map_row[3]
 
             # look if match id exists in local DB - if yes, skip entire match (maps + players)
-            if db.match_exists(matchid):
-                logger.log(f"[MATCHZY] Skipping match {matchid}. Allready exists in local DB", level="DEBUG")
+            if match_db.match_exists(matchid):
+                logger.log(f"[MATCHZY] Skipping match {matchid}. Allready exists in local match_db", level="DEBUG")
                 continue
             
             if not end_time:
@@ -121,7 +121,7 @@ class MatchZyDB:
             match_data = matches_by_id.get(matchid)
 
             if match_data:
-                db.insert_match({
+                match_db.insert_match({
                     "match_id": matchid,
                     "start_time": match_data[1],
                     "end_time": match_data[2],
@@ -134,14 +134,14 @@ class MatchZyDB:
                     "server_ip": match_data[9],
                 })
             else:
-                db.insert_match({
+                match_db.insert_match({
                     "match_id": matchid
                 })
 
             
             # MAP
             
-            db.insert_match_map({
+            match_db.insert_match_map({
                 "match_id": matchid,
                 "map_number": mapnumber,
                 "map_name": mapname,
@@ -162,7 +162,7 @@ class MatchZyDB:
 
             for p in map_players:
 
-                db.insert_match_player_stats({
+                match_db.insert_match_player_stats({
                     "steamid64": str(p[2]),
                     "match_id": matchid,
                     "map_number": mapnumber,

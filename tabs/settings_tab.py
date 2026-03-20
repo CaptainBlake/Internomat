@@ -23,8 +23,8 @@ from PySide6.QtGui import QFont
 from services.settings import settings
 from services.logger import get_log_history
 import services.logger as logger
-from db import export_players as db_export_players
-from db import import_players as db_import_players
+from db.IO import export_players as db_export_players
+from db.IO import import_players as db_import_players
 from services.matchzy_db import sync
 
 LOG_WINDOW_INSTANCE = None
@@ -110,8 +110,8 @@ def build_settings_tab(parent, on_players_updated=None):
         row = QHBoxLayout()
         row.setSpacing(10)
 
-        label = QLabel(label_text)
-        label.setMinimumWidth(220)
+        label = QLabel(label_text + ":")
+        label.setFixedWidth(220) 
         label.setStyleSheet("font-weight: 500;")
 
         if tooltip:

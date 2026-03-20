@@ -1,4 +1,4 @@
-from db import init_db
+from db.init import init_db
 from gui import start_gui
 
 

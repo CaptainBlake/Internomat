@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QGraphicsBlurEffect,
 )
 
-import db
+import db.maps as maps_db
 import core
 
 # TODO: add map display for map in database & a seperate display for map pool from which to gamble from
@@ -554,7 +554,7 @@ def build_map_tab(parent):
 
     def refresh_maps():
         map_list.clear()
-        maps = db.get_maps()
+        maps = maps_db.get_maps()
         for m in maps:
             item = QListWidgetItem(m.replace("de_", ""))
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -566,7 +566,7 @@ def build_map_tab(parent):
         name = entry.text().strip()
         if not name:
             return
-        db.add_map(name)
+        maps_db.add_map(name)
         entry.clear()
         refresh_maps()
 
@@ -575,7 +575,7 @@ def build_map_tab(parent):
         if not items:
             return
         for item in items:
-            db.delete_map(item.text())
+            maps_db.delete_map(item.text())
         refresh_maps()
 
     def finish_spin(winner):
@@ -586,7 +586,7 @@ def build_map_tab(parent):
     def spin():
         nonlocal spinning
 
-        maps = db.get_maps()
+        maps = maps_db.get_maps()
         if not maps:
             QMessageBox.critical(parent, "Error", "No maps available")
             return

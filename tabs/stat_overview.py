@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
 )
 
-import db
+import db.stats as stats_db
 import services.logger as logger
 
 
@@ -207,28 +207,28 @@ def build_stat_overview_tab(parent):
     kills_board = _build_leaderboard(
         "Most Kills",
         ["#", "Player", "Kills"],
-        db.get_top_kills(10),
+        stats_db.get_top_kills(10),
         top3_colorize=True,
     )
 
     deaths_board = _build_leaderboard(
         "Most Deaths",
         ["#", "Player", "Deaths"],
-        db.get_top_deaths(10),
+        stats_db.get_top_deaths(10),
         top3_colorize=True,
     )
 
     rating_board = _build_leaderboard(
         "Top Rating",
         ["#", "Player", "Rating"],
-        db.get_top_ratings(10),
+        stats_db.get_top_ratings(10),
         top3_colorize=True,
     )
 
     damage_board = _build_leaderboard(
         "Damage per Match",
         ["#", "Player", "Avg Damage"],
-        db.get_top_damage_per_match(10),
+        stats_db.get_top_damage_per_match(10),
         top3_colorize=True,
     )
 
@@ -269,28 +269,28 @@ def refresh_stat_overview(parent):
     kills_board = _build_leaderboard(
         "Most Kills",
         ["#", "Player", "Kills"],
-        db.get_top_kills(10),
+        stats_db.get_top_kills(10),
         top3_colorize=True,
     )
 
     deaths_board = _build_leaderboard(
         "Most Deaths",
         ["#", "Player", "Deaths"],
-        db.get_top_deaths(10),
+        stats_db.get_top_deaths(10),
         top3_colorize=True,
     )
 
     rating_board = _build_leaderboard(
         "Top Rating",
         ["#", "Player", "Rating"],
-        db.get_top_ratings(10),
+        stats_db.get_top_ratings(10),
         top3_colorize=True,
     )
 
     damage_board = _build_leaderboard(
         "Damage per Match",
         ["#", "Player", "Avg Damage"],
-        db.get_top_damage_per_match(10),
+        stats_db.get_top_damage_per_match(10),
         top3_colorize=True,
     )
 
