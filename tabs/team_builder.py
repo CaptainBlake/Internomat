@@ -183,7 +183,7 @@ def build_team_tab(parent):
     diff_label = QLabel("Rating Difference: 0")
     diff_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     layout.addWidget(diff_label)
-    
+
 
     # Helper functions
 
@@ -506,7 +506,6 @@ def build_team_tab(parent):
     pool_tree.itemDoubleClicked.connect(lambda _: remove_from_pool())
     dispatcher.balance_finished.connect(on_balance_finished)
     dispatcher.balance_error.connect(on_balance_error)
-    
     refresh_players()
 
     return refresh_players

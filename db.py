@@ -2,12 +2,12 @@ import sqlite3
 from datetime import datetime, timedelta
 import json
 import services.logger as logger
-
+from services.settings import settings
 
 # INIT
 
 DB_FILE = "internomat.db"
-UPDATE_COOLDOWN_MINUTES = 0  # normal: 10 , debug: 0
+
 
 
 def get_conn():
@@ -286,7 +286,14 @@ def update_player_name(player):
 
     logger.log(f"[DB] Update player name {steam_id}", level="INFO")
 
-def get_players_to_update(max_age_minutes=UPDATE_COOLDOWN_MINUTES):
+def get_players_to_update(max_age_minutes=None):
+    if max_age_minutes is None:
+        max_age_minutes = settings.update_cooldown_minutes
+    
+    logger.log(
+        f"[DB] Cooldown used = {max_age_minutes} minutes",
+        level="DEBUG"
+    )
     cutoff = (datetime.utcnow() - timedelta(minutes=max_age_minutes)).isoformat()
 
     with get_conn() as conn:

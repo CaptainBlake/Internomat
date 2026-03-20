@@ -2,10 +2,11 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget
 
 from tabs.team_builder import build_team_tab
 from tabs.map_roulette import build_map_tab
-from tabs.settings import build_settings_tab
+from tabs.settings_tab import build_settings_tab
 import services.logger as logger
 
 
+MAIN_WINDOW = None
 APP_STYLESHEET = """
 
 QMainWindow {
@@ -228,13 +229,26 @@ class InternomatWindow(QMainWindow):
 
 def start_gui():
     logger.log("[APP_START]", level="INFO")
-
+    global MAIN_WINDOW
+    
     app = QApplication.instance() or QApplication([])
     app.setStyleSheet(APP_STYLESHEET)
 
-    window = InternomatWindow()
-    window.show()
+    MAIN_WINDOW = InternomatWindow()
+    MAIN_WINDOW.show()
 
     logger.log("[APP_READY] GUI running", level="INFO")
 
     app.exec()
+    
+def restart_window():
+    global MAIN_WINDOW
+
+    logger.log("[GUI] Reloading UI", level="INFO")
+
+    if MAIN_WINDOW:
+        MAIN_WINDOW.close()
+        MAIN_WINDOW.deleteLater()
+
+    MAIN_WINDOW = InternomatWindow()
+    MAIN_WINDOW.show()
