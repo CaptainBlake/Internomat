@@ -242,6 +242,14 @@ class InternomatWindow(QMainWindow):
         logger.log_user_action("Switched Tab", tab_name)
         #TODO: maybe add some kind of auto-refresh here
 
+    def closeEvent(self, event):
+        from services.crawler import close_driver
+
+        close_driver()
+
+        super().closeEvent(event)
+
+
 def start_gui():
     logger.log("[APP_START]", level="INFO")
     global MAIN_WINDOW
@@ -258,7 +266,8 @@ def start_gui():
     MAIN_WINDOW.show()
 
     logger.log("[APP_READY] GUI running", level="INFO")
-
+    from services.crawler import close_driver
+    app.aboutToQuit.connect(close_driver)
     app.exec()
     
 def restart_window():

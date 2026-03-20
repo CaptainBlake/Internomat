@@ -81,6 +81,21 @@ def _resolve_vanity(identifier):
 
 # LEETIFY API
 
+_driver = None
+
+def get_driver():
+    global _driver
+    if _driver is None:
+        _driver = _create_driver()
+    return _driver
+
+def close_driver():
+    global _driver
+    if _driver:
+        _driver.quit()
+        _driver = None
+    logger.log("[CRAWLER] Selenium driver closed", level="DEBUG")
+
 def get_leetify_player(steam_id):
     LEETIFY_API = os.getenv("LEETIFY_API")
     if not LEETIFY_API:
@@ -131,8 +146,9 @@ def _create_driver():
     options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
-
+    logger.log("[CRAWLER] Selenium driver created", level="DEBUG")
     return webdriver.Chrome(options=options)
+    
 
 
 def _fetch_leetify_profile_html(steam_id):
@@ -141,24 +157,18 @@ def _fetch_leetify_profile_html(steam_id):
     logger.log(f"[FETCH] Selenium load {redacted}", level="DEBUG")
 
     url = f"https://leetify.com/app/profile/{steam_id}#rank-summary"
-    driver = _create_driver()
+    driver = get_driver()
+
+    driver.get(url)
 
     try:
-        driver.get(url)
+        WebDriverWait(driver, 5).until(
+            EC.presence_of_element_located((By.ID, "rank-summary"))
+        )
+    except:
+        logger.log(f"[FETCH_WARNING] Timeout waiting for rank summary {redacted}", level="DEBUG")
 
-        try:
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.ID, "rank-summary"))
-            )
-        except:
-            logger.log(f"[FETCH_WARNING] Timeout waiting for rank summary {redacted}", level="DEBUG")
-
-        html = driver.page_source
-
-    finally:
-        driver.quit()
-
-    return html
+    return driver.page_source
 
 
 def _get_steam_name(steam_id):

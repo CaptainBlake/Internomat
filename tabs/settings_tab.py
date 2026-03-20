@@ -24,7 +24,6 @@ from services.logger import get_log_history
 import services.logger as logger
 from db import export_players as db_export_players
 from db import import_players as db_import_players
-from db import export_database, import_database
 from services.matchzy_db import sync
 
 LOG_WINDOW_INSTANCE = None

@@ -386,6 +386,13 @@ def build_team_tab(parent):
 
         def worker():
             try:
+
+                try:
+                    logger.log("[UPDATE] Starting MatchZy sync", level="INFO")
+                    matchzy.sync()
+                except Exception as e:
+                    dispatcher.update_error.emit(e)
+                
                 logger.log(f"[UPDATE] Players to update={len(steam_ids)}", level="INFO")
 
                 for i, steam_id in enumerate(steam_ids, start=1):
@@ -397,13 +404,6 @@ def build_team_tab(parent):
                         return
 
                     dispatcher.update_progress.emit(i, total)
-
-                try:
-                    logger.log("[UPDATE] Starting MatchZy sync", level="INFO")
-                    matchzy.sync()
-                except Exception as e:
-                    dispatcher.update_error.emit(e)
-                    return
 
                 dispatcher.update_finished.emit()
 
