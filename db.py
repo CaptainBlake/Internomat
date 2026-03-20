@@ -271,7 +271,7 @@ def insert_match(match_id):
         VALUES (?, datetime('now'))
         """, (match_id,))
 
-    logger.log(f"[DB] Insert match {match_id[:6]}****", level="DEBUG")
+    logger.log(f"[DB] Insert match {match_id[:6]}", level="DEBUG")
 
 
 def insert_match_player_stats(data):
@@ -321,7 +321,7 @@ def insert_match_player_stats(data):
             data["cash_earned"],
         ))
 
-    logger.log(f"[DB] Insert match stats match={data['match_id'][:6]}****", level="DEBUG")
+    logger.log(f"[DB] Insert match stats match={data['match_id'][:6]}", level="DEBUG")
 
 
 # MAP TABLE

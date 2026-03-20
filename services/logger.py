@@ -8,6 +8,7 @@ LOG_LEVEL = "DEBUG"  # DEBUG, INFO, OFF
 LOG_HISTORY = []  # optional: can be used by GUI later
 MAX_HISTORY = 20000
 
+
 # --- core helpers ---
 
 def _should_log(level):

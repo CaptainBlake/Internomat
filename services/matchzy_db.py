@@ -80,7 +80,6 @@ class MatchZyDB:
         finally:
             cursor.close()
 
-    # --- GET TABLES ---
     def get_match_tables(self):
 
         tables_raw = self._query("SHOW TABLES")
@@ -88,6 +87,53 @@ class MatchZyDB:
 
         logger.log(f"[MYSQL] Tables found={len(tables)}", level="DEBUG")
 
+        for t in tables:
+            logger.log(f"[MYSQL] Table: {t}", level="DEBUG")
+
+        # --- identify matchzy tables ---
+        matchzy_stats_maps = [t for t in tables if t.startswith("matchzy_stats_maps")]
+        matchzy_stats_players = [t for t in tables if t.startswith("matchzy_stats_players")]
+        matchzy_stats_matches = [t for t in tables if t.startswith("matchzy_stats_matches")]
+
+        # --- debug each table ---
+        def debug_table(table_name):
+
+            try:
+                logger.log(f"[MYSQL] Inspecting table={table_name}", level="DEBUG")
+
+                # --- row count ---
+                count = self._query(f"SELECT COUNT(*) FROM {table_name}")[0][0]
+                logger.log(f"[MYSQL] {table_name} rows={count}", level="DEBUG")
+
+                # --- columns ---
+                columns_raw = self._query(f"SHOW COLUMNS FROM {table_name}")
+                columns = [c[0] for c in columns_raw]
+                logger.log(f"[MYSQL] {table_name} columns={columns}", level="DEBUG")
+
+                # --- sample rows (limited!) ---
+                sample_rows = self._query(f"SELECT * FROM {table_name} LIMIT 3")
+
+                for i, row in enumerate(sample_rows):
+                    preview = {
+                        columns[idx]: str(value)[:50]  # truncate to avoid spam
+                        for idx, value in enumerate(row)
+                    }
+                    logger.log(f"[MYSQL] {table_name} sample[{i}]={preview}", level="DEBUG")
+
+            except Exception as e:
+                logger.log_error(f"[MYSQL] Failed inspecting {table_name}: {e}")
+
+        # inspect all 3 tables
+        for t in matchzy_stats_maps:
+            debug_table(t)
+
+        for t in matchzy_stats_players:
+            debug_table(t)
+
+        for t in matchzy_stats_matches:
+            debug_table(t)
+
+        # --- keep legacy match_data_map support ---
         match_tables = [t for t in tables if t.startswith("match_data_map")]
 
         logger.log(f"[MATCHZY] Match tables={len(match_tables)}", level="INFO")
