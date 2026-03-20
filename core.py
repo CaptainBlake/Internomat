@@ -16,9 +16,6 @@ def _normalize_teams(team_a, team_b):
 def _team_sum(team):
     return sum(p[2] for p in team)
 
-def _team_sum(team):
-    return sum(p[2] for p in team)
-
 def _distribution_score_raw(team_a, team_b):
     a_sorted = sorted([p[2] for p in team_a], reverse=True)
     b_sorted = sorted([p[2] for p in team_b], reverse=True)

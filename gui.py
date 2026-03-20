@@ -7,11 +7,20 @@ import services.logger as logger
 
 
 APP_STYLESHEET = """
-QMainWindow, QWidget {
+
+QMainWindow {
     background-color: #F4FCF9;
     color: #20443D;
-    font-family: "Segoe UI";
-    font-size: 11px;
+}
+
+QWidget {
+    font-family: Segoe UI;
+    font-size: 10pt;
+}
+
+QTextEdit {
+    font-family: Consolas;
+    font-size: 10pt;
 }
 
 QTabWidget::pane {

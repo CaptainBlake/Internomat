@@ -12,15 +12,13 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QHeaderView,
-    QFrame,
-    QDialog,
-    QTextEdit
+    QFrame
 )
+
 import db
 import threading
 import services.crawler as crawler
 import services.matchzy_db as matchzy
-from services.logger import get_log_history
 import services.logger as logger
 import core
 
@@ -35,7 +33,8 @@ class UiDispatcher(QObject):
     update_player_ready = Signal(object)
     update_finished = Signal()
     update_error = Signal(object)
-
+    balance_finished = Signal(object, object, int)
+    balance_error = Signal(object)
 
 def build_team_tab(parent):
     dispatcher = UiDispatcher(parent)
@@ -185,6 +184,35 @@ def build_team_tab(parent):
     diff_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     layout.addWidget(diff_label)
 
+    # Helper functions
+
+    def refresh_pool_display():
+        for i in range(pool_tree.rowCount()):
+            pool_tree.item(i, 0).setText(str(i + 1))
+
+    def clear_table(table):
+        table.setRowCount(0)
+
+
+    def show_error_popup(parent, title, message):
+        logger.log_error(f"{title}: {message}")
+        QMessageBox.critical(parent, title, message)
+        
+    def show_info(title, text):
+        logger.log(f"[UI] {title}: {text}", level="INFO")
+        QMessageBox.information(parent, title, text)
+
+    # Player Management
+
+    def get_pool_players():
+        players = []
+        for row in range(pool_tree.rowCount()):
+            pid = str(pool_tree.item(row, 0).data(Qt.ItemDataRole.UserRole))
+            name = pool_tree.item(row, 1).text()
+            rating = int(pool_tree.item(row, 2).text())
+            players.append((pid, name, rating))
+        return players
+
     def refresh_players():
         db_tree.setRowCount(0)
         players = db.get_players()
@@ -202,30 +230,6 @@ def build_team_tab(parent):
             db_tree.setItem(row, 1, rating_item)
 
         logger.log(f"[UI] Refresh players count={len(players)}", level="DEBUG")
-
-    def refresh_pool_display():
-        for i in range(pool_tree.rowCount()):
-            pool_tree.item(i, 0).setText(str(i + 1))
-
-    def clear_table(table):
-        table.setRowCount(0)
-
-    def get_pool_players():
-        players = []
-        for row in range(pool_tree.rowCount()):
-            pid = str(pool_tree.item(row, 0).data(Qt.ItemDataRole.UserRole))
-            name = pool_tree.item(row, 1).text()
-            rating = int(pool_tree.item(row, 2).text())
-            players.append((pid, name, rating))
-        return players
-
-    def show_error_popup(parent, title, message):
-        logger.log_error(f"{title}: {message}")
-        QMessageBox.critical(parent, title, message)
-        
-    def show_info(title, text):
-        logger.log(f"[UI] {title}: {text}", level="INFO")
-        QMessageBox.information(parent, title, text)
 
     def add_player():
         url = entry.text().strip()
@@ -261,6 +265,8 @@ def build_team_tab(parent):
 
     dispatcher.add_player_success.connect(on_add_player_success)
     dispatcher.add_player_error.connect(on_add_player_error)
+
+    # Player Pool Management
 
     def add_to_pool():
         selected_rows = db_tree.selectionModel().selectedRows()
@@ -410,6 +416,8 @@ def build_team_tab(parent):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    # Balancer
+
     def run_balancer():
         players = get_pool_players()
 
@@ -428,37 +436,64 @@ def build_team_tab(parent):
             f"players={len(players)} tolerance={tolerance}"
         )
 
-        (team_a, team_b), diff = core.balance_teams(players, tolerance=tolerance)
+        # UI feedback
+        generate_button.setEnabled(False)
+        generate_button.setText("Generating...")
+        # Run balancer in separate thread to avoid blocking UI when pool is large
+        def worker():
+            try:
+                (team_a, team_b), diff = core.balance_teams(players, tolerance=tolerance)
+                dispatcher.balance_finished.emit(team_a, team_b, diff)
 
-        clear_table(team_a_tree)
-        clear_table(team_b_tree)
+            except Exception as e:
+                dispatcher.balance_error.emit(e)
 
-        team_a = sorted(team_a, key=lambda p: p[2], reverse=True)
-        team_b = sorted(team_b, key=lambda p: p[2], reverse=True)
+        threading.Thread(target=worker, daemon=True).start()
 
-        sum_a = 0
-        for p in team_a:
-            row = team_a_tree.rowCount()
-            team_a_tree.insertRow(row)
-            team_a_tree.setItem(row, 0, QTableWidgetItem(p[1]))
-            rating_item = QTableWidgetItem(str(p[2]))
-            rating_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            team_a_tree.setItem(row, 1, rating_item)
-            sum_a += p[2]
+    def on_balance_finished(team_a, team_b, diff):
+            clear_table(team_a_tree)
+            clear_table(team_b_tree)
 
-        sum_b = 0
-        for p in team_b:
-            row = team_b_tree.rowCount()
-            team_b_tree.insertRow(row)
-            team_b_tree.setItem(row, 0, QTableWidgetItem(p[1]))
-            rating_item = QTableWidgetItem(str(p[2]))
-            rating_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            team_b_tree.setItem(row, 1, rating_item)
-            sum_b += p[2]
+            team_a = sorted(team_a, key=lambda p: p[2], reverse=True)
+            team_b = sorted(team_b, key=lambda p: p[2], reverse=True)
 
-        ct_total.setText(f"Total: {sum_a}")
-        t_total.setText(f"Total: {sum_b}")
-        diff_label.setText(f"Rating Difference: {diff}")
+            sum_a = 0
+            for p in team_a:
+                row = team_a_tree.rowCount()
+                team_a_tree.insertRow(row)
+                team_a_tree.setItem(row, 0, QTableWidgetItem(p[1]))
+                rating_item = QTableWidgetItem(str(p[2]))
+                rating_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                team_a_tree.setItem(row, 1, rating_item)
+                sum_a += p[2]
+
+            sum_b = 0
+            for p in team_b:
+                row = team_b_tree.rowCount()
+                team_b_tree.insertRow(row)
+                team_b_tree.setItem(row, 0, QTableWidgetItem(p[1]))
+                rating_item = QTableWidgetItem(str(p[2]))
+                rating_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                team_b_tree.setItem(row, 1, rating_item)
+                sum_b += p[2]
+
+            ct_total.setText(f"Total: {sum_a}")
+            t_total.setText(f"Total: {sum_b}")
+            diff_label.setText(f"Rating Difference: {diff}")
+
+            generate_button.setEnabled(True)
+            generate_button.setText("Generate Teams")
+            generate_button.setFocus()
+
+
+    def on_balance_error(e):
+        logger.log_error(f"Balance failed: {e}")
+        show_error_popup(parent, "Error", str(e))
+
+        generate_button.setEnabled(True)
+        generate_button.setText("Generate Teams")
+        generate_button.setFocus()
+    # Log View / signals
 
     add_button.clicked.connect(add_player)
     update_button.clicked.connect(update_players)
@@ -468,5 +503,7 @@ def build_team_tab(parent):
     generate_button.clicked.connect(run_balancer)
     db_tree.itemDoubleClicked.connect(lambda _: add_to_pool())
     pool_tree.itemDoubleClicked.connect(lambda _: remove_from_pool())
-
+    dispatcher.balance_finished.connect(on_balance_finished)
+    dispatcher.balance_error.connect(on_balance_error)
+    
     refresh_players()
