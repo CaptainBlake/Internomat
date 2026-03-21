@@ -14,7 +14,7 @@ from selenium.webdriver.support import expected_conditions as EC
 
 from dotenv import load_dotenv
 import services.logger as logger
-from services.settings import settings
+from core.settings.settings import settings
 
 # ENV & CONFIG
 def resource_path(relative_path):

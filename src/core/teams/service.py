@@ -1,4 +1,4 @@
-from services.settings import settings
+from core.settings.settings import settings
 import services.logger as logger
 
 from .balancer import find_best_teams
