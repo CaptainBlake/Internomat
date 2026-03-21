@@ -18,7 +18,8 @@ import db.players as player_db
 import threading
 import services.crawler as crawler
 import services.logger as logger
-import core
+from core.teams.service import balance_teams
+import core.players.service as player_service
 
 
 update_running = False
@@ -584,13 +585,13 @@ def build_team_tab(parent):
         update_running = True
         update_button.setEnabled(False)
 
-        steam_ids = player_db.get_players_to_update() or []
+        steam_ids = player_service.get_players_to_update() or []
 
         total = len(steam_ids)
         update_button.setText(f"Updating 0/{total}")
 
         def worker():
-            core.update_players_pipeline(
+            player_service.update_players(
                 steam_ids,
                 on_progress=lambda i, t: dispatcher.update_progress.emit(i, t),
                 on_player=lambda p: dispatcher.update_player_ready.emit(p),
@@ -619,7 +620,7 @@ def build_team_tab(parent):
 
         def worker():
             try:
-                (team_a, team_b), diff = core.balance_teams(players, tolerance=tolerance)
+                (team_a, team_b), diff = balance_teams(players, tolerance)
                 dispatcher.balance_finished.emit(team_a, team_b, diff)
             except Exception as e:
                 dispatcher.balance_error.emit(e)

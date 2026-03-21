@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 import db.maps as maps_db
-import core
+from core.maps.service import choose_map
 
 # TODO: add map display for map in database & a seperate display for map pool from which to gamble from
 
@@ -596,7 +596,7 @@ def build_map_tab(parent):
         spinning = True
         result_label.setText("Spinning...")
 
-        winner = core.choose_random_map(maps)
+        winner = choose_map(maps)
         spin_machine.set_items(maps)
         spin_machine.start_spin(winner, lambda: finish_spin(winner))
 
