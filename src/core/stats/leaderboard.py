@@ -1,5 +1,5 @@
 import services.logger as logger
-from db import stats as stats_repo
+from db import stats_db as stats_repo
 
 
 def _build_leaderboard(rows):

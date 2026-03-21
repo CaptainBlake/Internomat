@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QGraphicsBlurEffect,
 )
 
-import db.maps as maps_db
+import db.maps_db as maps_db
 from core.maps.service import choose_map
 
 # TODO: add map display for map in database & a seperate display for map pool from which to gamble from

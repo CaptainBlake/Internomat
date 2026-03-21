@@ -1,4 +1,4 @@
-from .connection import get_conn
+from .connection_db import get_conn
 
 def fetch_top_kills(limit):
     with get_conn() as conn:
