@@ -4,7 +4,7 @@ from gui.tabs.team_builder import build_team_tab
 from gui.tabs.map_roulette import build_map_tab
 from gui.tabs.settings_tab import build_settings_tab
 from gui.tabs.stat_overview import build_stat_overview_tab, refresh_stat_overview
-from services.settings import settings
+from core.settings.settings import settings
 import services.logger as logger
 import os
 import sys
@@ -93,12 +93,6 @@ class InternomatWindow(QMainWindow):
             refresh_stat_overview(self.stat_tab)
         #TODO: maybe add some kind of auto-refresh here
 
-    def closeEvent(self, event):
-        from services.crawler import close_driver
-
-        close_driver()
-
-        super().closeEvent(event)
 
 
 def start_gui():
@@ -128,7 +122,7 @@ def start_gui():
     MAIN_WINDOW.show()
 
     logger.log("[APP_READY] GUI running", level="INFO")
-    app.exec()
+    return app
     
 def restart_window():
     global MAIN_WINDOW

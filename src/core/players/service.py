@@ -1,7 +1,7 @@
 import db.players as player_db
-import services.crawler as crawler
+import services.profile_scrapper as profile_scrapper
 import services.logger as logger
-from .pipeline import update_players_pipeline
+import core.players.pipeline as pipeline
 
 
 
@@ -24,8 +24,8 @@ def add_player_from_url(url):
     - upsert into DB
     - return player
     """
-    player = crawler.fetch_player(url)
-
+    player = profile_scrapper.fetch_player(url)
+    
     if not player:
         raise ValueError("Failed to fetch player")
 
@@ -62,20 +62,17 @@ def update_players(
     on_error=None,
     on_finish=None
 ):
-    """
-    Wraps core pipeline, but injects DB update step
-    """
 
-    def _on_player(player):
+    def _on_player(player): 
         update_single_player(player)
 
         if on_player:
-            on_player(player)
+            on_player(player)  
 
-    return update_players_pipeline(
+    return pipeline.run_full_update(
         steam_ids,
         on_progress=on_progress,
-        on_player=_on_player,
+        on_player=_on_player,  
         on_error=on_error,
         on_finish=on_finish
     )

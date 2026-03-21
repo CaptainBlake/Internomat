@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from .connection import get_conn
 import services.logger as logger
-from services.settings import settings
+from core.settings.settings import settings
 
 
 def insert_player(player, conn=None):

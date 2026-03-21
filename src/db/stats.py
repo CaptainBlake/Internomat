@@ -1,62 +1,56 @@
 from .connection import get_conn
-import services.logger as logger
 
-# sum of kills per player across all matches, ordered by total kills
-def get_top_kills(limit=10):
+def fetch_top_kills(limit):
     with get_conn() as conn:
-        cur = conn.execute("""
+        return conn.execute("""
             SELECT
-                COALESCE(name, steamid64) AS player_name,
+                COALESCE(name, steamid64),
                 steamid64,
-                SUM(COALESCE(kills, 0)) AS total_kills
+                SUM(COALESCE(kills, 0))
             FROM match_player_stats
-            GROUP BY steamid64, player_name
-            ORDER BY total_kills DESC, player_name ASC
+            GROUP BY steamid64, COALESCE(name, steamid64)
+            ORDER BY 3 DESC, 1 ASC
             LIMIT ?
-        """, (limit,))
-        return cur.fetchall()
+        """, (limit,)).fetchall()
 
-# sum of deaths per player across all matches, ordered by total deaths
-def get_top_deaths(limit=10):
+
+def fetch_top_deaths(limit):
     with get_conn() as conn:
-        cur = conn.execute("""
+        return conn.execute("""
             SELECT
-                COALESCE(name, steamid64) AS player_name,
+                COALESCE(name, steamid64),
                 steamid64,
-                SUM(COALESCE(deaths, 0)) AS total_deaths
+                SUM(COALESCE(deaths, 0))
             FROM match_player_stats
-            GROUP BY steamid64, player_name
-            ORDER BY total_deaths DESC, player_name ASC
+            GROUP BY steamid64, COALESCE(name, steamid64)
+            ORDER BY 3 DESC, 1 ASC
             LIMIT ?
-        """, (limit,))
-        return cur.fetchall()
+        """, (limit,)).fetchall()
 
-# sum of assists per player across all matches, ordered by total assists
-def get_top_ratings(limit=10):
+
+def fetch_top_ratings(limit):
     with get_conn() as conn:
-        cur = conn.execute("""
+        return conn.execute("""
             SELECT
                 name,
                 steam64_id,
-                COALESCE(premier_rating, CAST(leetify_rating * 10000 AS INTEGER), 0) AS rating
+                COALESCE(premier_rating, CAST(leetify_rating * 10000 AS INTEGER), 0)
             FROM players
             WHERE name IS NOT NULL AND name != ''
-            ORDER BY rating DESC, name ASC
+            ORDER BY 3 DESC, 1 ASC
             LIMIT ?
-        """, (limit,))
-        return cur.fetchall()
+        """, (limit,)).fetchall()
 
-# average damage per player across all matches, ordered by average damage
-def get_top_damage_per_match(limit=10):
+
+def fetch_avg_damage(limit):
     with get_conn() as conn:
-        cur = conn.execute("""
+        return conn.execute("""
             SELECT
-                COALESCE(name, steamid64) AS player_name,
+                COALESCE(name, steamid64),
                 steamid64,
-                ROUND(AVG(COALESCE(damage, 0)), 1) AS avg_damage
+                ROUND(AVG(COALESCE(damage, 0)), 1)
             FROM match_player_stats
-            GROUP BY steamid64, player_name
-            ORDER BY avg_damage DESC, player_name ASC
+            GROUP BY steamid64, COALESCE(name, steamid64)
+            ORDER BY 3 DESC, 1 ASC
             LIMIT ?
-        """, (limit,))
-        return cur.fetchall()
+        """, (limit,)).fetchall()
