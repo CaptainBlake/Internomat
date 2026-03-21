@@ -17,7 +17,7 @@
 Recommended:
 
 ```txt
-Python 3.14.2
+Python 3.12.10
 ```
 
 Create and activate a virtual environment:
