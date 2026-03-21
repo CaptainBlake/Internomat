@@ -93,12 +93,6 @@ class InternomatWindow(QMainWindow):
             refresh_stat_overview(self.stat_tab)
         #TODO: maybe add some kind of auto-refresh here
 
-    def closeEvent(self, event):
-        from services.profile_scrapper import close_driver
-
-        close_driver()
-
-        super().closeEvent(event)
 
 
 def start_gui():
@@ -128,7 +122,7 @@ def start_gui():
     MAIN_WINDOW.show()
 
     logger.log("[APP_READY] GUI running", level="INFO")
-    app.exec()
+    return app
     
 def restart_window():
     global MAIN_WINDOW

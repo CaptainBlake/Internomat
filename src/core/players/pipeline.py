@@ -2,6 +2,31 @@ import services.logger as logger
 import services.profile_scrapper as profile_scrapper
 import services.matchzy as matchzy
 
+def run_full_update(
+    steam_ids,
+    on_progress=None,
+    on_player=None,
+    on_error=None,
+    on_finish=None
+):
+    import services.matchzy as matchzy
+
+    try:
+        logger.log("[UPDATE] Starting MatchZy sync", level="INFO")
+        matchzy.sync()
+
+        return update_players_pipeline(
+            steam_ids,
+            on_progress=on_progress,
+            on_player=on_player,
+            on_error=on_error,
+            on_finish=on_finish
+        )
+
+    except Exception as e:
+        if on_error:
+            on_error(e)
+
 # UPDATE PIPELINE
 def update_players_pipeline(
     steam_ids,
@@ -18,14 +43,7 @@ def update_players_pipeline(
     """
     
     try:
-        # --- MATCHZY SYNC ---
-        try:
-            logger.log("[UPDATE] Starting MatchZy sync", level="INFO")
-            matchzy.sync()
-        except Exception as e:
-            if on_error:
-                on_error(e)
-
+        
         logger.log(f"[UPDATE] Players to update={len(steam_ids)}", level="INFO")
 
         if not steam_ids:
@@ -63,8 +81,3 @@ def update_players_pipeline(
     except Exception as e:
         if on_error:
             on_error(e)
-
-    finally:
-        # --- ALWAYS CLEANUP ---
-        logger.log("[UPDATE] Cleaning up crawler", level="DEBUG")
-        profile_scrapper.close_driver()

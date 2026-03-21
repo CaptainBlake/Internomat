@@ -1,6 +1,5 @@
 from core.settings.settings import settings
 import services.logger as logger
-
 from .balancer import find_best_teams
 
 
@@ -44,3 +43,4 @@ def balance_teams(players, tolerance):
     logger.log_balance_summary(team_a, team_b)
 
     return (team_a, team_b), diff
+
