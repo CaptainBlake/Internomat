@@ -12,6 +12,7 @@ cmd = [
     "--collect-all", "mysql.connector",
     "--add-data", ".env;.",
     "--add-data", "assets;assets",
+    "--add-data", "gui/app.qss;gui",
     "--clean"
 ]
 
