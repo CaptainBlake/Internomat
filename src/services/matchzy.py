@@ -18,8 +18,8 @@ def resource_path(relative_path):
 env_path = resource_path(".env")
 load_dotenv(env_path)
 
-# --- MATCHZY DB SERVICE ---
-class MatchZyDB:
+# --- MATCHZY SERVICE ---
+class MatchZy:
 
     def __init__(self):
         self.conn = None
@@ -223,4 +223,4 @@ class MatchZyDB:
 
 def sync():
     logger.log("[USER] MatchZy sync triggered", level="INFO")
-    MatchZyDB().sync_to_local()
+    MatchZy().sync_to_local()

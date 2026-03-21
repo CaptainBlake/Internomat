@@ -1,6 +1,6 @@
 import services.logger as logger
-import services.crawler as crawler
-import services.matchzy_db as matchzy
+import services.profile_scrapper as profile_scrapper
+import services.matchzy as matchzy
 
 # UPDATE PIPELINE
 def update_players_pipeline(
@@ -44,7 +44,7 @@ def update_players_pipeline(
             seen.add(steam_id)
 
             try:
-                player = crawler.get_leetify_player(steam_id)
+                player = profile_scrapper.get_leetify_player(steam_id)
 
                 if on_player:
                     on_player(player)
@@ -67,4 +67,4 @@ def update_players_pipeline(
     finally:
         # --- ALWAYS CLEANUP ---
         logger.log("[UPDATE] Cleaning up crawler", level="DEBUG")
-        crawler.close_driver()
+        profile_scrapper.close_driver()
