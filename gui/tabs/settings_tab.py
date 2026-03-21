@@ -181,7 +181,6 @@ def build_settings_tab(parent, on_players_updated=None):
 
         if isinstance(widget, (QSpinBox, QDoubleSpinBox)):
             widget.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.PlusMinus)
-            
         widget.setStyleSheet("""
             QSpinBox, QDoubleSpinBox {
                 background: #FFFFFF;
@@ -232,14 +231,20 @@ def build_settings_tab(parent, on_players_updated=None):
         """)
 
         def update():
-            value = widget.value()
+            if isinstance(widget, QCheckBox):
+                value = widget.isChecked()
+            else:
+                value = widget.value()
+
             setattr(settings, attr_name, value)
             logger.log(f"[SETTINGS] {attr_name} set to {value}", level="INFO")
 
-            widget.editingFinished.connect(update)
 
-        if not isinstance(widget, QCheckBox):
+        if isinstance(widget, QCheckBox):
+            widget.stateChanged.connect(update)
+        else:
             widget.setFixedWidth(100)
+            widget.editingFinished.connect(update)
 
         row.addWidget(label)
         row.addWidget(widget)
