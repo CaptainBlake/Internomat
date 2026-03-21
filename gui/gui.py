@@ -19,219 +19,6 @@ def resource_path(relative_path):
 
 
 MAIN_WINDOW = None
-APP_STYLESHEET = """
-
-QMainWindow {
-    background-color: #F4FCF9;
-}
-
-QWidget {
-    background-color: #F4FCF9;
-    font-family: Segoe UI;
-    font-size: 10pt;
-}
-
-QMainWindow, QWidget {
-    color: #20443D;
-}
-
-QTextEdit {
-    background-color: #FFFFFF;
-    color: #20443D;
-}
-
-QTableWidget::item {
-    color: #20443D;
-}
-
-QTabWidget::pane {
-    border: 0;
-    margin: 0;
-    padding: 0;
-}
-
-QTabBar::tab {
-    background: #E3F8F1;
-    color: #4D756B;
-    min-width: 180px;
-    min-height: 40px;
-    padding: 10px 18px;
-    font-size: 14px;
-    font-weight: 600;
-}
-
-QTabBar::tab:selected {
-    background: #FFFFFF;
-    color: #6CCFB6;
-}
-
-QTabBar::tab:hover {
-    background: #ECFBF7;
-    color: #5DBEA7;
-}
-
-QLineEdit, QTableWidget, QListWidget {
-    background-color: #FFFFFF;
-    color: #20443D;
-    border: 1px solid #D5EEE6;
-    border-radius: 8px;
-    padding: 6px;
-    selection-background-color: #6CCFB6;
-    selection-color: #FFFFFF;
-}
-
-/* Tables: no focus border / black outline */
-QTableWidget {
-    outline: none;
-}
-
-QTableWidget:focus {
-    border: 1px solid #D5EEE6;
-    outline: none;
-}
-
-QTableWidget::item {
-    color: #20443D;
-    border: none;
-    outline: none;
-}
-
-QTableWidget::item:selected {
-    background-color: #DFF7EF;
-    color: #4A7168;
-    border: none;
-    outline: none;
-}
-
-QTableWidget::item:focus {
-    border: none;
-    outline: none;
-}
-
-QAbstractItemView {
-    outline: none;
-}
-
-QAbstractItemView::item {
-    border: none;
-    outline: none;
-}
-
-QAbstractItemView::item:selected {
-    border: none;
-    outline: none;
-}
-
-QLineEdit:focus, QTableWidget:focus, QListWidget:focus {
-    border: 1px solid #6CCFB6;
-}
-
-QPushButton {
-    background-color: #69CFAC;
-    color: #FFFFFF;
-    border: none;
-    border-radius: 8px;
-    padding: 8px 14px;
-    font-weight: 600;
-}
-
-QPushButton:hover {
-    background-color: #7FD9BF;
-}
-
-QPushButton:pressed {
-    background-color: #56BF9B;
-}
-
-QPushButton:disabled {
-    background-color: #C6EADF;
-    color: #F4FCF9;
-}
-
-QHeaderView::section {
-    background-color: #E3F8F1;
-    color: #4A7168;
-    padding: 6px;
-    border: none;
-    font-weight: 600;
-}
-
-QHeaderView::section:first {
-    border-top-left-radius: 8px;
-}
-
-QHeaderView::section:last {
-    border-top-right-radius: 8px;
-}
-
-QHeaderView::section:only-one {
-    border-top-left-radius: 8px;
-    border-top-right-radius: 8px;
-}
-
-QTableWidget::item:selected, QListWidget::item:selected {
-    background-color: #DFF7EF;
-    color: #4A7168;
-}
-
-QSlider::groove:horizontal {
-    height: 8px;
-    background: #E6F7F2;
-    border-radius: 4px;
-}
-
-QSlider::sub-page:horizontal {
-    background: #8EE0CA;
-    border-radius: 4px;
-}
-
-QSlider::add-page:horizontal {
-    background: #E6F7F2;
-    border-radius: 4px;
-}
-
-QSlider::handle:horizontal {
-    background: #8EE0CA;
-    border: 2px solid #A9E9D7;
-    width: 18px;
-    margin: -6px 0;
-    border-radius: 9px;
-}
-
-QSlider::handle:horizontal:hover {
-    background: #A0E7D5;
-}
-
-QFrame {
-    border: none;
-}
-
-/* Hide scrollbars globally */
-QScrollBar:vertical, QScrollBar:horizontal {
-    width: 0px;
-    height: 0px;
-    background: transparent;
-    border: none;
-}
-
-QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
-    background: transparent;
-    border: none;
-}
-
-QScrollBar::add-line:vertical,
-QScrollBar::sub-line:vertical,
-QScrollBar::add-page:vertical,
-QScrollBar::sub-page:vertical,
-QScrollBar::add-line:horizontal,
-QScrollBar::sub-line:horizontal,
-QScrollBar::add-page:horizontal,
-QScrollBar::sub-page:horizontal {
-    background: transparent;
-    border: none;
-}
-"""
-
 
 class InternomatWindow(QMainWindow):
     def __init__(self):
@@ -317,13 +104,20 @@ class InternomatWindow(QMainWindow):
 def start_gui():
     logger.log("[APP_START]", level="INFO")
     global MAIN_WINDOW
+
     from PySide6.QtGui import QIcon
     app = QApplication.instance() or QApplication([])
 
+    # very important feature! do not change:
     icon = QIcon(resource_path("assets/duck_icon.ico"))
     app.setWindowIcon(icon)
 
-    app.setStyleSheet(APP_STYLESHEET)
+    def load_stylesheet():
+        with open("gui/app.qss", "r") as f:
+            return f.read()
+
+    app.setStyleSheet(load_stylesheet())
+
 
     MAIN_WINDOW = InternomatWindow()
     MAIN_WINDOW.setWindowIcon(icon)
