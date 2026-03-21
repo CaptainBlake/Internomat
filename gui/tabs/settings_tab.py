@@ -179,7 +179,9 @@ def build_settings_tab(parent, on_players_updated=None):
             label.setToolTip(tooltip)
             widget.setToolTip(tooltip)
 
-        widget.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.PlusMinus)
+        if isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+            widget.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.PlusMinus)
+            
         widget.setStyleSheet("""
             QSpinBox, QDoubleSpinBox {
                 background: #FFFFFF;
