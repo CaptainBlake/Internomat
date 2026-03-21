@@ -1,12 +1,13 @@
 import traceback
 import core.teams.balancer as balancer
+from datetime import datetime
 
 # --- config ---
 
 LOG_ENABLED = True
 LOG_LEVEL = "DEBUG"  # DEBUG, INFO, OFF
 
-LOG_HISTORY = []  # optional: can be used by GUI later
+LOG_HISTORY = []  
 MAX_HISTORY = 20000
 
 
@@ -105,14 +106,17 @@ def log(message, level="INFO"):
     if not _should_log(level):
         return
 
-    entry = f"[{level}] {message}"
+    use_timestamp = LOG_LEVEL == "DEBUG"
 
-    print(entry)
+    if use_timestamp:
+        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        entry = f"[{timestamp}] [{level}] {message}"
+    else:
+        entry = f"[{level}] {message}"
 
-    LOG_HISTORY.append(entry)
-    if len(LOG_HISTORY) > MAX_HISTORY:
-        LOG_HISTORY.pop(0)
+    print(entry, flush=True)
 
+    _store_log(entry)
     _notify(entry)
 
 def show_debug_popup(parent, title, text, log_history):
@@ -156,9 +160,8 @@ def log_event(name, data=None, level="DEBUG"):
     if not _should_log(level):
         return
 
-    entry = f"[{name}] {data}" if data else f"[{name}]"
-    print(entry, flush=True)
-    _store_log(entry)
+    message = f"[{name}] {data}" if data else f"[{name}]"
+    log(message, level=level)
 
 # --- team logging ---
 
@@ -207,8 +210,7 @@ def log_team_roll(
     lines.append("=================\n")
 
     output = "\n".join(lines)
-    print(output, flush=True)
-    _store_log(output)
+    log(output, level="DEBUG")
 
 def log_team_roll_compact(
     chosen,
@@ -245,8 +247,7 @@ def log_team_roll_compact(
         f"A[{short_team(team_a)}] vs B[{short_team(team_b)}]"
     )
 
-    print(line, flush=True)
-    _store_log(line)
+    log(line, level="INFO")
 
 # --- quick insights ---
 

@@ -15,6 +15,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from dotenv import load_dotenv
 import services.logger as logger
 from core.settings.settings import settings
+from threading import Lock
 
 # ENV & CONFIG
 def resource_path(relative_path):
@@ -27,6 +28,11 @@ def resource_path(relative_path):
 
 env_path = resource_path(".env")
 load_dotenv(env_path)
+# CONSTANTS & GLOBALS
+FETCH_DELAY = 0.5  # seconds between bulk fetches to avoid rate limits
+_driver = None
+_driver_lock = Lock()
+
 
 # STEAM PARSING
 
@@ -76,30 +82,6 @@ def _resolve_vanity(identifier):
 
 # LEETIFY API
 
-_driver = None
-
-def get_driver():
-    global _driver
-    if _driver is None:
-        _driver = _create_driver()
-    return _driver
-
-
-def close_driver():
-    global _driver
-
-    if _driver:
-        logger.log("[CRAWLER] Closing Selenium driver", level="DEBUG")
-        try:
-            _driver.quit()
-        except Exception as e:
-            logger.log(f"[CRAWLER] Driver quit failed: {e}", level="DEBUG")
-        finally:
-            _driver = None
-    else:
-        logger.log("[CRAWLER] No driver to close", level="DEBUG")
-
-
 def get_leetify_player(steam_id, auto_close=False):
     """
     auto_close = False (default): keeps driver alive (used for bulk)
@@ -148,12 +130,13 @@ def get_leetify_player(steam_id, auto_close=False):
             "total_matches": data.get("total_matches"),
             "winrate": data.get("winrate")
         }
-
+    except Exception as e:
+        logger.log(f"[FETCH_ERROR] API fetch failed {redacted}: {e}", level="INFO")
+        return _get_leetify_profile_fallback(steam_id)
     finally:
         if auto_close:
             close_driver()
-
-
+    
 # FALLBACK (SELENIUM)
 
 def _create_driver():
@@ -164,25 +147,41 @@ def _create_driver():
     logger.log("[CRAWLER] Selenium driver created", level="DEBUG")
     return webdriver.Chrome(options=options)
 
+def get_driver():
+    global _driver
 
+    if _driver is None:
+        _driver = _create_driver()
+
+    return _driver
+
+def close_driver():
+    global _driver
+
+    if _driver:
+        logger.log("[CRAWLER] Closing Selenium driver", level="DEBUG")
+        _driver.quit()
+        _driver = None
+        
 def _fetch_leetify_profile_html(steam_id):
     redacted = logger.redact(steam_id)
-    logger.log(f"[FETCH] Selenium load {redacted}", level="DEBUG")
 
-    url = f"https://leetify.com/app/profile/{steam_id}#rank-summary"
-    driver = get_driver()
+    with _driver_lock:
+        driver = get_driver()
 
-    driver.get(url)
+        logger.log(f"[FETCH] Selenium load {redacted}", level="DEBUG")
 
-    try:
-        WebDriverWait(driver, 2).until(  # reduced from 5 → faster
-            EC.presence_of_element_located((By.ID, "rank-summary"))
-        )
-    except:
-        logger.log(f"[FETCH_WARNING] Timeout waiting for rank summary {redacted}", level="DEBUG")
+        url = f"https://leetify.com/app/profile/{steam_id}#rank-summary"
+        driver.get(url)
 
-    return driver.page_source
+        try:
+            WebDriverWait(driver, 2).until(
+                EC.presence_of_element_located((By.ID, "rank-summary"))
+            )
+        except:
+            logger.log(f"[FETCH_WARNING] Timeout {redacted}", level="DEBUG")
 
+        return driver.page_source
 
 def _get_steam_name(steam_id):
     redacted = logger.redact(steam_id)
@@ -312,7 +311,6 @@ def _parse_leetify_profile(html, steam_id):
 
     raise Exception("Premier rank not found in profile")
 
-
 # PUBLIC API
 
 def fetch_player(url):
@@ -321,33 +319,34 @@ def fetch_player(url):
     return get_leetify_player(steam_id, auto_close=True)
 
 
-def fetch_players_bulk(steam_ids, delay=0.5, on_progress=None, on_player=None):
-    logger.log(f"[FETCH] Bulk start count={len(steam_ids)}", level="INFO")
+def fetch_players_bulk(steam_ids, delay=FETCH_DELAY, on_progress=None, on_player=None):
+    total = len(steam_ids)
+    logger.log(f"[FETCH] Bulk start count={total}", level="INFO")
+
     results = []
 
-    try:
-        for i, steam_id in enumerate(steam_ids, start=1):
-            redacted = logger.redact(steam_id)
+    for i, steam_id in enumerate(steam_ids, start=1):
+        redacted = logger.redact(steam_id)
 
-            try:
-                player = get_leetify_player(steam_id)
-                results.append(player)
+        try:
+            player = get_leetify_player(steam_id, auto_close=False)
+            results.append(player)
 
-                if on_player:
-                    on_player(player)
+            if on_player:
+                on_player(player)
 
-            except Exception as e:
-                logger.log(f"[FETCH_ERROR] Bulk failed {redacted}: {e}", level="INFO")
-                results.append(None)
+        except Exception as e:
+            logger.log(f"[FETCH_ERROR] Bulk failed {redacted}: {e}", level="INFO")
+            results.append(None)
+        finally:
+            close_driver()
 
-            if on_progress:
-                on_progress(i, len(steam_ids))
+        if on_progress:
+            on_progress(i, total)
 
+        if delay > 0:
             time.sleep(delay)
 
-    finally:
-        logger.log("[FETCH] Cleaning up Selenium", level="DEBUG")
-        close_driver()
+    logger.log(f"[FETCH] Bulk done success={sum(p is not None for p in results)} total={total}", level="INFO")
 
-    logger.log(f"[FETCH] Bulk done count={len(results)}", level="INFO")
     return results
