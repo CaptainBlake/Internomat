@@ -1,6 +1,6 @@
 import json
-from .connection import get_conn
-from .players import upsert_player
+from .connection_db import get_conn
+from .players_db import upsert_player
 import services.logger as logger
 
 

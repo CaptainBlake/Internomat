@@ -4,7 +4,7 @@ import mysql.connector
 from mysql.connector import Error
 from dotenv import load_dotenv
 
-import db.matches as match_db
+import db.matches_db as match_db
 import services.logger as logger
 
 # path helper for PyInstaller

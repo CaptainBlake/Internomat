@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from .connection import get_conn
+from .connection_db import get_conn
 import services.logger as logger
 from core.settings.settings import settings
 
