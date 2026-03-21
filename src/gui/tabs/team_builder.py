@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 
 import db.players as player_db
 import threading
-import services.crawler as crawler
+import services.profile_scrapper as profile_scrapper
 import services.logger as logger
 from core.teams.service import balance_teams
 import core.players.service as player_service
@@ -478,7 +478,7 @@ def build_team_tab(parent):
 
         def worker():
             try:
-                player = crawler.fetch_player(url)
+                player = profile_scrapper.fetch_player(url)
                 dispatcher.add_player_success.emit(player)
             except Exception as e:
                 dispatcher.add_player_error.emit(e)

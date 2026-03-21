@@ -1,5 +1,5 @@
 import db.players as player_db
-import services.crawler as crawler
+import services.profile_scrapper as profile_scrapper
 import services.logger as logger
 from .pipeline import update_players_pipeline
 
@@ -24,7 +24,7 @@ def add_player_from_url(url):
     - upsert into DB
     - return player
     """
-    player = crawler.fetch_player(url)
+    player = profile_scrapper.fetch_player(url)
 
     if not player:
         raise ValueError("Failed to fetch player")

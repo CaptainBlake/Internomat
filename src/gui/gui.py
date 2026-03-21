@@ -94,7 +94,7 @@ class InternomatWindow(QMainWindow):
         #TODO: maybe add some kind of auto-refresh here
 
     def closeEvent(self, event):
-        from services.crawler import close_driver
+        from services.profile_scrapper import close_driver
 
         close_driver()
 
