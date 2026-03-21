@@ -3,7 +3,7 @@ import sys
 
 cmd = [
     sys.executable, "-m", "PyInstaller",
-    "main.py",
+    "src/main.py",
     "--onefile",
     "--windowed",
     "--name", "Internomat",
@@ -12,7 +12,7 @@ cmd = [
     "--collect-all", "mysql.connector",
     "--add-data", ".env;.",
     "--add-data", "assets;assets",
-    "--add-data", "gui/app.qss;gui",
+    "--add-data", "styles/app.qss;styles",
     "--clean"
 ]
 

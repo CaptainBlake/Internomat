@@ -113,7 +113,7 @@ def start_gui():
     app.setWindowIcon(icon)
 
     def load_stylesheet():
-        path = resource_path("gui/app.qss")
+        path = resource_path("styles/app.qss")
 
         logger.log(f"[GUI] Loading stylesheet from {path}", level="DEBUG")
 

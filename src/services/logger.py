@@ -1,5 +1,5 @@
-from core import _distribution_score_raw
 import traceback
+import core.teams.balancer as balancer
 
 # --- config ---
 
@@ -179,7 +179,7 @@ def log_team_roll(
     sum_b = _team_sum(team_b)
 
     total_diff = abs(sum_a - sum_b)
-    dist_diff = _distribution_score_raw(team_a, team_b)
+    dist_diff = balancer.distribution_score(team_a, team_b)
 
     lines = []
     lines.append("\n=== TEAM ROLL ===")
@@ -231,8 +231,8 @@ def log_team_roll_compact(
     sum_b = _team_sum(team_b)
 
     total_diff = abs(sum_a - sum_b)
-    dist_diff = _distribution_score_raw(team_a, team_b)
-    top_diff = _top_diff(team_a, team_b)
+    dist_diff = balancer.distribution_score(team_a, team_b)
+    top_diff = balancer.top_diff(team_a, team_b)
 
     line = (
         f"[S:{chosen[0]:.0f}/{best_score:.0f} "
@@ -255,7 +255,7 @@ def log_balance_summary(team_a, team_b):
     sum_b = _team_sum(team_b)
 
     total_diff = abs(sum_a - sum_b)
-    dist_diff = _distribution_score_raw(team_a, team_b)
+    dist_diff = balancer.distribution_score(team_a, team_b)
     top_diff = _top_diff(team_a, team_b)
 
     log_event(
