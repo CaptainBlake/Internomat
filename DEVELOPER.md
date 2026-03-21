@@ -51,7 +51,7 @@ MATCHZY_DB_NAME=...
 Start the application with:
 
 ```bash
-python main.py
+python src/main.py
 ```
 
 Entry point: `main.py`
@@ -70,7 +70,7 @@ Example `launch.json`:
             "name": "Internomat (venv)",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/main.py",
+            "program": "${workspaceFolder}/src/main.py",
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
             "envFile": "${workspaceFolder}/.env",
@@ -166,24 +166,10 @@ The project uses PyInstaller to create a standalone executable.
 Run:
 
 ```bash
-python build.py
+python src/build.py
 ```
 
-
-
-This internally executes:
-
-```bash
-python -m PyInstaller main.py \
-  --onefile \
-  --windowed \
-  --name Internomat \
-  --icon=assets/duck_icon.ico \
-  --collect-all selenium \
-  --collect-all mysql.connector \
-  --add-data ".env;." \
-  --clean
-```
+check out the `src/build.py` file for specifics
 
 Output:
 
@@ -196,7 +182,6 @@ dist/Internomat.exe
 ## Notes
 
 - The build must be executed inside the virtual environment  
-- `--collect-all selenium` and `--collect-all mysql.connector` are required  
 - The `.env` file is bundled into the executable  
 
 ---
