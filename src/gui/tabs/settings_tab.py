@@ -24,8 +24,8 @@ from PySide6.QtGui import QFont
 from core.settings.settings import settings
 from services.logger import get_log_history
 import services.logger as logger
-from db.IO import export_players as db_export_players
-from db.IO import import_players as db_import_players
+from db.IO_db import export_players as db_export_players
+from db.IO_db import import_players as db_import_players
 from services.matchzy import sync
 
 LOG_WINDOW_INSTANCE = None
@@ -237,6 +237,7 @@ def build_settings_tab(parent, on_players_updated=None):
                 value = widget.value()
 
             setattr(settings, attr_name, value)
+            settings.save() 
             logger.log(f"[SETTINGS] {attr_name} set to {value}", level="INFO")
 
 

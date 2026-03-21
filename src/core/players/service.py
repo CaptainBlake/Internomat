@@ -1,4 +1,4 @@
-import db.players as player_db
+import db.players_db as player_db
 import services.profile_scrapper as profile_scrapper
 import services.logger as logger
 import core.players.pipeline as pipeline

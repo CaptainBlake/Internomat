@@ -5,5 +5,6 @@ beautifulsoup4
 selenium
 playwright
 Pillow
+awpy
 PySide6
 mysql-connector-python

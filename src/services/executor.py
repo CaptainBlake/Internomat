@@ -4,6 +4,8 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
+from typing import Optional
+
 
 _executor = ThreadPoolExecutor(max_workers=2)
 
@@ -11,7 +13,7 @@ def submit(fn, *args, **kwargs):
     return _executor.submit(fn, *args, **kwargs)
 
 
-def run_async(task, lock: Lock | None = None, on_error=None):
+def run_async(task, lock: Optional[Lock] = None, on_error=None):
 
     if lock and not lock.acquire(blocking=False):
         return False
