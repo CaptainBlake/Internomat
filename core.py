@@ -1,3 +1,8 @@
+"""
+file will be refactored into smaller modules which wil be in analytics / logic folder. 
+For now, it serves as a core for main logic that is used by GUI
+""" 
+
 import random
 from itertools import combinations
 
@@ -7,7 +12,6 @@ import services.crawler as crawler
 import services.matchzy_db as matchzy
 
 # UPDATE PIPELINE
-
 def update_players_pipeline(
     steam_ids,
     on_progress=None,

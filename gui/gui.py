@@ -1,9 +1,9 @@
 from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget, QWidget
 from PySide6.QtGui import QIcon
-from tabs.team_builder import build_team_tab
-from tabs.map_roulette import build_map_tab
-from tabs.settings_tab import build_settings_tab
-from tabs.stat_overview import build_stat_overview_tab, refresh_stat_overview
+from gui.tabs.team_builder import build_team_tab
+from gui.tabs.map_roulette import build_map_tab
+from gui.tabs.settings_tab import build_settings_tab
+from gui.tabs.stat_overview import build_stat_overview_tab, refresh_stat_overview
 from services.settings import settings
 import services.logger as logger
 import os

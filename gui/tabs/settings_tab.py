@@ -56,8 +56,6 @@ def build_settings_tab(parent, on_players_updated=None):
 
 
     # HELPERS
-
-
     def create_section(title):
         frame = QFrame()
         frame.setStyleSheet("""
@@ -152,8 +150,6 @@ def build_settings_tab(parent, on_players_updated=None):
         return row
 
     # BUTTONS
-
-
     open_logs_button = small_button("Open Logs")
     reload_ui_button = small_button("Reload UI")
 
@@ -168,10 +164,6 @@ def build_settings_tab(parent, on_players_updated=None):
     # disable DB buttons for now
     import_db_button.setEnabled(False)
     export_db_button.setEnabled(False)
-
-
-    # SECTIONS
-
 
     # DEBUG
     create_grid_section("Debug", [
@@ -256,7 +248,7 @@ def build_settings_tab(parent, on_players_updated=None):
 
     def reload_ui():
         logger.log_user_action("Reload UI")
-        from gui import restart_window
+        from gui.gui import restart_window
         restart_window()
 
     def import_players():
@@ -297,6 +289,7 @@ def build_settings_tab(parent, on_players_updated=None):
 
 # LOG WINDOW 
 class LogWindow(QWidget):
+
     def __init__(self):
         super().__init__()
 
