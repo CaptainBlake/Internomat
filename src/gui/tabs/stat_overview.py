@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
 )
 
-import db.stats as stats_db
+import core.stats.leaderboard as leaderboard
 import services.logger as logger
 
 
@@ -207,28 +207,28 @@ def build_stat_overview_tab(parent):
     kills_board = _build_leaderboard(
         "Most Kills",
         ["#", "Player", "Kills"],
-        stats_db.get_top_kills(10),
+        leaderboard.get_top_kills(10),
         top3_colorize=True,
     )
 
     deaths_board = _build_leaderboard(
         "Most Deaths",
         ["#", "Player", "Deaths"],
-        stats_db.get_top_deaths(10),
+        leaderboard.get_top_deaths(10),
         top3_colorize=True,
     )
 
     rating_board = _build_leaderboard(
         "Top Rating",
         ["#", "Player", "Rating"],
-        stats_db.get_top_ratings(10),
+        leaderboard.get_top_ratings(10),
         top3_colorize=True,
     )
 
     damage_board = _build_leaderboard(
         "Damage per Match",
         ["#", "Player", "Avg Damage"],
-        stats_db.get_top_damage_per_match(10),
+        leaderboard.get_top_damage_per_match(10),
         top3_colorize=True,
     )
 
@@ -269,28 +269,28 @@ def refresh_stat_overview(parent):
     kills_board = _build_leaderboard(
         "Most Kills",
         ["#", "Player", "Kills"],
-        stats_db.get_top_kills(10),
+        leaderboard.get_top_kills(10),
         top3_colorize=True,
     )
 
     deaths_board = _build_leaderboard(
         "Most Deaths",
         ["#", "Player", "Deaths"],
-        stats_db.get_top_deaths(10),
+        leaderboard.get_top_deaths(10),
         top3_colorize=True,
     )
 
     rating_board = _build_leaderboard(
         "Top Rating",
         ["#", "Player", "Rating"],
-        stats_db.get_top_ratings(10),
+        leaderboard.get_top_ratings(10),
         top3_colorize=True,
     )
 
     damage_board = _build_leaderboard(
         "Damage per Match",
         ["#", "Player", "Avg Damage"],
-        stats_db.get_top_damage_per_match(10),
+        leaderboard.get_top_damage_per_match(10),
         top3_colorize=True,
     )
 
