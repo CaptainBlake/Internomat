@@ -195,11 +195,11 @@ class SlotMachineWidget(QFrame):
             QFrame {
                 background: qlineargradient(
                     x1: 0, y1: 0, x2: 0, y2: 1,
-                    stop: 0 #1B1A22,
-                    stop: 0.45 #2A2232,
-                    stop: 1 #17151E
+                    stop: 0 #131A23,
+                    stop: 0.5 #1A2230,
+                    stop: 1 #10151C
                 );
-                border: 1px solid rgba(255, 215, 120, 0.22);
+                border: 1px solid rgba(63, 136, 217, 0.28);
                 border-radius: 22px;
             }
         """)
@@ -240,8 +240,8 @@ class SlotMachineWidget(QFrame):
         self.track = QFrame()
         self.track.setStyleSheet("""
             QFrame {
-                background: rgba(10, 10, 14, 0.65);
-                border: 1px solid rgba(255, 215, 120, 0.18);
+                background: rgba(15, 20, 28, 0.78);
+                border: 1px solid rgba(63, 136, 217, 0.22);
                 border-radius: 18px;
             }
         """)
@@ -321,25 +321,25 @@ class SlotMachineWidget(QFrame):
                 if center_glow:
                     row.setStyleSheet("""
                         QLabel {
-                            background: rgba(255, 232, 165, 0.14);
-                            border: 1px solid rgba(255, 215, 120, 0.35);
+                            background: rgba(63, 136, 217, 0.16);
+                            border: 1px solid rgba(63, 136, 217, 0.34);
                             border-radius: 10px;
                             padding: 4px 6px;
                             font-size: 30px;
                             font-weight: 900;
-                            color: #FFE9A6;
+                            color: #DCEAF7;
                         }
                     """)
                 else:
                     row.setStyleSheet("""
                         QLabel {
-                            background: rgba(255, 232, 165, 0.08);
-                            border: 1px solid rgba(255, 215, 120, 0.22);
+                            background: rgba(63, 136, 217, 0.08);
+                            border: 1px solid rgba(63, 136, 217, 0.22);
                             border-radius: 10px;
                             padding: 4px 6px;
                             font-size: 28px;
                             font-weight: 900;
-                            color: #F4D97A;
+                            color: #AFC8E8;
                         }
                     """)
             else:
@@ -352,7 +352,7 @@ class SlotMachineWidget(QFrame):
                         padding: 2px 6px;
                         font-size: {font_size}px;
                         font-weight: 600;
-                        color: rgba(180, 190, 205, {alpha});
+                        color: rgba(185, 198, 212, {alpha});
                     }}
                 """)
 
@@ -477,8 +477,8 @@ def build_map_tab(parent):
     list_frame = QFrame()
     list_frame.setStyleSheet("""
         QFrame {
-            background: rgba(255, 255, 255, 0.82);
-            border: 1px solid #C9ECE2;
+            background: #FFFFFF;
+            border: 1px solid #B9CADC;
             border-radius: 14px;
         }
     """)
@@ -496,23 +496,23 @@ def build_map_tab(parent):
         }
         QListWidget::item {
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                                        stop:0 #FFFFFF, stop:1 #F7FFFC);
-            border: 1px solid #D7EEE7;
+                                            stop:0 #FFFFFF, stop:1 #F8FBFE);
+            border: 1px solid #D4E1EE;
             border-radius: 12px;
             padding: 7px 10px;
-            color: #21443C;
+            color: #1E2B38;
             margin: 1px;
             margin-bottom: 8px;
         }
         QListWidget::item:hover {
-            background: #ECFBF6;
-            border: 1px solid #BEE8D9;
+            background: #EAF2FA;
+            border: 1px solid #B9CADC;
         }
         QListWidget::item:selected {
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                                        stop:0 #D7F5EC, stop:1 #C7F0E4);
-            color: #0C755B;
-            border: 1px solid #9EDCCB;
+                                            stop:0 #DCEAF7, stop:1 #C9DDF0);
+            color: #1E2B38;
+            border: 1px solid #8FB2D8;
         }
     """)
     list_layout.addWidget(map_list, 1)
@@ -537,7 +537,7 @@ def build_map_tab(parent):
 
     result_label = QLabel("Selected Map: -")
     result_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    result_label.setStyleSheet("font-size: 12px; font-weight: 700; color: #21443C;")
+    result_label.setStyleSheet("font-size: 12px; font-weight: 700; color: #1E2B38;")
     left_panel.addWidget(result_label)
 
     right_panel = QVBoxLayout()

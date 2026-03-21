@@ -2,6 +2,7 @@ import threading
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
     QCheckBox,
     QDoubleSpinBox,
     QSizePolicy,
@@ -36,19 +37,53 @@ def build_settings_tab(parent, on_players_updated=None):
     root_layout.setContentsMargins(20, 20, 20, 20)
     root_layout.setSpacing(20)
 
+def build_settings_tab(parent, on_players_updated=None):
+
+    root_layout = QHBoxLayout(parent)
+    root_layout.setContentsMargins(20, 20, 20, 20)
+    root_layout.setSpacing(20)
+
     # SIDEBAR
     sidebar = QListWidget()
-    sidebar.setFixedWidth(160)
+    sidebar.setFixedWidth(170)
     sidebar.addItems(["Debug", "Database", "Settings"])
+    sidebar.setStyleSheet("""
+        QListWidget {
+            background: #FFFFFF;
+            border: 1px solid #B9CADC;
+            border-radius: 12px;
+            padding: 6px;
+            color: #1E2B38;
+        }
+        QListWidget::item {
+            padding: 10px 12px;
+            margin: 2px 0px;
+            border: none;
+        }
+        QListWidget::item:selected {
+            background: #DCEAF7;
+            color: #1E2B38;
+        }
+        QListWidget::item:hover {
+            background: #E7F1FB;
+            color: #2E4C69;
+        }
+    """)
     root_layout.addWidget(sidebar)
 
     # SCROLL AREA
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
+    scroll.setStyleSheet("""
+        QScrollArea {
+            border: none;
+            background: transparent;
+        }
+    """)
 
     container = QWidget()
     layout = QVBoxLayout(container)
-    layout.setSpacing(10)
+    layout.setSpacing(12)
     layout.setAlignment(Qt.AlignTop)
 
     scroll.setWidget(container)
@@ -56,25 +91,26 @@ def build_settings_tab(parent, on_players_updated=None):
 
 
     # HELPERS
+
     def create_section(title):
         frame = QFrame()
         frame.setStyleSheet("""
             QFrame {
-                background: #FFFFFF;
-                border: 1px solid #D5EEE6;
-                border-radius: 10px;
+                background: rgba(255, 255, 255, 0.94);
+                border: none;
+                border-radius: 16px;
             }
         """)
 
         section_layout = QVBoxLayout(frame)
-        section_layout.setContentsMargins(12, 8, 12, 8)
+        section_layout.setContentsMargins(14, 12, 14, 12)
         section_layout.setSpacing(12)
 
         title_label = QLabel(title)
         title_label.setStyleSheet("""
-            font-size: 14px;
-            font-weight: 600;
-            color: #20443D;
+            font-size: 15px;
+            font-weight: 800;
+            color: #22384D;
         """)
 
         section_layout.addWidget(title_label)
@@ -84,6 +120,26 @@ def build_settings_tab(parent, on_players_updated=None):
         btn = QPushButton(text)
         btn.setFixedHeight(32)
         btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3F88D9;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+                padding: 6px 12px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #5A9BE3;
+            }
+            QPushButton:pressed {
+                background-color: #2F6FB3;
+            }
+            QPushButton:disabled {
+                background-color: #BFD0E0;
+                color: #F7FAFD;
+            }
+        """)
         return btn
 
     def create_grid_section(title, rows, columns=3):
@@ -108,35 +164,75 @@ def build_settings_tab(parent, on_players_updated=None):
         row = QHBoxLayout()
         row.setSpacing(10)
 
-        label = QLabel(label_text + ":")
-        label.setFixedWidth(220) 
-        label.setStyleSheet("font-weight: 500;")
+        label = QLabel(label_text)
+        label.setMinimumWidth(220)
+        label.setStyleSheet("""
+            QLabel {
+                font-weight: 600;
+                color: #2E4C69;
+                border: none;
+                background: transparent;
+            }
+        """)
 
         if tooltip:
             label.setToolTip(tooltip)
             widget.setToolTip(tooltip)
 
-        if isinstance(widget, QCheckBox):
-            def update():
-                value = widget.isChecked()
-                setattr(settings, attr_name, value)
+        widget.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.PlusMinus)
+        widget.setStyleSheet("""
+            QSpinBox, QDoubleSpinBox {
+                background: #FFFFFF;
+                color: #1E2B38;
+                border: 1px solid #B9CADC;
+                border-radius: 8px;
+                padding: 6px 36px 6px 10px;
+                min-height: 36px;
+                min-width: 130px;
+            }
 
-                logger.log(
-                    f"[SETTINGS] {attr_name} set to {value}",
-                    level="INFO"
-                )
+            QSpinBox:focus, QDoubleSpinBox:focus {
+                border: 1px solid #3F88D9;
+            }
 
-            widget.stateChanged.connect(update)
+            QSpinBox::up-button, QDoubleSpinBox::up-button,
+            QSpinBox::down-button, QDoubleSpinBox::down-button {
+                subcontrol-origin: border;
+                border: none;
+                background: #DCEAF7;
+                width: 24px;
+            }
 
-        else:
-            def update():
-                value = widget.value()
-                setattr(settings, attr_name, value)
+            QSpinBox::up-button, QDoubleSpinBox::up-button {
+                subcontrol-position: top right;
+                border-top-right-radius: 8px;
+            }
 
-                logger.log(
-                    f"[SETTINGS] {attr_name} set to {value}",
-                    level="INFO"
-                )
+            QSpinBox::down-button, QDoubleSpinBox::down-button {
+                subcontrol-position: bottom right;
+                border-bottom-right-radius: 8px;
+            }
+
+            QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+            QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
+                background: #E7F1FB;
+            }
+
+            QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
+                width: 0px;
+                height: 0px;
+            }
+
+            QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
+                width: 0px;
+                height: 0px;
+            }
+        """)
+
+        def update():
+            value = widget.value()
+            setattr(settings, attr_name, value)
+            logger.log(f"[SETTINGS] {attr_name} set to {value}", level="INFO")
 
             widget.editingFinished.connect(update)
 
@@ -150,6 +246,7 @@ def build_settings_tab(parent, on_players_updated=None):
         return row
 
     # BUTTONS
+
     open_logs_button = small_button("Open Logs")
     reload_ui_button = small_button("Reload UI")
 
@@ -164,6 +261,9 @@ def build_settings_tab(parent, on_players_updated=None):
     # disable DB buttons for now
     import_db_button.setEnabled(False)
     export_db_button.setEnabled(False)
+
+
+    # SECTIONS
 
     # DEBUG
     create_grid_section("Debug", [
@@ -237,7 +337,7 @@ def build_settings_tab(parent, on_players_updated=None):
         "Allow uneven teams (e.g. 3 vs 2)"
     ))
     # ACTIONS
-    
+
     def open_logs():
         global LOG_WINDOW_INSTANCE
         if LOG_WINDOW_INSTANCE is None or not LOG_WINDOW_INSTANCE.isVisible():

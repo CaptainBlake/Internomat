@@ -15,9 +15,9 @@ import services.logger as logger
 
 
 TOP3_STYLES = {
-    1: {"bg": QColor("#FFF3C4"), "fg": QColor("#7A5A00"), "bold": True, "medal": "🥇"},
+    1: {"bg": QColor("#D9E9F8"), "fg": QColor("#1F4E79"), "bold": True, "medal": "🥇"},
     2: {"bg": QColor("#E8EEF5"), "fg": QColor("#4A5A6A"), "bold": True, "medal": "🥈"},
-    3: {"bg": QColor("#F6D9B8"), "fg": QColor("#7A3E00"), "bold": True, "medal": "🥉"},
+    3: {"bg": QColor("#F7D8D8"), "fg": QColor("#7A2E2E"), "bold": True, "medal": "🥉"},
 }
 
 
@@ -57,7 +57,7 @@ def _build_leaderboard(title_text, headers, rows, value_suffix="", top3_colorize
     frame = QFrame()
     frame.setStyleSheet("""
         QFrame {
-            background: rgba(255, 255, 255, 0.92);
+            background: rgba(255, 255, 255, 0.94);
             border: none;
             border-radius: 16px;
         }
@@ -69,7 +69,7 @@ def _build_leaderboard(title_text, headers, rows, value_suffix="", top3_colorize
 
     title = QLabel(title_text)
     title.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
-    title.setStyleSheet("font-size: 15px; font-weight: 800; color: #21443C;")
+    title.setStyleSheet("font-size: 15px; font-weight: 800; color: #22384D;")
     layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignHCenter)
 
     table = QTableWidget(0, len(headers))
@@ -107,8 +107,8 @@ def _build_leaderboard(title_text, headers, rows, value_suffix="", top3_colorize
             background: transparent;
         }
         QHeaderView::section {
-            background: #EAF8F3;
-            color: #4A7168;
+            background: #DCEAF7;
+            color: #2E4C69;
             padding: 10px;
             border: none;
             font-size: 12pt;
@@ -122,8 +122,8 @@ def _build_leaderboard(title_text, headers, rows, value_suffix="", top3_colorize
             background: transparent;
             border: none;
             outline: none;
-            alternate-background-color: #F8FCFA;
-            color: #20443D;
+            alternate-background-color: #F7FAFD;
+            color: #1E2B38;
         }
         QTableWidget:focus {
             border: none;
@@ -135,8 +135,8 @@ def _build_leaderboard(title_text, headers, rows, value_suffix="", top3_colorize
             outline: none;
         }
         QTableWidget::item:selected {
-            background: #DFF7EF;
-            color: #4A7168;
+            background: #DCEAF7;
+            color: #1E2B38;
             border: none;
             outline: none;
         }
