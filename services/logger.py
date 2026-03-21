@@ -277,3 +277,5 @@ def log_error(message, exc=None):
         message = f"{message}\n{stack}"
 
     log(f"[ERROR] {message}", level="ERROR")
+
+    

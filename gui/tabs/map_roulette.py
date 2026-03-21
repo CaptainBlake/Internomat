@@ -19,9 +19,10 @@ from PySide6.QtWidgets import (
     QGraphicsBlurEffect,
 )
 
-import db
+import db.maps as maps_db
 import core
 
+# TODO: add map display for map in database & a seperate display for map pool from which to gamble from
 
 class MapListWidget(QListWidget):
     def __init__(self, parent=None):
@@ -192,9 +193,14 @@ class SlotMachineWidget(QFrame):
         super().__init__(parent)
         self.setStyleSheet("""
             QFrame {
-                background: rgba(255, 255, 255, 0.72);
-                border: 1px solid #BBDEFB;
-                border-radius: 18px;
+                background: qlineargradient(
+                    x1: 0, y1: 0, x2: 0, y2: 1,
+                    stop: 0 #131A23,
+                    stop: 0.5 #1A2230,
+                    stop: 1 #10151C
+                );
+                border: 1px solid rgba(63, 136, 217, 0.28);
+                border-radius: 22px;
             }
         """)
 
@@ -211,9 +217,11 @@ class SlotMachineWidget(QFrame):
         self._pulse_timer = QTimer(self)
         self._pulse_timer.timeout.connect(self._update_pulse)
 
+        self.setMinimumHeight(280)
+
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(4)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(8)
 
         self.hint = QLabel("Ready")
         self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -221,9 +229,10 @@ class SlotMachineWidget(QFrame):
             QLabel {
                 background: transparent;
                 border: none;
-                color: #607D8B;
+                color: #C8B57A;
                 font-size: 12px;
-                font-weight: 600;
+                font-weight: 700;
+                letter-spacing: 1px;
             }
         """)
         layout.addWidget(self.hint)
@@ -231,13 +240,14 @@ class SlotMachineWidget(QFrame):
         self.track = QFrame()
         self.track.setStyleSheet("""
             QFrame {
-                background: transparent;
-                border: none;
+                background: rgba(15, 20, 28, 0.78);
+                border: 1px solid rgba(63, 136, 217, 0.22);
+                border-radius: 18px;
             }
         """)
         track_layout = QVBoxLayout(self.track)
-        track_layout.setContentsMargins(6, 6, 6, 6)
-        track_layout.setSpacing(0)
+        track_layout.setContentsMargins(10, 10, 10, 10)
+        track_layout.setSpacing(2)
 
         self.rows = []
         for _ in range(self._display_count):
@@ -248,10 +258,10 @@ class SlotMachineWidget(QFrame):
                 QLabel {
                     background: transparent;
                     border: none;
-                    padding: 0px 4px;
-                    font-size: 17px;
+                    padding: 2px 6px;
+                    font-size: 16px;
                     font-weight: 600;
-                    color: #607D8B;
+                    color: #9AA4B2;
                 }
             """)
 
@@ -285,7 +295,7 @@ class SlotMachineWidget(QFrame):
             self._pulse_timer.stop()
             return
 
-        self._pulse_phase += 0.16
+        self._pulse_phase += 0.18
         self._apply_visuals(idle=False, winner=self._winner, center_glow=True)
         self.update()
 
@@ -298,62 +308,53 @@ class SlotMachineWidget(QFrame):
                 if idx == 3:
                     eff.setOpacity(1.0)
                 else:
-                    eff.setOpacity(max(0.40, 0.90 - (distance * 0.15)))
+                    eff.setOpacity(max(0.25, 0.82 - (distance * 0.17)))
 
             blur = getattr(row, "_blur_effect", None)
             if blur is not None:
                 if idx == 3:
                     blur.setBlurRadius(0.0)
                 else:
-                    blur.setBlurRadius(0.85 + (distance * 0.95))
+                    blur.setBlurRadius(1.0 + (distance * 1.4))
 
             if idx == 3:
                 if center_glow:
                     row.setStyleSheet("""
                         QLabel {
-                            background: transparent;
-                            border: none;
-                            padding: 1px 4px;
+                            background: rgba(63, 136, 217, 0.16);
+                            border: 1px solid rgba(63, 136, 217, 0.34);
+                            border-radius: 10px;
+                            padding: 4px 6px;
                             font-size: 30px;
                             font-weight: 900;
-                            color: #0D47A1;
+                            color: #DCEAF7;
                         }
                     """)
                 else:
                     row.setStyleSheet("""
                         QLabel {
-                            background: transparent;
-                            border: none;
-                            padding: 0px 4px;
-                            font-size: 27px;
-                            font-weight: 800;
-                            color: #0D47A1;
+                            background: rgba(63, 136, 217, 0.08);
+                            border: 1px solid rgba(63, 136, 217, 0.22);
+                            border-radius: 10px;
+                            padding: 4px 6px;
+                            font-size: 28px;
+                            font-weight: 900;
+                            color: #AFC8E8;
                         }
                     """)
             else:
-                font_size = max(12, 17 - distance)
+                font_size = max(11, 16 - distance)
+                alpha = max(0.38, 0.88 - (distance * 0.16))
                 row.setStyleSheet(f"""
                     QLabel {{
                         background: transparent;
                         border: none;
-                        padding: 0px 4px;
+                        padding: 2px 6px;
                         font-size: {font_size}px;
                         font-weight: 600;
-                        color: #607D8B;
+                        color: rgba(185, 198, 212, {alpha});
                     }}
                 """)
-
-        if winner is not None:
-            self.center_row.setStyleSheet("""
-                QLabel {
-                    background: transparent;
-                    border: none;
-                    padding: 1px 4px;
-                    font-size: 30px;
-                    font-weight: 900;
-                    color: #0D47A1;
-                }
-            """)
 
     def _fill_idle_state(self):
         if not self._items:
@@ -375,7 +376,7 @@ class SlotMachineWidget(QFrame):
     def start_spin(self, winner, on_finished):
         if self._running or not self._items:
             return
-        
+
         self._on_finished = on_finished
 
         self._running = True
@@ -387,7 +388,7 @@ class SlotMachineWidget(QFrame):
         winner_text = self._winner
         winner_index = self._items.index(winner_text)
 
-        prefix = [random.choice(self._items) for _ in range(random.randint(28, 42))]
+        prefix = [random.choice(self._items) for _ in range(random.randint(34, 48))]
         tail = [
             self._items[(winner_index - 3) % len(self._items)],
             self._items[(winner_index - 2) % len(self._items)],
@@ -422,11 +423,11 @@ class SlotMachineWidget(QFrame):
 
                 remaining = len(self._sequence) - self._step
                 if remaining <= 10:
-                    delay = 70 + remaining * 34
+                    delay = 80 + remaining * 40
                 elif remaining <= 18:
-                    delay = 46
+                    delay = 48
                 else:
-                    delay = 38
+                    delay = 34
 
                 QTimer.singleShot(delay, tick)
                 return
@@ -441,7 +442,7 @@ class SlotMachineWidget(QFrame):
 
             self._pulse_active = True
             self._pulse_timer.start(55)
-            QTimer.singleShot(1200, self._stop_pulse_and_finish)
+            QTimer.singleShot(1250, self._stop_pulse_and_finish)
 
         tick()
 
@@ -452,7 +453,7 @@ class SlotMachineWidget(QFrame):
         self.hint.setText("Winner!")
         self.fireworks.burst()
         self._running = False
-        if self._on_finished:         
+        if self._on_finished:
             self._on_finished()
         self.update()
 
@@ -476,8 +477,8 @@ def build_map_tab(parent):
     list_frame = QFrame()
     list_frame.setStyleSheet("""
         QFrame {
-            background: rgba(255, 255, 255, 0.82);
-            border: 1px solid #C9ECE2;
+            background: #FFFFFF;
+            border: 1px solid #B9CADC;
             border-radius: 14px;
         }
     """)
@@ -495,23 +496,23 @@ def build_map_tab(parent):
         }
         QListWidget::item {
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                                        stop:0 #FFFFFF, stop:1 #F7FFFC);
-            border: 1px solid #D7EEE7;
+                                            stop:0 #FFFFFF, stop:1 #F8FBFE);
+            border: 1px solid #D4E1EE;
             border-radius: 12px;
             padding: 7px 10px;
-            color: #21443C;
+            color: #1E2B38;
             margin: 1px;
             margin-bottom: 8px;
         }
         QListWidget::item:hover {
-            background: #ECFBF6;
-            border: 1px solid #BEE8D9;
+            background: #EAF2FA;
+            border: 1px solid #B9CADC;
         }
         QListWidget::item:selected {
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                                        stop:0 #D7F5EC, stop:1 #C7F0E4);
-            color: #0C755B;
-            border: 1px solid #9EDCCB;
+                                            stop:0 #DCEAF7, stop:1 #C9DDF0);
+            color: #1E2B38;
+            border: 1px solid #8FB2D8;
         }
     """)
     list_layout.addWidget(map_list, 1)
@@ -536,7 +537,7 @@ def build_map_tab(parent):
 
     result_label = QLabel("Selected Map: -")
     result_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    result_label.setStyleSheet("font-size: 12px; font-weight: 700; color: #21443C;")
+    result_label.setStyleSheet("font-size: 12px; font-weight: 700; color: #1E2B38;")
     left_panel.addWidget(result_label)
 
     right_panel = QVBoxLayout()
@@ -553,7 +554,7 @@ def build_map_tab(parent):
 
     def refresh_maps():
         map_list.clear()
-        maps = db.get_maps()
+        maps = maps_db.get_maps()
         for m in maps:
             item = QListWidgetItem(m.replace("de_", ""))
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -565,7 +566,7 @@ def build_map_tab(parent):
         name = entry.text().strip()
         if not name:
             return
-        db.add_map(name)
+        maps_db.add_map(name)
         entry.clear()
         refresh_maps()
 
@@ -574,7 +575,7 @@ def build_map_tab(parent):
         if not items:
             return
         for item in items:
-            db.delete_map(item.text())
+            maps_db.delete_map(item.text())
         refresh_maps()
 
     def finish_spin(winner):
@@ -585,7 +586,7 @@ def build_map_tab(parent):
     def spin():
         nonlocal spinning
 
-        maps = db.get_maps()
+        maps = maps_db.get_maps()
         if not maps:
             QMessageBox.critical(parent, "Error", "No maps available")
             return

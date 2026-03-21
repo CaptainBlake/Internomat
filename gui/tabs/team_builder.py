@@ -1,6 +1,5 @@
-import threading
-
 from PySide6.QtCore import Qt, Signal, QObject
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
@@ -12,13 +11,12 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QHeaderView,
-    QFrame
+    QFrame,
 )
 
-import db
+import db.players as player_db
 import threading
 import services.crawler as crawler
-import services.matchzy_db as matchzy
 import services.logger as logger
 import core
 
@@ -36,6 +34,171 @@ class UiDispatcher(QObject):
     balance_finished = Signal(object, object, int)
     balance_error = Signal(object)
 
+
+def _apply_table_style(table):
+    table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+    table.setAlternatingRowColors(True)
+    table.setShowGrid(False)
+    table.verticalHeader().setVisible(False)
+    table.horizontalHeader().setHighlightSections(False)
+    table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
+    table.horizontalHeader().setStretchLastSection(False)
+
+    table.setStyleSheet("""
+        QTableWidget {
+            background: transparent;
+            border: none;
+            outline: none;
+            alternate-background-color: #F8FCFA;
+            color: #20443D;
+        }
+        QTableWidget:focus {
+            border: none;
+            outline: none;
+        }
+        QTableWidget::item {
+            padding: 6px;
+            border: none;
+            outline: none;
+        }
+        QTableWidget::item:selected {
+            background: #DFF7EF;
+            color: #4A7168;
+            border: none;
+            outline: none;
+        }
+        QTableWidget::item:focus {
+            border: none;
+            outline: none;
+        }
+        QAbstractItemView {
+            outline: none;
+        }
+        QAbstractItemView::item {
+            border: none;
+            outline: none;
+        }
+        QAbstractItemView::item:selected {
+            border: none;
+            outline: none;
+        }
+    """)
+
+    table.horizontalHeader().setStyleSheet("""
+        QHeaderView {
+            border: none;
+            background: transparent;
+        }
+        QHeaderView::section {
+            background: #EAF8F3;
+            color: #4A7168;
+            padding: 10px;
+            border: none;
+            font-size: 12pt;
+            font-weight: 800;
+            text-align: center;
+        }
+    """)
+
+    header_font = QFont()
+    header_font.setPointSize(12)
+    header_font.setBold(True)
+
+    for i in range(table.columnCount()):
+        item = table.horizontalHeaderItem(i)
+        if item is not None:
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item.setFont(header_font)
+
+
+def _apply_result_table_style(table):
+    table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+    table.setAlternatingRowColors(True)
+    table.setShowGrid(False)
+    table.verticalHeader().setVisible(False)
+    table.horizontalHeader().hide()
+    table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+
+    table.setStyleSheet("""
+        QTableWidget {
+            background: #FFFFFF;
+            border: none;
+            outline: none;
+            alternate-background-color: #F7FAFD;
+            color: #1E2B38;
+        }
+        QTableWidget:focus {
+            border: none;
+            outline: none;
+        }
+        QTableWidget::item {
+            padding: 10px 8px;
+            border: none;
+            outline: none;
+            background: transparent;
+            color: #1E2B38;
+        }
+        QTableWidget::item:selected {
+            background: #DCEAF7;
+            color: #1E2B38;
+            border: none;
+            outline: none;
+        }
+        QTableWidget::item:focus {
+            border: none;
+            outline: none;
+        }
+        QAbstractItemView {
+            outline: none;
+        }
+        QAbstractItemView::item {
+            border: none;
+            outline: none;
+        }
+        QAbstractItemView::item:selected {
+            border: none;
+            outline: none;
+        }
+    """)
+
+
+def _build_card(title_text, table, title_color="#DCEAF7", title_text_color="#2E4C69"):
+    card = QFrame()
+    card.setStyleSheet("""
+        QFrame {
+            background: rgba(255, 255, 255, 0.94);
+            border: none;
+            border-radius: 16px;
+        }
+    """)
+
+    card_layout = QVBoxLayout(card)
+    card_layout.setContentsMargins(0, 0, 0, 0)
+    card_layout.setSpacing(0)
+
+    title = QLabel(title_text)
+    title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    title.setStyleSheet(f"""
+        QLabel {{
+            background: {title_color};
+            color: {title_text_color};
+            padding: 8px 12px;
+            font-size: 13px;
+            font-weight: 800;
+            border-top-left-radius: 16px;
+            border-top-right-radius: 16px;
+            border-bottom-left-radius: 0px;
+            border-bottom-right-radius: 0px;
+        }}
+    """)
+
+    card_layout.addWidget(title)
+    card_layout.addWidget(table, 1)
+    return card
+
+
 def build_team_tab(parent):
     dispatcher = UiDispatcher(parent)
 
@@ -52,12 +215,12 @@ def build_team_tab(parent):
     entry.setPlaceholderText("Steam profile URL")
 
     add_button = QPushButton("Add Player")
-    remove_button = QPushButton("Remove Player")   
+    remove_button = QPushButton("Remove Player")
     update_button = QPushButton("Update")
 
     top_layout.addWidget(entry, 1)
     top_layout.addWidget(add_button)
-    top_layout.addWidget(remove_button)            
+    top_layout.addWidget(remove_button)
     top_layout.addWidget(update_button)
     layout.addWidget(top_frame)
 
@@ -67,23 +230,28 @@ def build_team_tab(parent):
     lists_layout.setSpacing(10)
 
     db_tree = QTableWidget(0, 2)
+    db_tree.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     db_tree.setHorizontalHeaderLabels(["Player", "Rating"])
+    _apply_table_style(db_tree)
+    db_tree.horizontalHeader().hide()
     db_tree.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
     db_tree.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
-    db_tree.verticalHeader().setVisible(False)
     db_tree.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
     db_tree.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-    db_tree.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
 
     pool_tree = QTableWidget(0, 3)
+    pool_tree.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     pool_tree.setHorizontalHeaderLabels(["#", "Player", "Rating"])
+    _apply_table_style(pool_tree)
+    pool_tree.horizontalHeader().hide()
     pool_tree.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
     pool_tree.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
-    pool_tree.verticalHeader().setVisible(False)
     pool_tree.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
     pool_tree.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
     pool_tree.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-    pool_tree.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+
+    db_card = _build_card("Player Pool", db_tree)
+    pool_card = _build_card("Selected Players", pool_tree)
 
     btn_frame = QFrame()
     btn_layout = QVBoxLayout(btn_frame)
@@ -100,15 +268,15 @@ def build_team_tab(parent):
     btn_layout.addWidget(remove_from_pool_button, alignment=Qt.AlignmentFlag.AlignHCenter)
     btn_layout.addStretch(1)
 
-    lists_layout.addWidget(db_tree, 2)
+    lists_layout.addWidget(db_card, 2)
     lists_layout.addWidget(btn_frame, 0)
-    lists_layout.addWidget(pool_tree, 2)
+    lists_layout.addWidget(pool_card, 2)
     layout.addWidget(lists_frame, 1)
 
     control_frame = QFrame()
     control_frame.setStyleSheet("""
         QFrame {
-            background: #ECEFF1;
+            background: #EAF1F8;
             border-radius: 12px;
         }
     """)
@@ -148,33 +316,73 @@ def build_team_tab(parent):
 
     ct_frame = QFrame()
     t_frame = QFrame()
+    ct_frame.setStyleSheet("""
+        QFrame {
+            background: #FFFFFF;
+            border: none;
+            border-radius: 12px;
+        }
+    """)
+    t_frame.setStyleSheet("""
+        QFrame {
+            background: #FFFFFF;
+            border: none;
+            border-radius: 12px;
+        }
+    """)
 
     ct_layout = QVBoxLayout(ct_frame)
     t_layout = QVBoxLayout(t_frame)
 
-    ct_title = QLabel("Counter Terrorists")
-    t_title = QLabel("Terrorists")
-    ct_total = QLabel("Total: 0")
-    t_total = QLabel("Total: 0")
+    ct_layout.setContentsMargins(0, 0, 0, 0)
+    ct_layout.setSpacing(0)
+    t_layout.setContentsMargins(0, 0, 0, 0)
+    t_layout.setSpacing(0)
 
-    team_a_tree = QTableWidget(0, 2)
-    team_b_tree = QTableWidget(0, 2)
+    team_a_tree = QTableWidget(0, 1)
+    team_b_tree = QTableWidget(0, 1)
 
     for tree in (team_a_tree, team_b_tree):
-        tree.setHorizontalHeaderLabels(["Player", "Rating"])
-        tree.verticalHeader().setVisible(False)
-        tree.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        tree.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        tree.setHorizontalHeaderLabels(["Player"])
+        _apply_result_table_style(tree)
         tree.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        tree.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        tree.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
 
-    ct_layout.addWidget(ct_title)
-    ct_layout.addWidget(team_a_tree, 1)
-    ct_layout.addWidget(ct_total)
+    ct_card = _build_card("Counter Terrorists", team_a_tree, "#3A7BD5", "#FFFFFF")
+    t_card = _build_card("Terrorists", team_b_tree, "#D94A4A", "#FFFFFF")
 
-    t_layout.addWidget(t_title)
-    t_layout.addWidget(team_b_tree, 1)
-    t_layout.addWidget(t_total)
+    ct_layout.addWidget(ct_card)
+    ct_layout.addWidget(QLabel("Total: 0"))
+    t_layout.addWidget(t_card)
+    t_layout.addWidget(QLabel("Total: 0"))
+
+    ct_total = ct_layout.itemAt(1).widget()
+    t_total = t_layout.itemAt(1).widget()
+
+    ct_total.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    t_total.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    ct_total.setStyleSheet("""
+        QLabel {
+            background: #DCEAF7;
+            color: #2E4C69;
+            padding: 10px 12px;
+            font-size: 14px;
+            font-weight: 800;
+            border-radius: 0px;
+        }
+    """)
+
+    t_total.setStyleSheet("""
+        QLabel {
+            background: #F7D8D8;
+            color: #7A2E2E;
+            padding: 10px 12px;
+            font-size: 14px;
+            font-weight: 800;
+            border-radius: 0px;
+        }
+    """)
 
     result_layout.addWidget(ct_frame, 1)
     result_layout.addWidget(t_frame, 1)
@@ -182,16 +390,25 @@ def build_team_tab(parent):
 
     diff_label = QLabel("Rating Difference: 0")
     diff_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    diff_label.setStyleSheet("""
+        QLabel {
+            background: #FFFFFF;
+            color: #2E4C69;
+            padding: 10px 14px;
+            font-size: 15px;
+            font-weight: 900;
+            border-radius: 12px;
+            border: 1px solid #B9CADC;
+        }
+    """)
     layout.addWidget(diff_label)
 
-
-    # Helper functions
     def on_progress(i, total_count):
         update_button.setText(f"Updating {i}/{total_count}")
 
     def on_player(player):
         if player:
-            db.update_player(player)
+            player_db.update_player(player)
             refresh_players()
 
     def finish():
@@ -216,12 +433,10 @@ def build_team_tab(parent):
     def show_error_popup(parent, title, message):
         logger.log_error(f"{title}: {message}")
         QMessageBox.critical(parent, title, message)
-        
+
     def show_info(title, text):
         logger.log(f"[UI] {title}: {text}", level="INFO")
         QMessageBox.information(parent, title, text)
-
-    # Player Management
 
     def get_pool_players():
         players = []
@@ -234,7 +449,7 @@ def build_team_tab(parent):
 
     def refresh_players():
         db_tree.setRowCount(0)
-        players = db.get_players()
+        players = player_db.get_players()
         for p in players:
             row = db_tree.rowCount()
             db_tree.insertRow(row)
@@ -270,7 +485,7 @@ def build_team_tab(parent):
         threading.Thread(target=worker, daemon=True).start()
 
     def on_add_player_success(player):
-        db.upsert_player(player)
+        player_db.upsert_player(player)
         refresh_players()
         entry.clear()
         add_button.setEnabled(True)
@@ -284,8 +499,6 @@ def build_team_tab(parent):
 
     dispatcher.add_player_success.connect(on_add_player_success)
     dispatcher.add_player_error.connect(on_add_player_error)
-
-    # Player Pool Management
 
     def add_to_pool():
         selected_rows = db_tree.selectionModel().selectedRows()
@@ -350,15 +563,16 @@ def build_team_tab(parent):
             ids.append(str(pid))
 
         for pid in ids:
-            db.delete_player(pid)
+            player_db.delete_player(pid)
             for row in range(pool_tree.rowCount() - 1, -1, -1):
                 if str(pool_tree.item(row, 0).data(Qt.ItemDataRole.UserRole)) == pid:
                     pool_tree.removeRow(row)
 
         refresh_players()
         refresh_pool_display()
-    
+
     def update_players():
+
         global update_running
 
         if update_running:
@@ -370,49 +584,20 @@ def build_team_tab(parent):
         update_running = True
         update_button.setEnabled(False)
 
-        steam_ids = db.get_players_to_update()
-
-        if not steam_ids:
-            show_info("Update", "All players were updated recently.\nTry again later.")
-            update_running = False
-            update_button.setEnabled(True)
-            update_button.setText("Update")
-            return
+        steam_ids = player_db.get_players_to_update() or []
 
         total = len(steam_ids)
         update_button.setText(f"Updating 0/{total}")
 
         def worker():
-            try:
-                try:
-                    logger.log("[UPDATE] Starting MatchZy sync", level="INFO")
-                    matchzy.sync()
-                except Exception as e:
-                    dispatcher.update_error.emit(e)
-
-                logger.log(f"[UPDATE] Players to update={len(steam_ids)}", level="INFO")
-
-                for i, steam_id in enumerate(steam_ids, start=1):
-                    try:
-                        player = crawler.get_leetify_player(steam_id)
-                        dispatcher.update_player_ready.emit(player)
-                    except Exception as e:
-                        dispatcher.update_error.emit(e)
-                        return
-
-                    dispatcher.update_progress.emit(i, total)
-
-                dispatcher.update_finished.emit()
-
-            except Exception as e:
-                dispatcher.update_error.emit(e)
-
-            finally:
-                crawler.close_driver()
-
+            core.update_players_pipeline(
+                steam_ids,
+                on_progress=lambda i, t: dispatcher.update_progress.emit(i, t),
+                on_player=lambda p: dispatcher.update_player_ready.emit(p),
+                on_error=lambda e: dispatcher.update_error.emit(e),
+                on_finish=lambda: dispatcher.update_finished.emit()
+            )
         threading.Thread(target=worker, daemon=True).start()
-
-    # Balancer
 
     def run_balancer():
         players = get_pool_players()
@@ -421,9 +606,6 @@ def build_team_tab(parent):
             show_error_popup(parent, "Error", "Add players to pool first")
             return
 
-        if len(players) % 2 != 0:
-            show_error_popup(parent, "Error", "Player count must be even")
-            return
 
         tolerance = tolerance_slider.value()
 
@@ -432,55 +614,62 @@ def build_team_tab(parent):
             f"players={len(players)} tolerance={tolerance}"
         )
 
-        # UI feedback
         generate_button.setEnabled(False)
         generate_button.setText("Generating...")
-        # Run balancer in separate thread to avoid blocking UI when pool is large
+
         def worker():
             try:
                 (team_a, team_b), diff = core.balance_teams(players, tolerance=tolerance)
                 dispatcher.balance_finished.emit(team_a, team_b, diff)
-
             except Exception as e:
                 dispatcher.balance_error.emit(e)
 
         threading.Thread(target=worker, daemon=True).start()
 
     def on_balance_finished(team_a, team_b, diff):
-            clear_table(team_a_tree)
-            clear_table(team_b_tree)
+        clear_table(team_a_tree)
+        clear_table(team_b_tree)
 
-            team_a = sorted(team_a, key=lambda p: p[2], reverse=True)
-            team_b = sorted(team_b, key=lambda p: p[2], reverse=True)
+        team_a = sorted(team_a, key=lambda p: p[2], reverse=True)
+        team_b = sorted(team_b, key=lambda p: p[2], reverse=True)
 
-            sum_a = 0
-            for p in team_a:
-                row = team_a_tree.rowCount()
-                team_a_tree.insertRow(row)
-                team_a_tree.setItem(row, 0, QTableWidgetItem(p[1]))
-                rating_item = QTableWidgetItem(str(p[2]))
-                rating_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                team_a_tree.setItem(row, 1, rating_item)
-                sum_a += p[2]
+        sum_a = 0
+        for p in team_a:
+            row = team_a_tree.rowCount()
+            team_a_tree.insertRow(row)
 
-            sum_b = 0
-            for p in team_b:
-                row = team_b_tree.rowCount()
-                team_b_tree.insertRow(row)
-                team_b_tree.setItem(row, 0, QTableWidgetItem(p[1]))
-                rating_item = QTableWidgetItem(str(p[2]))
-                rating_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                team_b_tree.setItem(row, 1, rating_item)
-                sum_b += p[2]
+            name_item = QTableWidgetItem(p[1])
+            name_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            font = name_item.font()
+            font.setPointSize(12)
+            font.setBold(True)
+            name_item.setFont(font)
 
-            ct_total.setText(f"Total: {sum_a}")
-            t_total.setText(f"Total: {sum_b}")
-            diff_label.setText(f"Rating Difference: {diff}")
+            team_a_tree.setItem(row, 0, name_item)
+            sum_a += p[2]
 
-            generate_button.setEnabled(True)
-            generate_button.setText("Generate Teams")
-            generate_button.setFocus()
+        sum_b = 0
+        for p in team_b:
+            row = team_b_tree.rowCount()
+            team_b_tree.insertRow(row)
 
+            name_item = QTableWidgetItem(p[1])
+            name_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            font = name_item.font()
+            font.setPointSize(12)
+            font.setBold(True)
+            name_item.setFont(font)
+
+            team_b_tree.setItem(row, 0, name_item)
+            sum_b += p[2]
+
+        ct_total.setText(f"Total: {sum_a}")
+        t_total.setText(f"Total: {sum_b}")
+        diff_label.setText(f"Rating Difference: {diff}")
+
+        generate_button.setEnabled(True)
+        generate_button.setText("Generate Teams")
+        generate_button.setFocus()
 
     def on_balance_error(e):
         logger.log_error(f"Balance failed: {e}", exc=e)
@@ -489,7 +678,6 @@ def build_team_tab(parent):
         generate_button.setEnabled(True)
         generate_button.setText("Generate Teams")
         generate_button.setFocus()
-    # Log View / signals
 
     add_button.clicked.connect(add_player)
     update_button.clicked.connect(update_players)
@@ -506,7 +694,5 @@ def build_team_tab(parent):
     dispatcher.update_error.connect(on_error)
     dispatcher.update_finished.connect(finish)
 
-
     refresh_players()
-
     return refresh_players

@@ -2,6 +2,8 @@ import threading
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
+    QCheckBox,
     QDoubleSpinBox,
     QSizePolicy,
     QWidget,
@@ -22,8 +24,8 @@ from PySide6.QtGui import QFont
 from services.settings import settings
 from services.logger import get_log_history
 import services.logger as logger
-from db import export_players as db_export_players
-from db import import_players as db_import_players
+from db.IO import export_players as db_export_players
+from db.IO import import_players as db_import_players
 from services.matchzy_db import sync
 
 LOG_WINDOW_INSTANCE = None
@@ -35,19 +37,53 @@ def build_settings_tab(parent, on_players_updated=None):
     root_layout.setContentsMargins(20, 20, 20, 20)
     root_layout.setSpacing(20)
 
+def build_settings_tab(parent, on_players_updated=None):
+
+    root_layout = QHBoxLayout(parent)
+    root_layout.setContentsMargins(20, 20, 20, 20)
+    root_layout.setSpacing(20)
+
     # SIDEBAR
     sidebar = QListWidget()
-    sidebar.setFixedWidth(160)
+    sidebar.setFixedWidth(170)
     sidebar.addItems(["Debug", "Database", "Settings"])
+    sidebar.setStyleSheet("""
+        QListWidget {
+            background: #FFFFFF;
+            border: 1px solid #B9CADC;
+            border-radius: 12px;
+            padding: 6px;
+            color: #1E2B38;
+        }
+        QListWidget::item {
+            padding: 10px 12px;
+            margin: 2px 0px;
+            border: none;
+        }
+        QListWidget::item:selected {
+            background: #DCEAF7;
+            color: #1E2B38;
+        }
+        QListWidget::item:hover {
+            background: #E7F1FB;
+            color: #2E4C69;
+        }
+    """)
     root_layout.addWidget(sidebar)
 
     # SCROLL AREA
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
+    scroll.setStyleSheet("""
+        QScrollArea {
+            border: none;
+            background: transparent;
+        }
+    """)
 
     container = QWidget()
     layout = QVBoxLayout(container)
-    layout.setSpacing(10)
+    layout.setSpacing(12)
     layout.setAlignment(Qt.AlignTop)
 
     scroll.setWidget(container)
@@ -56,26 +92,25 @@ def build_settings_tab(parent, on_players_updated=None):
 
     # HELPERS
 
-
     def create_section(title):
         frame = QFrame()
         frame.setStyleSheet("""
             QFrame {
-                background: #FFFFFF;
-                border: 1px solid #D5EEE6;
-                border-radius: 10px;
+                background: rgba(255, 255, 255, 0.94);
+                border: none;
+                border-radius: 16px;
             }
         """)
 
         section_layout = QVBoxLayout(frame)
-        section_layout.setContentsMargins(12, 8, 12, 8)
+        section_layout.setContentsMargins(14, 12, 14, 12)
         section_layout.setSpacing(12)
 
         title_label = QLabel(title)
         title_label.setStyleSheet("""
-            font-size: 14px;
-            font-weight: 600;
-            color: #20443D;
+            font-size: 15px;
+            font-weight: 800;
+            color: #22384D;
         """)
 
         section_layout.addWidget(title_label)
@@ -85,6 +120,26 @@ def build_settings_tab(parent, on_players_updated=None):
         btn = QPushButton(text)
         btn.setFixedHeight(32)
         btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3F88D9;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+                padding: 6px 12px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #5A9BE3;
+            }
+            QPushButton:pressed {
+                background-color: #2F6FB3;
+            }
+            QPushButton:disabled {
+                background-color: #BFD0E0;
+                color: #F7FAFD;
+            }
+        """)
         return btn
 
     def create_grid_section(title, rows, columns=3):
@@ -111,18 +166,85 @@ def build_settings_tab(parent, on_players_updated=None):
 
         label = QLabel(label_text)
         label.setMinimumWidth(220)
-        label.setStyleSheet("font-weight: 500;")
+        label.setStyleSheet("""
+            QLabel {
+                font-weight: 600;
+                color: #2E4C69;
+                border: none;
+                background: transparent;
+            }
+        """)
 
         if tooltip:
             label.setToolTip(tooltip)
             widget.setToolTip(tooltip)
 
+        if isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+            widget.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.PlusMinus)
+        widget.setStyleSheet("""
+            QSpinBox, QDoubleSpinBox {
+                background: #FFFFFF;
+                color: #1E2B38;
+                border: 1px solid #B9CADC;
+                border-radius: 8px;
+                padding: 6px 36px 6px 10px;
+                min-height: 36px;
+                min-width: 130px;
+            }
+
+            QSpinBox:focus, QDoubleSpinBox:focus {
+                border: 1px solid #3F88D9;
+            }
+
+            QSpinBox::up-button, QDoubleSpinBox::up-button,
+            QSpinBox::down-button, QDoubleSpinBox::down-button {
+                subcontrol-origin: border;
+                border: none;
+                background: #DCEAF7;
+                width: 24px;
+            }
+
+            QSpinBox::up-button, QDoubleSpinBox::up-button {
+                subcontrol-position: top right;
+                border-top-right-radius: 8px;
+            }
+
+            QSpinBox::down-button, QDoubleSpinBox::down-button {
+                subcontrol-position: bottom right;
+                border-bottom-right-radius: 8px;
+            }
+
+            QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+            QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
+                background: #E7F1FB;
+            }
+
+            QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
+                width: 0px;
+                height: 0px;
+            }
+
+            QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
+                width: 0px;
+                height: 0px;
+            }
+        """)
+
         def update():
-            value = widget.value()
+            if isinstance(widget, QCheckBox):
+                value = widget.isChecked()
+            else:
+                value = widget.value()
+
             setattr(settings, attr_name, value)
             logger.log(f"[SETTINGS] {attr_name} set to {value}", level="INFO")
 
-        widget.editingFinished.connect(update)
+
+        if isinstance(widget, QCheckBox):
+            widget.stateChanged.connect(update)
+        else:
+            widget.setFixedWidth(100)
+            widget.editingFinished.connect(update)
 
         row.addWidget(label)
         row.addWidget(widget)
@@ -130,9 +252,7 @@ def build_settings_tab(parent, on_players_updated=None):
 
         return row
 
-
     # BUTTONS
-
 
     open_logs_button = small_button("Open Logs")
     reload_ui_button = small_button("Reload UI")
@@ -152,7 +272,6 @@ def build_settings_tab(parent, on_players_updated=None):
 
     # SECTIONS
 
-
     # DEBUG
     create_grid_section("Debug", [
         [open_logs_button, reload_ui_button]
@@ -167,6 +286,7 @@ def build_settings_tab(parent, on_players_updated=None):
     # SETTINGS
     settings_frame, settings_layout = create_section("Settings")
 
+    
     # cooldown
     spin_cooldown = QSpinBox()
     spin_cooldown.setRange(0, 9999)
@@ -213,9 +333,18 @@ def build_settings_tab(parent, on_players_updated=None):
     layout.addWidget(settings_frame)
     layout.addStretch()
 
+    # allow uneven teams
+    checkbox_uneven = QCheckBox()
+    checkbox_uneven.setChecked(settings.allow_uneven_teams)
 
+    settings_layout.addLayout(create_setting_row(
+        "Allow uneven teams:",
+        checkbox_uneven,
+        "allow_uneven_teams",
+        "Allow uneven teams (e.g. 3 vs 2)"
+    ))
     # ACTIONS
-    
+
     def open_logs():
         global LOG_WINDOW_INSTANCE
         if LOG_WINDOW_INSTANCE is None or not LOG_WINDOW_INSTANCE.isVisible():
@@ -226,7 +355,7 @@ def build_settings_tab(parent, on_players_updated=None):
 
     def reload_ui():
         logger.log_user_action("Reload UI")
-        from gui import restart_window
+        from gui.gui import restart_window
         restart_window()
 
     def import_players():
@@ -267,6 +396,7 @@ def build_settings_tab(parent, on_players_updated=None):
 
 # LOG WINDOW 
 class LogWindow(QWidget):
+
     def __init__(self):
         super().__init__()
 
