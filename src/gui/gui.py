@@ -4,7 +4,7 @@ from gui.tabs.team_builder import build_team_tab
 from gui.tabs.map_roulette import build_map_tab
 from gui.tabs.settings_tab import build_settings_tab
 from gui.tabs.stat_overview import build_stat_overview_tab, refresh_stat_overview
-from services.settings import settings
+from core.settings.settings import settings
 import services.logger as logger
 import os
 import sys
