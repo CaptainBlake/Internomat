@@ -48,7 +48,7 @@ def build_settings_tab(parent, on_players_updated=None):
     # SIDEBAR
     sidebar = QListWidget()
     sidebar.setFixedWidth(170)
-    sidebar.addItems(["Debug", "Database", "Settings"])
+    sidebar.addItems(["Debug", "Database", "Settings", "MatchZy"])
     sidebar.setStyleSheet("""
         QListWidget {
             background: #FFFFFF;
@@ -287,7 +287,7 @@ def build_settings_tab(parent, on_players_updated=None):
 
     # DATABASE
     create_grid_section("Database", [
-        [import_players_button, import_db_button, sync_matchzy_button],
+        [import_players_button, import_db_button, None],
         [export_players_button, export_db_button, None]
     ])
 
@@ -354,6 +354,21 @@ def build_settings_tab(parent, on_players_updated=None):
 
     # MATCHZY SETTINGS
     matchzy_frame, matchzy_layout = create_section("MatchZy Database")
+
+    info_label = QLabel(
+        "Requires MatchZy to be configured with a MySQL database.\n"
+        "See MatchZy documentation for setup:\nhttps://shobhit-pathak.github.io/MatchZy/database_stats/#using-mysql-database-with-matchzy"
+    )
+    info_label.setWordWrap(True)
+    info_label.setStyleSheet("""
+        QLabel {
+            font-size: 12px;
+            color: #5A6B7C;
+            padding-bottom: 6px;
+        }
+    """)
+
+    matchzy_layout.addWidget(info_label)
 
     def text_input(value="", password=False):
         inp = QLineEdit()
@@ -422,6 +437,9 @@ def build_settings_tab(parent, on_players_updated=None):
         "matchzy_database"
     ))
 
+    matchzy_layout.addSpacing(10)
+    matchzy_layout.addWidget(sync_matchzy_button)
+    
     layout.addWidget(matchzy_frame)
     
     # ACTIONS
