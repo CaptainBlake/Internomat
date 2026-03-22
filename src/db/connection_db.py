@@ -1,6 +1,9 @@
+from pathlib import Path
 import sqlite3
 
-DB_FILE = "internomat.db"
+# go to project root (Internomat)
+BASE_DIR = Path(__file__).resolve().parents[2]
+DB_FILE = BASE_DIR / "internomat.db"
 
 def get_conn():
     conn = sqlite3.connect(DB_FILE, timeout=10, check_same_thread=False)

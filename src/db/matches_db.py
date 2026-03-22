@@ -142,3 +142,44 @@ def match_exists(match_id):
     logger.log(f"[DB] Match exists={exists} match={str(match_id)[:6]}", level="DEBUG")
 
     return exists
+
+
+def get_all_matches_with_maps():
+    with get_conn() as conn:
+        rows = conn.execute("""
+        SELECT 
+            m.match_id,
+            m.team1_name,
+            m.team2_name,
+            mm.map_number,
+            mm.map_name
+        FROM matches m
+        LEFT JOIN match_maps mm 
+            ON m.match_id = mm.match_id
+        ORDER BY m.match_id, mm.map_number
+        """).fetchall()
+
+    matches = {}
+
+    for row in rows:
+        match_id = row["match_id"]
+        t1 = row["team1_name"]
+        t2 = row["team2_name"]
+        map_num = row["map_number"]
+        map_name = row["map_name"]
+
+        if match_id not in matches:
+            matches[match_id] = {
+                "match_id": match_id,
+                "team1": t1,
+                "team2": t2,
+                "maps": []
+            }
+
+        if map_num is not None:
+            matches[match_id]["maps"].append({
+                "map_number": int(map_num),
+                "map_name": map_name
+            })
+
+    return list(matches.values())
