@@ -1,21 +1,10 @@
 # Internomat
 
-Internomat is a lightweight desktop tool for creating balanced CS2 teams.
+Internomat is a desktop tool for creating balanced CS2 teams.
 
 Players are added via their Steam profile link. The application automatically retrieves their Leetify rating and generates two teams with similar overall strength.
 
-It also includes a Map Roulette to randomly select a map from a configurable pool.
-
----
-
-## Features
-
-- Balanced team generation based on player ratings
-- Add players via Steam profile links
-- Automatic Leetify integration with fallback scraper
-- Map Roulette with editable pool
-- Local database for players and maps
-- Standalone Windows executable
+It also includes a Map Roulette, Leaderboard and Statistics from private game servers (work in progress)
 
 ---
 
