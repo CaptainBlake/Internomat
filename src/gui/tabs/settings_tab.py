@@ -17,26 +17,28 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QFrame,
     QListWidget,
+    QLineEdit,
     QGridLayout,
     QSpinBox
 )
 from PySide6.QtGui import QFont
 from core.settings.settings import settings
+from services import executor
 from services.logger import get_log_history
 import services.logger as logger
 from db.IO_db import export_players as db_export_players
 from db.IO_db import import_players as db_import_players
 from services.matchzy import sync
+from PySide6.QtCore import QObject, Signal
+
+class SettingsDispatcher(QObject):
+    sync_finished = Signal()
+    sync_error = Signal(object)
+
 
 LOG_WINDOW_INSTANCE = None
 
 # SETTINGS TAB
-def build_settings_tab(parent, on_players_updated=None):
-
-    root_layout = QHBoxLayout(parent)
-    root_layout.setContentsMargins(20, 20, 20, 20)
-    root_layout.setSpacing(20)
-
 def build_settings_tab(parent, on_players_updated=None):
 
     root_layout = QHBoxLayout(parent)
@@ -85,6 +87,7 @@ def build_settings_tab(parent, on_players_updated=None):
     layout = QVBoxLayout(container)
     layout.setSpacing(12)
     layout.setAlignment(Qt.AlignTop)
+    dispatcher = SettingsDispatcher(parent)
 
     scroll.setWidget(container)
     root_layout.addWidget(scroll, 1)
@@ -233,18 +236,22 @@ def build_settings_tab(parent, on_players_updated=None):
         def update():
             if isinstance(widget, QCheckBox):
                 value = widget.isChecked()
+            elif isinstance(widget, QLineEdit):
+                value = widget.text()
             else:
                 value = widget.value()
 
             setattr(settings, attr_name, value)
             settings.save() 
-            logger.log(f"[SETTINGS] {attr_name} set to {value}", level="INFO")
+            redacted_value =logger.redact(value)
+            logger.log(f"[SETTINGS] {attr_name} set to {redacted_value}", level="INFO")
 
 
         if isinstance(widget, QCheckBox):
             widget.stateChanged.connect(update)
+        elif isinstance(widget, QLineEdit):
+            widget.editingFinished.connect(update)
         else:
-            widget.setFixedWidth(100)
             widget.editingFinished.connect(update)
 
         row.addWidget(label)
@@ -344,6 +351,79 @@ def build_settings_tab(parent, on_players_updated=None):
         "allow_uneven_teams",
         "Allow uneven teams (e.g. 3 vs 2)"
     ))
+
+    # MATCHZY SETTINGS
+    matchzy_frame, matchzy_layout = create_section("MatchZy Database")
+
+    def text_input(value="", password=False):
+        inp = QLineEdit()
+        inp.setText(value)
+        inp.setFixedWidth(200)
+
+        if password:
+            inp.setEchoMode(QLineEdit.Password)
+
+        inp.setStyleSheet("""
+            QLineEdit {
+                background: #FFFFFF;
+                color: #1E2B38;
+                border: 1px solid #B9CADC;
+                border-radius: 8px;
+                padding: 6px 10px;
+                min-height: 36px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #3F88D9;
+            }
+        """)
+        return inp
+
+
+    # host
+    input_host = text_input(settings.matchzy_host)
+    matchzy_layout.addLayout(create_setting_row(
+        "Host:",
+        input_host,
+        "matchzy_host"
+    ))
+
+    input_port = QSpinBox()
+    input_port.setFixedWidth(100)
+    input_port.setRange(1, 65535)
+    input_port.setValue(settings.matchzy_port)
+
+    matchzy_layout.addLayout(create_setting_row(
+        "Port:",
+        input_port,
+        "matchzy_port"
+    ))
+
+    # user
+    input_user = text_input(settings.matchzy_user)
+    matchzy_layout.addLayout(create_setting_row(
+        "User:",
+        input_user,
+        "matchzy_user"
+    ))
+
+    # password
+    input_password = text_input(settings.matchzy_password, password=True)
+    matchzy_layout.addLayout(create_setting_row(
+        "Password:",
+        input_password,
+        "matchzy_password"
+    ))
+
+    # database
+    input_db = text_input(settings.matchzy_database)
+    matchzy_layout.addLayout(create_setting_row(
+        "Database:",
+        input_db,
+        "matchzy_database"
+    ))
+
+    layout.addWidget(matchzy_frame)
+    
     # ACTIONS
 
     def open_logs():
@@ -372,19 +452,35 @@ def build_settings_tab(parent, on_players_updated=None):
             db_export_players(path)
 
     def sync_matchzy_action():
+        if not sync_matchzy_button.isEnabled():
+            return
+
         sync_matchzy_button.setEnabled(False)
 
-        def run():
+        def worker():
             try:
                 sync()
-                logger.log("[MATCHZY] Sync completed", level="INFO")
+                dispatcher.sync_finished.emit()
             except Exception as e:
-                logger.log_error("[MATCHZY] Sync failed", exc=e)
-            finally:
-                sync_matchzy_button.setEnabled(True)
+                dispatcher.sync_error.emit(e)
 
-        threading.Thread(target=run, daemon=True).start()
+        executor.submit(worker)
 
+    def on_sync_finished():
+        sync_matchzy_button.setEnabled(True)
+        logger.log("[MATCHZY] Sync completed", level="INFO")
+
+    def on_sync_error(e):
+        sync_matchzy_button.setEnabled(True)
+
+        logger.log_error(f"[MATCHZY] Sync failed: {e}", exc=e)
+
+        logger.show_debug_popup(
+            parent,
+            "MatchZy Sync Failed",
+            str(e),
+            logger.get_log_history()
+        )
 
     # SIGNALS
 
@@ -393,6 +489,10 @@ def build_settings_tab(parent, on_players_updated=None):
     import_players_button.clicked.connect(import_players)
     export_players_button.clicked.connect(export_players)
     sync_matchzy_button.clicked.connect(sync_matchzy_action)
+    dispatcher.sync_finished.connect(on_sync_finished)
+    dispatcher.sync_error.connect(on_sync_error)
+
+
         
 
 # LOG WINDOW 
