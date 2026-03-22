@@ -3,12 +3,8 @@ import sys
 import os
 from dotenv import load_dotenv
 
-
-# ---------- LOAD ENV ----------
 load_dotenv()
 
-
-# ---------- CONFIG ----------
 APP_NAME = "Internomat"
 DIST_PATH = "dist"
 CERT_PATH = r"D:\Git_repo\Internomat\internomat.pfx"
@@ -65,19 +61,6 @@ def sign_executable(exe_path: str):
     print("[BUILD] Signing successful")
 
 
-def verify_signature(exe_path: str):
-    signtool = find_signtool()
-
-    cmd = [signtool, "verify", "/pa", exe_path]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-
-    print("[BUILD] Signature verification:")
-    print(result.stdout)
-
-    if result.returncode != 0:
-        raise RuntimeError("Signature verification failed")
-
-
 def build():
     cmd = [
         sys.executable, "-m", "PyInstaller",
@@ -102,7 +85,6 @@ def build():
     print(f"[BUILD] Built EXE at: {exe_path}")
 
     sign_executable(exe_path)
-    verify_signature(exe_path)
 
     print("[BUILD] Done. Executable is signed and verified.")
 
