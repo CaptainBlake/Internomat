@@ -17,6 +17,12 @@ class Settings:
         self.matchzy_user = ""
         self.matchzy_password = ""
         self.matchzy_database = ""
+        # Demo FTP sync settings
+        self.demo_ftp_host = ""
+        self.demo_ftp_port = 21
+        self.demo_ftp_user = ""
+        self.demo_ftp_password = ""
+        self.demo_remote_path = "/cs2/game/csgo/MatchZy"
 
     def load(self):
         # load settings from DB, fallback to defaults if not set
@@ -31,6 +37,12 @@ class Settings:
         self.matchzy_user = settings_db.get("matchzy_user", "")
         self.matchzy_password = settings_db.get("matchzy_password", "")
         self.matchzy_database = settings_db.get("matchzy_database", "")
+        # Demo FTP sync settings
+        self.demo_ftp_host = settings_db.get("demo_ftp_host", "")
+        self.demo_ftp_port = int(settings_db.get("demo_ftp_port", 21))
+        self.demo_ftp_user = settings_db.get("demo_ftp_user", "")
+        self.demo_ftp_password = settings_db.get("demo_ftp_password", "")
+        self.demo_remote_path = settings_db.get("demo_remote_path", "/cs2/game/csgo/MatchZy")
 
     def save(self):
         # save current settings to DB
@@ -45,6 +57,12 @@ class Settings:
         settings_db.set("matchzy_user", self.matchzy_user)
         settings_db.set("matchzy_password", self.matchzy_password)
         settings_db.set("matchzy_database", self.matchzy_database)
+        # Demo FTP sync settings
+        settings_db.set("demo_ftp_host", self.demo_ftp_host)
+        settings_db.set("demo_ftp_port", self.demo_ftp_port)
+        settings_db.set("demo_ftp_user", self.demo_ftp_user)
+        settings_db.set("demo_ftp_password", self.demo_ftp_password)
+        settings_db.set("demo_remote_path", self.demo_remote_path)
 
 
 settings = Settings()

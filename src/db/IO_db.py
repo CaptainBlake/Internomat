@@ -1,13 +1,12 @@
-import json
 from .connection_db import get_conn
 from .players_db import upsert_player
+from services.IO_manager import IOManager
 import services.logger as logger
 
 
 def import_players(filepath):
-    
-    with open(filepath, "r", encoding="utf-8") as f:
-        players = json.load(f)
+
+    players = IOManager.read_json(filepath)
 
     count = 0
 
@@ -48,8 +47,6 @@ def export_players(filepath):
 
         players = [dict(zip(columns, row)) for row in rows]
 
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(players, f, indent=2)
+    IOManager.write_json(filepath, players)
 
     logger.log(f"[DB] Export players count={len(players)} -> {filepath}", level="INFO")
-

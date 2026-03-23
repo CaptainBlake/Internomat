@@ -29,11 +29,14 @@ import services.logger as logger
 from db.IO_db import export_players as db_export_players
 from db.IO_db import import_players as db_import_players
 from services.matchzy import sync
+from services.demo_scrapper import DemoScrapperIntegration
 from PySide6.QtCore import QObject, Signal
 
 class SettingsDispatcher(QObject):
     sync_finished = Signal()
     sync_error = Signal(object)
+    demos_sync_finished = Signal(object)
+    demos_sync_error = Signal(object)
 
 
 LOG_WINDOW_INSTANCE = None
@@ -48,7 +51,7 @@ def build_settings_tab(parent, on_players_updated=None):
     # SIDEBAR
     sidebar = QListWidget()
     sidebar.setFixedWidth(170)
-    sidebar.addItems(["Debug", "Database", "Settings", "MatchZy"])
+    sidebar.addItems(["Debug", "Database", "Settings", "MatchZy", "Demos"])
     sidebar.setStyleSheet("""
         QListWidget {
             background: #FFFFFF;
@@ -272,6 +275,7 @@ def build_settings_tab(parent, on_players_updated=None):
     export_db_button = small_button("Export Database")
 
     sync_matchzy_button = small_button("Sync with Matchzy")
+    sync_demos_button = small_button("Sync demos")
 
     # disable DB buttons for now
     import_db_button.setEnabled(False)
@@ -441,6 +445,57 @@ def build_settings_tab(parent, on_players_updated=None):
     matchzy_layout.addWidget(sync_matchzy_button)
     
     layout.addWidget(matchzy_frame)
+
+    # DEMOS SETTINGS
+    demos_frame, demos_layout = create_section("Demos")
+
+    input_demo_ftp_host = text_input(settings.demo_ftp_host)
+    input_demo_ftp_host.setPlaceholderText("IP/domain")
+    demos_layout.addLayout(create_setting_row(
+        "FTP Server IP:",
+        input_demo_ftp_host,
+        "demo_ftp_host",
+        "IP or domain"
+    ))
+
+    input_demo_ftp_port = QSpinBox()
+    input_demo_ftp_port.setFixedWidth(100)
+    input_demo_ftp_port.setRange(1, 65535)
+    input_demo_ftp_port.setValue(settings.demo_ftp_port)
+    demos_layout.addLayout(create_setting_row(
+        "FTP Port:",
+        input_demo_ftp_port,
+        "demo_ftp_port"
+    ))
+
+    input_demo_ftp_user = text_input(settings.demo_ftp_user)
+    input_demo_ftp_user.setPlaceholderText("FTP user")
+    demos_layout.addLayout(create_setting_row(
+        "FTP User:",
+        input_demo_ftp_user,
+        "demo_ftp_user"
+    ))
+
+    input_demo_ftp_password = text_input(settings.demo_ftp_password, password=True)
+    input_demo_ftp_password.setPlaceholderText("FTP password")
+    demos_layout.addLayout(create_setting_row(
+        "FTP Passwort:",
+        input_demo_ftp_password,
+        "demo_ftp_password"
+    ))
+
+    input_demo_remote_path = text_input(settings.demo_remote_path)
+    input_demo_remote_path.setPlaceholderText("/cs2/game/csgo/MatchZy")
+    demos_layout.addLayout(create_setting_row(
+        "Remote demo path:",
+        input_demo_remote_path,
+        "demo_remote_path"
+    ))
+
+    demos_layout.addSpacing(10)
+    demos_layout.addWidget(sync_demos_button)
+
+    layout.addWidget(demos_frame)
     
     # ACTIONS
 
@@ -484,6 +539,28 @@ def build_settings_tab(parent, on_players_updated=None):
 
         executor.submit(worker)
 
+    def sync_demos_action():
+        if not sync_demos_button.isEnabled():
+            return
+
+        sync_demos_button.setEnabled(False)
+
+        def worker():
+            try:
+                integration = DemoScrapperIntegration(
+                    ftp_host=settings.demo_ftp_host,
+                    ftp_port=settings.demo_ftp_port,
+                    ftp_user=settings.demo_ftp_user,
+                    ftp_password=settings.demo_ftp_password,
+                    remote_dir=settings.demo_remote_path,
+                )
+                demo_data = integration.run_sync()
+                dispatcher.demos_sync_finished.emit(demo_data)
+            except Exception as e:
+                dispatcher.demos_sync_error.emit(e)
+
+        executor.submit(worker)
+
     def on_sync_finished():
         sync_matchzy_button.setEnabled(True)
         logger.log("[MATCHZY] Sync completed", level="INFO")
@@ -500,6 +577,20 @@ def build_settings_tab(parent, on_players_updated=None):
             logger.get_log_history()
         )
 
+    def on_demos_sync_finished(demo_data):
+        sync_demos_button.setEnabled(True)
+        logger.log_info(f"[DEMOS] Sync completed ({len(demo_data)} parsed maps)")
+
+    def on_demos_sync_error(e):
+        sync_demos_button.setEnabled(True)
+        logger.log_error(f"[DEMOS] Sync failed: {e}", exc=e)
+        logger.show_debug_popup(
+            parent,
+            "Demo Sync Failed",
+            str(e),
+            logger.get_log_history()
+        )
+
     # SIGNALS
 
     open_logs_button.clicked.connect(open_logs)
@@ -507,8 +598,11 @@ def build_settings_tab(parent, on_players_updated=None):
     import_players_button.clicked.connect(import_players)
     export_players_button.clicked.connect(export_players)
     sync_matchzy_button.clicked.connect(sync_matchzy_action)
+    sync_demos_button.clicked.connect(sync_demos_action)
     dispatcher.sync_finished.connect(on_sync_finished)
     dispatcher.sync_error.connect(on_sync_error)
+    dispatcher.demos_sync_finished.connect(on_demos_sync_finished)
+    dispatcher.demos_sync_error.connect(on_demos_sync_error)
 
 
         

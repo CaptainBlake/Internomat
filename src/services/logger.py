@@ -119,6 +119,23 @@ def log(message, level="INFO"):
     _store_log(entry)
     _notify(entry)
 
+
+def log_info(message):
+    log(message, level="INFO")
+
+
+def log_debug(message):
+    log(message, level="DEBUG")
+
+
+def log_lines(lines, level="INFO"):
+    if isinstance(lines, str):
+        log(lines, level=level)
+        return
+
+    for line in lines:
+        log(str(line), level=level)
+
 def show_debug_popup(parent, title, text, log_history):
     from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QPushButton
 
@@ -279,4 +296,3 @@ def log_error(message, exc=None):
 
     log(f"[ERROR] {message}", level="ERROR")
 
-    
