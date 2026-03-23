@@ -82,9 +82,14 @@ def log_fetch_error(source, error):
 
 
 def redact(value, keep=4):
-    if not value:
+    if value is None:
         return value
-    return value[:keep] + "****"
+
+    text = str(value)
+    if text == "":
+        return text
+
+    return text[:keep] + "****"
 
 # --- team analysis ---
 
@@ -291,8 +296,11 @@ def log_warning(message):
 
 def log_error(message, exc=None):
     if exc:
-        stack = traceback.format_exc()
-        message = f"{message}\n{stack}"
+        if getattr(exc, "__traceback__", None):
+            stack = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+            message = f"{message}\n{stack.rstrip()}"
+        else:
+            message = f"{message} | {exc}"
 
-    log(f"[ERROR] {message}", level="ERROR")
+    log(message, level="ERROR")
 

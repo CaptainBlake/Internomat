@@ -144,8 +144,11 @@ def match_exists(match_id):
     return exists
 
 
-def get_all_matches_with_maps():
-    with get_conn() as conn:
+def get_all_matches_with_maps(conn=None, db_file=None):
+    own_conn = conn is None
+    conn = conn or get_conn(db_file=db_file)
+
+    try:
         rows = conn.execute("""
         SELECT 
             m.match_id,
@@ -158,6 +161,9 @@ def get_all_matches_with_maps():
             ON m.match_id = mm.match_id
         ORDER BY m.match_id, mm.map_number
         """).fetchall()
+    finally:
+        if own_conn:
+            conn.close()
 
     matches = {}
 

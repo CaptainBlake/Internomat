@@ -1,5 +1,6 @@
+#/src/services/demo_scrapper.py
+
 import os
-import sqlite3
 from ftplib import FTP
 from pathlib import Path
 from threading import Lock
@@ -7,15 +8,14 @@ from threading import Lock
 import pandas as pd
 import polars as pl
 from awpy.demo import Demo
+from db.matches_db import get_all_matches_with_maps
 from dotenv import load_dotenv
 from services.IO_manager import IOManager
 from services import executor
 import services.logger as logger
 
-
-
 class DemoScrapperIntegration:
-    """Unified integration flow for downloading, parsing, and structuring demos."""
+    """flow for downloading, parsing, and structuring demos."""
 
     def __init__(
         self,
@@ -53,58 +53,11 @@ class DemoScrapperIntegration:
 
         assert self.ftp_host and self.ftp_user and self.ftp_password, "Missing FTP env vars"
 
-        self.matches = self.get_all_matches_with_maps_local()
+        self.matches = get_all_matches_with_maps(db_file=self.db_file)
         self.valid_match_ids = self.build_match_id_set(self.matches)
 
         logger.log_info(f"Loaded {len(self.matches)} matches")
         logger.log_debug(f"Valid match_ids: {sorted(self.valid_match_ids)}")
-
-    # --- DB ---
-
-    def get_conn_local(self):
-        conn = sqlite3.connect(self.db_file, timeout=10)
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    def get_all_matches_with_maps_local(self):
-        with self.get_conn_local() as conn:
-            rows = conn.execute(
-                """
-                SELECT
-                    m.match_id,
-                    m.team1_name,
-                    m.team2_name,
-                    mm.map_number,
-                    mm.map_name
-                FROM matches m
-                LEFT JOIN match_maps mm
-                    ON m.match_id = mm.match_id
-                ORDER BY m.match_id, mm.map_number
-                """
-            ).fetchall()
-
-        matches = {}
-
-        for row in rows:
-            match_id = int(row["match_id"])
-
-            if match_id not in matches:
-                matches[match_id] = {
-                    "match_id": match_id,
-                    "team1": row["team1_name"],
-                    "team2": row["team2_name"],
-                    "maps": [],
-                }
-
-            if row["map_number"] is not None:
-                matches[match_id]["maps"].append(
-                    {
-                        "map_number": int(row["map_number"]),
-                        "map_name": row["map_name"],
-                    }
-                )
-
-        return list(matches.values())
 
     # --- SHARED UTILS ---
 
