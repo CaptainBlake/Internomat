@@ -42,7 +42,7 @@ class SettingsDispatcher(QObject):
 LOG_WINDOW_INSTANCE = None
 
 # SETTINGS TAB
-def build_settings_tab(parent, on_players_updated=None):
+def build_settings_tab(parent, on_players_updated=None, on_data_updated=None):
 
     section_order = ["Debug", "Settings", "Database", "MatchZy", "Demos"]
 
@@ -603,6 +603,8 @@ def build_settings_tab(parent, on_players_updated=None):
     def on_sync_finished():
         sync_matchzy_button.setEnabled(True)
         logger.log("[MATCHZY] Sync completed", level="INFO")
+        if callable(on_data_updated):
+            on_data_updated()
 
     def on_sync_error(e):
         sync_matchzy_button.setEnabled(True)
@@ -619,6 +621,8 @@ def build_settings_tab(parent, on_players_updated=None):
     def on_demos_sync_finished(demo_data):
         sync_demos_button.setEnabled(True)
         logger.log_info(f"[DEMOS] Sync completed ({len(demo_data)} parsed maps)")
+        if callable(on_data_updated):
+            on_data_updated()
 
     def on_demos_sync_error(e):
         sync_demos_button.setEnabled(True)

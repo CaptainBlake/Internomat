@@ -10,9 +10,40 @@ def fetch_overview():
                 (SELECT COUNT(*) FROM match_maps) AS total_maps,
                 (SELECT COUNT(DISTINCT steamid64) FROM match_player_stats) AS unique_players,
                 (
-                    SELECT ROUND(AVG(COALESCE(team1_score, 0) + COALESCE(team2_score, 0)), 2)
+                    SELECT COUNT(*)
+                    FROM matches
+                    WHERE COALESCE(demo, 0) = 1
+                ) AS demo_matches,
+                (
+                    SELECT COUNT(*)
+                    FROM (
+                        SELECT 1
+                        FROM match_player_stats
+                        GROUP BY match_id, map_number
+                    )
+                ) AS maps_with_stats,
+                (
+                    SELECT map_name
                     FROM match_maps
-                ) AS avg_map_total_score
+                    WHERE map_name IS NOT NULL
+                      AND map_name != ''
+                    GROUP BY map_name
+                    ORDER BY COUNT(*) DESC, map_name ASC
+                    LIMIT 1
+                ) AS top_map_name,
+                (
+                    SELECT COUNT(*)
+                    FROM match_maps
+                    WHERE map_name = (
+                        SELECT map_name
+                        FROM match_maps
+                        WHERE map_name IS NOT NULL
+                          AND map_name != ''
+                        GROUP BY map_name
+                        ORDER BY COUNT(*) DESC, map_name ASC
+                        LIMIT 1
+                    )
+                ) AS top_map_count
             """
         ).fetchone()
 

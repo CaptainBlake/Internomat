@@ -39,3 +39,5 @@ internomat.db-wal
 *.dem
 *.pkl
 *.pfx
+settings.json
+

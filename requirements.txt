@@ -3,7 +3,6 @@ pyinstaller
 python-dotenv
 beautifulsoup4
 selenium
-playwright
 Pillow
 awpy
 PySide6

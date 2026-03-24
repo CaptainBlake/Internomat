@@ -14,8 +14,50 @@ import services.logger as logger
 _INDEX_NAME = "index.json"
 
 
+def _default_cache_dir():
+    base_dir = Path(__file__).resolve().parents[2]
+    return base_dir / "demos" / "parsed"
+
+
 def _to_path(path_value):
     return Path(path_value)
+
+
+def load_parsed_demo_default(match_id, map_number):
+    return load_parsed_demo(_default_cache_dir(), match_id, map_number)
+
+
+def list_cached_demos_default():
+    return list_cached_demos(_default_cache_dir())
+
+
+def _iter_rows(table):
+    if isinstance(table, pd.DataFrame):
+        if table.empty:
+            return []
+        return table.to_dict("records")
+
+    if isinstance(table, pl.DataFrame):
+        if table.height == 0:
+            return []
+        return table.to_dicts()
+
+    if isinstance(table, list):
+        return [r for r in table if isinstance(r, dict)]
+
+    return []
+
+
+def load_round_rows(match_id, map_number):
+    payload = load_parsed_demo_default(match_id, map_number)
+    if not isinstance(payload, dict):
+        return []
+
+    rows = _iter_rows(payload.get("rounds"))
+    if rows:
+        return rows
+
+    return _iter_rows(payload.get("rounds_stats"))
 
 
 def _ensure_cache_dir(cache_dir):

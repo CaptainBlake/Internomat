@@ -6,12 +6,16 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QIcon
 from gui.tabs.menu_controller import MenuController
-from gui.tabs.teambuilder_tab import build_team_tab
-from gui.tabs.map_roulette_tab import build_map_tab
-from gui.tabs.settings_tab import build_settings_tab
-from gui.tabs.leaderboard_tab import build_stat_overview_tab, refresh_stat_overview
-from gui.tabs.statistics_tab import build_statistics_tab, refresh_statistics_tab
-from gui.tabs.stattracker_tab import build_stattracker_tab, refresh_stattracker
+from gui.tabs.play.teambuilder_tab import build_team_tab
+from gui.tabs.tools.map_roulette_tab import build_map_tab
+from gui.tabs.settings.settings_tab import build_settings_tab
+from gui.tabs.statistics.leaderboard_tab import build_stat_overview_tab, refresh_stat_overview
+from gui.tabs.statistics.statistics_tab import (
+    build_statistics_tab,
+    refresh_statistics_tab,
+    on_statistics_data_updated,
+)
+from gui.tabs.statistics.stattracker_tab import build_stattracker_tab, refresh_stattracker
 import services.logger as logger
 import os
 import sys
@@ -154,7 +158,11 @@ class InternomatWindow(QMainWindow):
         build_stattracker_tab(self.stat_tracker_page)
         logger.log("[GUI] Stat Tracker ready", level="INFO")
 
-        build_settings_tab(self.settings_page, on_players_updated=refresh_players)
+        build_settings_tab(
+            self.settings_page,
+            on_players_updated=refresh_players,
+            on_data_updated=lambda: on_statistics_data_updated(self.statistics_page),
+        )
         logger.log("[GUI] Settings ready", level="INFO")
 
         self.menu.build_submenu()

@@ -1,16 +1,9 @@
-from pathlib import Path
-
 from db import statistics_db as statistics_repo
 from services import demo_cache
 import services.logger as logger
 
 
 _PARSED_PAYLOAD_CACHE = {}
-
-
-def _cache_dir():
-    base_dir = Path(__file__).resolve().parents[3]
-    return base_dir / "demos" / "parsed"
 
 
 def _safe_row_count(value):
@@ -47,7 +40,7 @@ def _prune_payload_cache(valid_keys):
         _PARSED_PAYLOAD_CACHE.pop(key, None)
 
 
-def _get_cached_payload(cache_dir, match_id, map_number, manifest):
+def _get_cached_payload(match_id, map_number, manifest):
     key = (str(match_id), int(map_number))
     fingerprint = _manifest_fingerprint(manifest)
 
@@ -55,7 +48,7 @@ def _get_cached_payload(cache_dir, match_id, map_number, manifest):
     if cached and cached.get("fingerprint") == fingerprint:
         return cached.get("payload"), True
 
-    payload = demo_cache.load_parsed_demo(cache_dir, match_id, map_number)
+    payload = demo_cache.load_parsed_demo_default(match_id, map_number)
     _PARSED_PAYLOAD_CACHE[key] = {
         "fingerprint": fingerprint,
         "payload": payload,
@@ -80,31 +73,23 @@ def _extract_demo_metrics(parsed_payload):
 
 def get_overview():
     row = statistics_repo.fetch_overview()
-    cache_rows = demo_cache.list_cached_demos(_cache_dir())
-
-    total_matches = int(row["total_matches"] or 0)
-    total_maps = int(row["total_maps"] or 0)
-    cached_maps = len(cache_rows)
-    cached_matches = len({str(r.get("match_id")) for r in cache_rows})
-    cache_map_coverage = (cached_maps / total_maps * 100.0) if total_maps else 0.0
 
     result = {
-        "total_matches": total_matches,
-        "total_maps": total_maps,
-        "cached_maps": cached_maps,
-        "db_only_maps": max(total_maps - cached_maps, 0),
-        "cached_matches": cached_matches,
-        "cache_map_coverage": float(cache_map_coverage),
+        "total_matches": int(row["total_matches"] or 0),
+        "total_maps": int(row["total_maps"] or 0),
         "unique_players": int(row["unique_players"] or 0),
-        "avg_map_total_score": float(row["avg_map_total_score"] or 0.0),
+        "demo_matches": int(row["demo_matches"] or 0),
+        "maps_with_stats": int(row["maps_with_stats"] or 0),
+        "top_map_name": str(row["top_map_name"] or ""),
+        "top_map_count": int(row["top_map_count"] or 0),
     }
 
     logger.log(
         "[STATISTICS] "
         f"overview matches={result['total_matches']} "
-        f"maps={result['total_maps']} cached_maps={result['cached_maps']} db_only_maps={result['db_only_maps']} "
-        f"cache_map_coverage={result['cache_map_coverage']:.2f}% "
-        f"players={result['unique_players']} avg_score={result['avg_map_total_score']}",
+        f"maps={result['total_maps']} players={result['unique_players']} "
+        f"demo_matches={result['demo_matches']} maps_with_stats={result['maps_with_stats']} "
+        f"top_map={result['top_map_name']}({result['top_map_count']})",
         level="DEBUG",
     )
 
@@ -113,8 +98,7 @@ def get_overview():
 
 def get_recent_maps(limit=10):
     rows = statistics_repo.fetch_recent_maps(limit)
-    cache_dir = _cache_dir()
-    cache_rows = demo_cache.list_cached_demos(cache_dir)
+    cache_rows = demo_cache.list_cached_demos_default()
     cache_by_key = _build_cache_manifest_map(cache_rows)
     _prune_payload_cache(set(cache_by_key.keys()))
 
@@ -136,7 +120,7 @@ def get_recent_maps(limit=10):
         }
 
         if demo_cached:
-            parsed_payload, reused = _get_cached_payload(cache_dir, match_id, map_number, manifest)
+            parsed_payload, reused = _get_cached_payload(match_id, map_number, manifest)
             if reused:
                 cache_reused += 1
             else:
