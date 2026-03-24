@@ -95,6 +95,8 @@ def build_settings_tab(parent, on_players_updated=None):
     layout.setSpacing(12)
     layout.setAlignment(Qt.AlignTop)
     dispatcher = SettingsDispatcher(parent)
+    setting_bindings = []
+    settings_dirty = {"value": False}
 
     scroll.setWidget(container)
     root_layout.addWidget(scroll, 1)
@@ -240,26 +242,20 @@ def build_settings_tab(parent, on_players_updated=None):
             }
         """)
 
-        def update():
-            if isinstance(widget, QCheckBox):
-                value = widget.isChecked()
-            elif isinstance(widget, QLineEdit):
-                value = widget.text()
-            else:
-                value = widget.value()
-
-            setattr(settings, attr_name, value)
-            settings.save() 
-            redacted_value =logger.redact(value)
-            logger.log(f"[SETTINGS] {attr_name} set to {redacted_value}", level="INFO")
-
+        def mark_dirty(*_args):
+            settings_dirty["value"] = True
+            save_settings_button.setEnabled(True)
 
         if isinstance(widget, QCheckBox):
-            widget.stateChanged.connect(update)
+            widget.stateChanged.connect(mark_dirty)
         elif isinstance(widget, QLineEdit):
-            widget.editingFinished.connect(update)
+            widget.textChanged.connect(mark_dirty)
+        elif isinstance(widget, QComboBox):
+            widget.currentTextChanged.connect(mark_dirty)
         else:
-            widget.editingFinished.connect(update)
+            widget.valueChanged.connect(mark_dirty)
+
+        setting_bindings.append((attr_name, widget))
 
         row.addWidget(label)
         row.addWidget(widget)
@@ -274,9 +270,21 @@ def build_settings_tab(parent, on_players_updated=None):
 
     import_players_button = small_button("Import Playerlist")
     export_players_button = small_button("Export Playerlist")
+    save_settings_button = small_button("Save Settings")
 
     sync_matchzy_button = small_button("Sync with Matchzy")
     sync_demos_button = small_button("Sync demos")
+
+    for btn in [
+        import_players_button,
+        export_players_button,
+        save_settings_button,
+        sync_matchzy_button,
+        sync_demos_button,
+    ]:
+        btn.setFocusPolicy(Qt.NoFocus)
+
+    save_settings_button.setEnabled(False)
 
 
     # SECTIONS
@@ -288,7 +296,7 @@ def build_settings_tab(parent, on_players_updated=None):
 
     # DATABASE
     database_frame = create_grid_section("Database", [
-        [import_players_button, sync_matchzy_button, None],
+        [import_players_button, sync_matchzy_button, save_settings_button],
         [export_players_button, sync_demos_button, None]
     ])
 
@@ -530,10 +538,33 @@ def build_settings_tab(parent, on_players_updated=None):
         if path:
             db_export_players(path)
 
+    def read_widget_value(widget):
+        if isinstance(widget, QCheckBox):
+            return widget.isChecked()
+        if isinstance(widget, QLineEdit):
+            return widget.text()
+        if isinstance(widget, QComboBox):
+            return widget.currentText()
+        return widget.value()
+
+    def apply_form_to_settings(save=False):
+        for attr_name, widget in setting_bindings:
+            setattr(settings, attr_name, read_widget_value(widget))
+
+        if save:
+            settings.save()
+
+    def save_settings_action():
+        apply_form_to_settings(save=True)
+        settings_dirty["value"] = False
+        save_settings_button.setEnabled(False)
+        logger.log("[SETTINGS] Saved", level="INFO")
+
     def sync_matchzy_action():
         if not sync_matchzy_button.isEnabled():
             return
 
+        apply_form_to_settings(save=False)
         sync_matchzy_button.setEnabled(False)
 
         def worker():
@@ -549,6 +580,8 @@ def build_settings_tab(parent, on_players_updated=None):
         if not sync_demos_button.isEnabled():
             return
 
+        apply_form_to_settings(save=False)
+        sync_demos_button.clearFocus()
         sync_demos_button.setEnabled(False)
 
         def worker():
@@ -603,6 +636,7 @@ def build_settings_tab(parent, on_players_updated=None):
     reload_ui_button.clicked.connect(reload_ui)
     import_players_button.clicked.connect(import_players)
     export_players_button.clicked.connect(export_players)
+    save_settings_button.clicked.connect(save_settings_action)
     sync_matchzy_button.clicked.connect(sync_matchzy_action)
     sync_demos_button.clicked.connect(sync_demos_action)
     sidebar.currentRowChanged.connect(go_to_section)

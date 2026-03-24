@@ -15,13 +15,19 @@ from db.demo_db import (
     load_demo_match_catalog,
     resolve_map_number,
 )
+from db.matches_db import set_match_has_demo
 from dotenv import load_dotenv
 from services.IO_manager import IOManager
+from services import demo_cache
 from services import executor
 import services.logger as logger
 
 class DemoScrapperIntegration:
     """flow for downloading, parsing, and structuring demos."""
+
+    @staticmethod
+    def _log_stage(stage, message, level="INFO"):
+        logger.log(f"[{stage}] {message}", level=level)
 
     def __init__(
         self,
@@ -37,6 +43,7 @@ class DemoScrapperIntegration:
         self.base_dir = base_dir or Path(__file__).parent.parent.parent
         self.db_file = db_file or (self.base_dir / "internomat.db")
         self.demo_dir = demo_dir or (self.base_dir / "demos")
+        self.parsed_demo_dir = self.demo_dir / "parsed"
         self.remote_dir = remote_dir
         self._run_lock = Lock()
 
@@ -56,6 +63,7 @@ class DemoScrapperIntegration:
         self.ftp_password = ftp_password or env_ftp_password
 
         self.demo_dir.mkdir(parents=True, exist_ok=True)
+        self.parsed_demo_dir.mkdir(parents=True, exist_ok=True)
 
         assert self.ftp_host and self.ftp_user and self.ftp_password, "Missing FTP env vars"
 
@@ -65,6 +73,7 @@ class DemoScrapperIntegration:
 
         logger.log_info(f"Loaded {len(self.match_catalog)} matches")
         logger.log_debug(f"Valid match_ids: {sorted(self.valid_match_ids)}")
+        logger.log_info(f"Parsed demo cache dir: {self.parsed_demo_dir}")
 
     # --- SHARED UTILS ---
 
@@ -248,7 +257,7 @@ class DemoScrapperIntegration:
     # --- FTP ---
 
     def download_demo(self):
-        logger.log_info(f"[FTP] Connecting to {self.ftp_host}:{self.ftp_port}...")
+        self._log_stage("FTP", f"Connecting to {self.ftp_host}:{self.ftp_port}...")
 
         ftp = FTP()
 
@@ -257,14 +266,15 @@ class DemoScrapperIntegration:
             ftp.login(self.ftp_user, self.ftp_password)
             ftp.set_pasv(True)
 
-            logger.log_info("[FTP] Connected")
+            self._log_stage("FTP", "Connected")
 
             ftp.cwd(self.remote_dir)
             files = ftp.nlst()
+            parsed_sources = IOManager.list_parsed_demo_sources(self.parsed_demo_dir)
 
-            downloaded, skipped, ignored = 0, 0, 0
+            downloaded, skipped, skipped_parsed, ignored = 0, 0, 0, 0
 
-            logger.log_info(f"[FTP] Found {len(files)} files")
+            self._log_stage("FTP", f"Found {len(files)} remote files")
 
             for file in files:
                 if not file.endswith(".dem"):
@@ -292,13 +302,17 @@ class DemoScrapperIntegration:
                 normalized_name = f"{date}_{time}_match_{match_id}_map_{map_number}_{map_name}.dem"
                 local_file = self.demo_dir / normalized_name
 
+                if normalized_name in parsed_sources:
+                    self._log_stage("FTP", f"SKIP parsed cache {normalized_name}", level="DEBUG")
+                    skipped_parsed += 1
+                    continue
+
                 if IOManager.file_exists(local_file):
-                    logger.log_debug(f"[SKIP] {normalized_name}")
+                    self._log_stage("FTP", f"SKIP local exists {normalized_name}", level="DEBUG")
                     skipped += 1
                     continue
 
-                logger.log_info(f"[DOWNLOAD] {file}")
-                logger.log_info(f"           -> {normalized_name}")
+                self._log_stage("FTP", f"DOWNLOAD {file} -> {normalized_name}")
 
                 try:
                     filesize = ftp.size(file)
@@ -313,36 +327,60 @@ class DemoScrapperIntegration:
                     downloaded += 1
 
                 except Exception as e:
-                    logger.log_error(f"[FTP] {file}: {e}")
+                    self._log_stage("FTP", f"FAILED {file}: {e}", level="ERROR")
 
-            logger.log_info("[FTP] Done")
-            logger.log_info(f"Downloaded: {downloaded}")
-            logger.log_info(f"Skipped: {skipped}")
-            logger.log_info(f"Ignored: {ignored}")
+            self._log_stage("FTP", "Done")
+            self._log_stage(
+                "FTP",
+                f"Summary downloaded={downloaded} skipped_local={skipped} skipped_parsed={skipped_parsed} ignored={ignored}",
+            )
+
+            return {
+                "downloaded": downloaded,
+                "skipped": skipped,
+                "skipped_parsed": skipped_parsed,
+                "ignored": ignored,
+                "remote_files": len(files),
+            }
 
         finally:
             try:
                 ftp.quit()
             except Exception:
                 pass
+
+        return {
+            "downloaded": 0,
+            "skipped": 0,
+            "skipped_parsed": 0,
+            "ignored": 0,
+            "remote_files": 0,
+        }
     # --- DEMO MATCH + LOAD ---
 
     def match_and_load_demos(self):
         demo_files = IOManager.list_files(self.demo_dir, ".dem")
+        parsed_sources = IOManager.list_parsed_demo_sources(self.parsed_demo_dir)
 
-        logger.log_info(f"[Matcher] Found {len(demo_files)} normalized demos")
+        self._log_stage("MATCHER", f"Found normalized_demos={len(demo_files)} cached_entries={len(parsed_sources)}")
 
         results = []
         failed = []
+        skipped_parsed = 0
 
         for file in demo_files:
+            if file.name in parsed_sources:
+                self._log_stage("MATCHER", f"SKIP parsed {file.name}", level="DEBUG")
+                skipped_parsed += 1
+                continue
+
             match_id, map_number = self.extract_ids_from_normalized(file.name)
 
             if match_id is None or map_number is None:
-                logger.log_warning(f"[Matcher] Invalid normalized file: {file.name}")
+                self._log_stage("MATCHER", f"Invalid normalized file {file.name}", level="ERROR")
                 continue
 
-            logger.log_info(f"[LOAD] {file.name} (match={match_id}, map={map_number})")
+            self._log_stage("MATCHER", f"LOAD {file.name} match={match_id} map={map_number}")
 
             try:
                 demo = Demo(str(file))
@@ -358,18 +396,27 @@ class DemoScrapperIntegration:
                 )
 
             except Exception as e:
-                logger.log_error(f"[FAILED] {file.name}: {e}")
+                self._log_stage("MATCHER", f"FAILED {file.name}: {e}", level="ERROR")
                 failed.append(file.name)
 
-        logger.log_info(f"[Matcher] Loaded {len(results)} demos successfully")
-        logger.log_info(f"[Matcher] Failed: {len(failed)}")
+        self._log_stage(
+            "MATCHER",
+            f"Summary loaded={len(results)} failed={len(failed)} skipped_parsed={skipped_parsed}",
+        )
 
         if failed:
-            logger.log_warning("Failed demos:")
+            self._log_stage("MATCHER", "Failed demos list follows", level="ERROR")
             for failed_demo in failed:
-                logger.log_warning(failed_demo)
+                self._log_stage("MATCHER", failed_demo, level="ERROR")
 
-        return results
+        return results, {
+            "loaded": len(results),
+            "failed": len(failed),
+            "failed_files": failed,
+            "skipped_parsed": skipped_parsed,
+            "normalized_files": len(demo_files),
+            "cached_entries": len(parsed_sources),
+        }
 
     # --- PARSER ---
 
@@ -377,8 +424,17 @@ class DemoScrapperIntegration:
     def parse_demo_full(demo):
         data = {"header": demo.header}
 
+        for raw_key in ["events", "game_events", "ticks_df"]:
+            try:
+                raw_value = getattr(demo, raw_key, None)
+                if raw_value is not None:
+                    data[raw_key] = raw_value
+            except Exception:
+                data[raw_key] = None
+
         table_map = {
             "rounds": "rounds",
+            "rounds_stats": "rounds_stats",
             "kills": "kills",
             "damages": "damages",
             "grenades": "grenades",
@@ -387,8 +443,15 @@ class DemoScrapperIntegration:
             "smokes": "smokes",
             "infernos": "infernos",
             "bomb": "bomb",
+            "bomb_plants": "bomb_plants",
+            "bomb_defuses": "bomb_defuses",
             "ticks": "ticks",
+            "frames": "frames",
+            "player_frames": "player_frames",
             "player_round_totals": "player_round_totals",
+            "weapon_fires": "weapon_fires",
+            "flashes": "flashes",
+            "hegrenades": "hegrenades",
             "server_cvars": "server_cvars",
         }
 
@@ -413,6 +476,39 @@ class DemoScrapperIntegration:
                 data[key] = None
 
         return data
+
+    @staticmethod
+    def _verify_cached_roundtrip(match_id, map_number, data, cached_data):
+        source_stats = demo_cache.payload_table_stats(data)
+        cached_stats = demo_cache.payload_table_stats(cached_data)
+
+        source_keys = set(source_stats.keys())
+        cached_keys = set(cached_stats.keys())
+
+        if source_keys != cached_keys:
+            missing = sorted(source_keys - cached_keys)
+            extra = sorted(cached_keys - source_keys)
+            logger.log_warning(
+                "[CACHE] Roundtrip key mismatch "
+                f"match={match_id} map={map_number} missing={missing} extra={extra}"
+            )
+            return
+
+        diffs = []
+        for key in sorted(source_keys):
+            if source_stats[key] != cached_stats[key]:
+                diffs.append(key)
+
+        if diffs:
+            logger.log_warning(
+                "[CACHE] Roundtrip table stats mismatch "
+                f"match={match_id} map={map_number} keys={diffs}"
+            )
+            return
+
+        logger.log_debug(
+            f"[CACHE] Roundtrip verified match={match_id} map={map_number} tables={len(source_keys)}"
+        )
 
     @staticmethod
     def print_headers(data, preview=False):
@@ -452,11 +548,11 @@ class DemoScrapperIntegration:
         return cvars
 
     def build_demo_data(self, matched):
-        demo_dict = {}
+        cache_manifest = {}
         failed = 0
         rejected = 0
 
-        logger.log_info("[Parser] Building structured datasets...")
+        self._log_stage("PARSER", "Building structured datasets")
 
         with get_conn(db_file=self.db_file) as conn:
             for entry in matched:
@@ -467,7 +563,7 @@ class DemoScrapperIntegration:
 
                 key = (match_id, map_number)
 
-                logger.log_info(f"[PARSE] {filename} -> match={match_id}, map={map_number}")
+                self._log_stage("PARSER", f"PARSE {filename} match={match_id} map={map_number}")
 
                 try:
                     data = self.parse_demo_full(demo)
@@ -479,34 +575,75 @@ class DemoScrapperIntegration:
                         rejected += 1
                         continue
 
-                    demo_dict[key] = data
+                    manifest = demo_cache.save_parsed_demo(
+                        cache_dir=self.parsed_demo_dir,
+                        match_id=match_id,
+                        map_number=map_number,
+                        data=data,
+                        source_file=entry["file"],
+                    )
+
+                    cached_data = demo_cache.load_parsed_demo(
+                        cache_dir=self.parsed_demo_dir,
+                        match_id=match_id,
+                        map_number=map_number,
+                    )
+                    self._verify_cached_roundtrip(match_id, map_number, data, cached_data)
+
+                    set_match_has_demo(match_id=match_id, has_demo=True, conn=conn)
+
+                    cache_manifest[key] = manifest
 
                 except Exception as e:
-                    logger.log_error(f"[FAILED] {filename}: {e}")
+                    self._log_stage("PARSER", f"FAILED {filename}: {e}", level="ERROR")
                     failed += 1
 
-        logger.log_info("[Parser] Done")
-        logger.log_info(f"Parsed: {len(demo_dict)}")
-        logger.log_info(f"Rejected: {rejected}")
-        logger.log_info(f"Failed: {failed}")
+        self._log_stage(
+            "PARSER",
+            f"Summary parsed_cached={len(cache_manifest)} rejected={rejected} failed={failed}",
+        )
 
-        return demo_dict
+        return cache_manifest, {
+            "parsed_cached": len(cache_manifest),
+            "rejected": rejected,
+            "failed": failed,
+        }
+
+    def load_cached_demo(self, match_id, map_number):
+        return demo_cache.load_parsed_demo(
+            cache_dir=self.parsed_demo_dir,
+            match_id=match_id,
+            map_number=map_number,
+        )
+
+    def list_cached_demos(self):
+        return demo_cache.list_cached_demos(self.parsed_demo_dir)
 
     @staticmethod
     def print_compact_demo_headers(demo_data):
         if demo_data:
             logger.log_info("=== DEMO HEADERS (COMPACT) ===")
             for (match_id, map_number), sample_data in sorted(demo_data.items()):
-                header = sample_data.get("header", {})
+                header = sample_data.get("header", {}) if isinstance(sample_data, dict) else {}
                 map_name = header.get("map_name", "?")
                 tick_count = header.get("tick_count", "?")
                 logger.log_info(f"[M{match_id}|Map{map_number}] {map_name:15} | Ticks: {tick_count}")
 
     def _run_pipeline(self):
-        self.download_demo()
-        matched = self.match_and_load_demos()
-        demo_data = self.build_demo_data(matched)
+        self._log_stage("PIPELINE", "Start")
+        ftp_stats = self.download_demo()
+        matched, matcher_stats = self.match_and_load_demos()
+        demo_data, parser_stats = self.build_demo_data(matched)
+
+        self._log_stage(
+            "PIPELINE",
+            "Summary "
+            f"ftp(downloaded={ftp_stats['downloaded']} skipped_local={ftp_stats['skipped']} skipped_parsed={ftp_stats.get('skipped_parsed', 0)} ignored={ftp_stats['ignored']}) "
+            f"matcher(loaded={matcher_stats['loaded']} failed={matcher_stats['failed']} skipped_parsed={matcher_stats['skipped_parsed']}) "
+            f"parser(parsed_cached={parser_stats['parsed_cached']} rejected={parser_stats['rejected']} failed={parser_stats['failed']})",
+        )
         self.print_compact_demo_headers(demo_data)
+        self._log_stage("PIPELINE", "Done")
         return demo_data
 
     def run(self, on_complete=None, on_error=None):

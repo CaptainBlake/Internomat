@@ -11,6 +11,7 @@ def get(key: str, default=None):
         return row[0] if row else default
     finally:
         cursor.close()
+        conn.close()
 
 
 def set(key: str, value):
@@ -25,3 +26,4 @@ def set(key: str, value):
         conn.commit()
     finally:
         cursor.close()
+        conn.close()

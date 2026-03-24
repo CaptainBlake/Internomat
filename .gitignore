@@ -37,4 +37,5 @@ dist/
 internomat.db-shm
 internomat.db-wal
 *.dem
+*.pkl
 *.pfx

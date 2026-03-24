@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
 )
 
-import core.stattracker as stattracker
+import core.stats.stattracker as stattracker
 import services.logger as logger
 
 

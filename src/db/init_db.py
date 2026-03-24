@@ -51,9 +51,20 @@ def init_db():
 
                 server_ip TEXT,
 
+                demo INTEGER NOT NULL DEFAULT 0,
+
                 created_at TEXT
             )
         """)
+
+        # Backward-compatible migration for existing databases.
+        match_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(matches)").fetchall()
+        }
+        if "demo" not in match_columns:
+            conn.execute("ALTER TABLE matches ADD COLUMN demo INTEGER NOT NULL DEFAULT 0")
+            logger.log("[DB] Added matches.demo column", level="INFO")
 
         # --- MAPS PER MATCH ---
         conn.execute("""

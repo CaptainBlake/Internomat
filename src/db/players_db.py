@@ -10,23 +10,26 @@ def insert_player(player, conn=None):
 
     now = datetime.utcnow().isoformat()
 
-    conn.execute("""
-        INSERT INTO players VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        player["steam64_id"],
-        player.get("leetify_id"),
-        player["name"],
-        player.get("premier_rating"),
-        player.get("leetify_rating"),
-        player.get("total_matches"),
-        player.get("winrate"),
-        now,
-        now
-    ))
+    try:
+        conn.execute("""
+            INSERT INTO players VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            player["steam64_id"],
+            player.get("leetify_id"),
+            player["name"],
+            player.get("premier_rating"),
+            player.get("leetify_rating"),
+            player.get("total_matches"),
+            player.get("winrate"),
+            now,
+            now
+        ))
 
-    if own:
-        conn.commit()
-        conn.close()
+        if own:
+            conn.commit()
+    finally:
+        if own:
+            conn.close()
 
     logger.log(f"[DB] Insert player {logger.redact(player['steam64_id'])}", level="INFO")
 
@@ -36,30 +39,33 @@ def update_player(player, conn=None):
 
     now = datetime.utcnow().isoformat()
 
-    conn.execute("""
-        UPDATE players SET
-            leetify_id = ?,
-            name = ?,
-            premier_rating = ?,
-            leetify_rating = ?,
-            total_matches = ?,
-            winrate = ?,
-            last_updated = ?
-        WHERE steam64_id = ?
-    """, (
-        player.get("leetify_id"),
-        player["name"],
-        player.get("premier_rating"),
-        player.get("leetify_rating"),
-        player.get("total_matches"),
-        player.get("winrate"),
-        now,
-        player["steam64_id"]
-    ))
+    try:
+        conn.execute("""
+            UPDATE players SET
+                leetify_id = ?,
+                name = ?,
+                premier_rating = ?,
+                leetify_rating = ?,
+                total_matches = ?,
+                winrate = ?,
+                last_updated = ?
+            WHERE steam64_id = ?
+        """, (
+            player.get("leetify_id"),
+            player["name"],
+            player.get("premier_rating"),
+            player.get("leetify_rating"),
+            player.get("total_matches"),
+            player.get("winrate"),
+            now,
+            player["steam64_id"]
+        ))
 
-    if own:
-        conn.commit()
-        conn.close()
+        if own:
+            conn.commit()
+    finally:
+        if own:
+            conn.close()
     logger.log(f"[DB] Update player {logger.redact(player['steam64_id'])}", level="INFO")
 
 def delete_player(steam_id):
@@ -74,45 +80,48 @@ def upsert_player(player, mode="full", conn=None):
 
     now = datetime.utcnow().isoformat()
 
-    if mode == "import":
-        conn.execute("""
-            INSERT INTO players (steam64_id, name, added_at, last_updated)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(steam64_id) DO UPDATE SET
-                name=excluded.name,
-                last_updated=excluded.last_updated
-        """, (
-            player["steam64_id"],
-            player["name"],
-            now,
-            now
-        ))
-    else:
-        conn.execute("""
-            INSERT INTO players VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(steam64_id) DO UPDATE SET
-                leetify_id=excluded.leetify_id,
-                name=excluded.name,
-                premier_rating=excluded.premier_rating,
-                leetify_rating=excluded.leetify_rating,
-                total_matches=excluded.total_matches,
-                winrate=excluded.winrate,
-                last_updated=excluded.last_updated
-        """, (
-            player["steam64_id"],
-            player.get("leetify_id"),
-            player["name"],
-            player.get("premier_rating"),
-            player.get("leetify_rating"),
-            player.get("total_matches"),
-            player.get("winrate"),
-            now,
-            now
-        ))
+    try:
+        if mode == "import":
+            conn.execute("""
+                INSERT INTO players (steam64_id, name, added_at, last_updated)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(steam64_id) DO UPDATE SET
+                    name=excluded.name,
+                    last_updated=excluded.last_updated
+            """, (
+                player["steam64_id"],
+                player["name"],
+                now,
+                now
+            ))
+        else:
+            conn.execute("""
+                INSERT INTO players VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(steam64_id) DO UPDATE SET
+                    leetify_id=excluded.leetify_id,
+                    name=excluded.name,
+                    premier_rating=excluded.premier_rating,
+                    leetify_rating=excluded.leetify_rating,
+                    total_matches=excluded.total_matches,
+                    winrate=excluded.winrate,
+                    last_updated=excluded.last_updated
+            """, (
+                player["steam64_id"],
+                player.get("leetify_id"),
+                player["name"],
+                player.get("premier_rating"),
+                player.get("leetify_rating"),
+                player.get("total_matches"),
+                player.get("winrate"),
+                now,
+                now
+            ))
 
-    if own:
-        conn.commit()
-        conn.close()
+        if own:
+            conn.commit()
+    finally:
+        if own:
+            conn.close()
     logger.log(f"[DB] Upsert player {logger.redact(player['steam64_id'])}", level="DEBUG")
 
 def get_players():

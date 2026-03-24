@@ -70,4 +70,35 @@ class IOManager:
             return list(directory.glob(pattern))
 
         return list(directory.rglob("*") if recursive else directory.iterdir())
+
+    @staticmethod
+    def list_parsed_demo_sources(parsed_dir):
+        """
+        Return DEM filenames that already have a parsed payload in parsed_dir.
+        Expected parsed payload naming: <demo_stem>.pkl (e.g. file.pkl for file.dem).
+        Backward compatible with legacy .dem.pkl and .pkl.gz payloads.
+        """
+
+        parsed_path = Path(parsed_dir)
+        if not parsed_path.exists():
+            return set()
+
+        parsed_sources = set()
+        for file in parsed_path.iterdir():
+            if not file.is_file():
+                continue
+
+            name = file.name
+            if name.endswith(".pkl") and not name.endswith(".dem.pkl"):
+                parsed_sources.add(f"{name[:-4]}.dem")
+                continue
+
+            if name.endswith(".dem.pkl"):
+                parsed_sources.add(name[:-4])
+                continue
+
+            if name.endswith(".dem.pkl.gz"):
+                parsed_sources.add(name[:-7])
+
+        return parsed_sources
     
