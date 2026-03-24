@@ -40,4 +40,4 @@ internomat.db-wal
 *.pkl
 *.pfx
 settings.json
-
+demos/parsed/index.json
