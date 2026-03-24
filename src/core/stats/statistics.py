@@ -98,7 +98,7 @@ def get_overview():
 
 def get_recent_maps(limit=10):
     rows = statistics_repo.fetch_recent_maps(limit)
-    cache_rows = demo_cache.list_cached_demos_default()
+    cache_rows = demo_cache.list_existing_cached_demos_default()
     cache_by_key = _build_cache_manifest_map(cache_rows)
     _prune_payload_cache(set(cache_by_key.keys()))
 

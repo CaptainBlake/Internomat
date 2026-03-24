@@ -172,6 +172,34 @@ def set_match_has_demo(match_id, has_demo=True, conn=None):
     logger.log(f"[DB] Match demo={1 if has_demo else 0} match={match_id}", level="DEBUG")
 
 
+def set_demo_flags_by_match_ids(match_ids, conn=None):
+    own_conn = conn is None
+    conn = conn or get_conn()
+
+    ids = [str(mid) for mid in (match_ids or []) if str(mid).strip()]
+
+    try:
+        conn.execute("UPDATE matches SET demo = 0")
+
+        if ids:
+            placeholders = ",".join("?" for _ in ids)
+            conn.execute(
+                f"UPDATE matches SET demo = 1 WHERE match_id IN ({placeholders})",
+                ids,
+            )
+
+        if own_conn:
+            conn.commit()
+    finally:
+        if own_conn:
+            conn.close()
+
+    logger.log(
+        f"[DB] Reconciled match demo flags from cache matches={len(ids)}",
+        level="INFO",
+    )
+
+
 def get_match_map_steamids(match_id, map_number, conn=None):
     own_conn = conn is None
     conn = conn or get_conn()

@@ -15,7 +15,12 @@ from gui.tabs.statistics.statistics_tab import (
     refresh_statistics_tab,
     on_statistics_data_updated,
 )
-from gui.tabs.statistics.stattracker_tab import build_stattracker_tab, refresh_stattracker
+from gui.tabs.statistics.stattracker_tab import (
+    build_stattracker_tab,
+    refresh_stattracker,
+    on_stattracker_data_updated,
+)
+from gui.tabs.statistics.leaderboard_tab import on_stat_overview_data_updated
 import services.logger as logger
 import os
 import sys
@@ -158,10 +163,16 @@ class InternomatWindow(QMainWindow):
         build_stattracker_tab(self.stat_tracker_page)
         logger.log("[GUI] Stat Tracker ready", level="INFO")
 
+        def on_data_updated():
+            logger.log("[UI] Data update event received", level="DEBUG")
+            on_statistics_data_updated(self.statistics_page)
+            on_stat_overview_data_updated(self.stat_overview_page)
+            on_stattracker_data_updated(self.stat_tracker_page)
+
         build_settings_tab(
             self.settings_page,
             on_players_updated=refresh_players,
-            on_data_updated=lambda: on_statistics_data_updated(self.statistics_page),
+            on_data_updated=on_data_updated,
         )
         logger.log("[GUI] Settings ready", level="INFO")
 

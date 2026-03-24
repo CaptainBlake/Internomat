@@ -39,6 +39,7 @@ class DemoScrapperIntegration:
         ftp_port: int | None = None,
         ftp_user: str | None = None,
         ftp_password: str | None = None,
+        progress_callback=None,
     ):
         self.base_dir = base_dir or Path(__file__).parent.parent.parent
         self.db_file = db_file or (self.base_dir / "internomat.db")
@@ -46,6 +47,7 @@ class DemoScrapperIntegration:
         self.parsed_demo_dir = self.demo_dir / "parsed"
         self.remote_dir = remote_dir
         self._run_lock = Lock()
+        self.progress_callback = progress_callback
 
         logger.log_info(f"Using DB: {self.db_file}")
 
@@ -74,6 +76,27 @@ class DemoScrapperIntegration:
         logger.log_info(f"Loaded {len(self.match_catalog)} matches")
         logger.log_debug(f"Valid match_ids: {sorted(self.valid_match_ids)}")
         logger.log_info(f"Parsed demo cache dir: {self.parsed_demo_dir}")
+
+    def _emit_progress(self, percent, message, stage="pipeline", file_percent=None):
+        if not callable(self.progress_callback):
+            return
+
+        try:
+            clamped = max(0, min(100, int(percent)))
+            self.progress_callback(
+                {
+                    "percent": clamped,
+                    "stage": str(stage),
+                    "message": str(message),
+                    "file_percent": (
+                        None
+                        if file_percent is None
+                        else max(0, min(100, int(file_percent)))
+                    ),
+                }
+            )
+        except Exception:
+            pass
 
     # --- SHARED UTILS ---
 
@@ -258,6 +281,7 @@ class DemoScrapperIntegration:
 
     def download_demo(self):
         self._log_stage("FTP", f"Connecting to {self.ftp_host}:{self.ftp_port}...")
+        self._emit_progress(5, "Connecting to FTP server...", stage="ftp")
 
         ftp = FTP()
 
@@ -272,67 +296,135 @@ class DemoScrapperIntegration:
             files = ftp.nlst()
             parsed_sources = IOManager.list_parsed_demo_sources(self.parsed_demo_dir)
 
+            demo_files = [f for f in files if str(f).endswith(".dem")]
+            total_demo_files = max(1, len(demo_files))
+            processed_demo_files = 0
+
             downloaded, skipped, skipped_parsed, ignored = 0, 0, 0, 0
 
             self._log_stage("FTP", f"Found {len(files)} remote files")
+            self._emit_progress(
+                8,
+                f"Found {len(demo_files)} demo files on server.",
+                stage="ftp",
+            )
 
             for file in files:
                 if not file.endswith(".dem"):
                     continue
 
-                date, time, match_id, map_name = self.extract_parts(file)
-
-                if match_id is None:
-                    ignored += 1
-                    continue
-
-                if match_id not in self.valid_match_ids:
-                    ignored += 1
-                    continue
-
-                map_number = resolve_map_number(self.match_catalog, match_id, map_name)
-
-                if map_number is None:
-                    ignored += 1
-                    logger.log_debug(
-                        f"[IGNORE] {file} map_name={map_name} does not exist for match={match_id}"
-                    )
-                    continue
-
-                normalized_name = f"{date}_{time}_match_{match_id}_map_{map_number}_{map_name}.dem"
-                local_file = self.demo_dir / normalized_name
-
-                if normalized_name in parsed_sources:
-                    self._log_stage("FTP", f"SKIP parsed cache {normalized_name}", level="DEBUG")
-                    skipped_parsed += 1
-                    continue
-
-                if IOManager.file_exists(local_file):
-                    self._log_stage("FTP", f"SKIP local exists {normalized_name}", level="DEBUG")
-                    skipped += 1
-                    continue
-
-                self._log_stage("FTP", f"DOWNLOAD {file} -> {normalized_name}")
-
                 try:
-                    filesize = ftp.size(file)
-
-                    IOManager.stream_to_file(
-                        local_file,
-                        lambda cb: ftp.retrbinary(f"RETR {file}", cb),
-                        total_size=filesize,
-                        desc=normalized_name,
+                    self._emit_progress(
+                        8 + int((processed_demo_files / total_demo_files) * 62),
+                        f"Scanning {processed_demo_files + 1}/{total_demo_files}: {file}",
+                        stage="ftp",
                     )
 
-                    downloaded += 1
+                    date, time, match_id, map_name = self.extract_parts(file)
 
-                except Exception as e:
-                    self._log_stage("FTP", f"FAILED {file}: {e}", level="ERROR")
+                    if match_id is None:
+                        ignored += 1
+                        continue
+
+                    if match_id not in self.valid_match_ids:
+                        ignored += 1
+                        continue
+
+                    map_number = resolve_map_number(self.match_catalog, match_id, map_name)
+
+                    if map_number is None:
+                        ignored += 1
+                        logger.log_debug(
+                            f"[IGNORE] {file} map_name={map_name} does not exist for match={match_id}"
+                        )
+                        continue
+
+                    normalized_name = f"{date}_{time}_match_{match_id}_map_{map_number}_{map_name}.dem"
+                    local_file = self.demo_dir / normalized_name
+
+                    if normalized_name in parsed_sources:
+                        self._log_stage("FTP", f"SKIP parsed cache {normalized_name}", level="DEBUG")
+                        skipped_parsed += 1
+                        continue
+
+                    if IOManager.file_exists(local_file):
+                        self._log_stage("FTP", f"SKIP local exists {normalized_name}", level="DEBUG")
+                        skipped += 1
+                        continue
+
+                    self._log_stage("FTP", f"DOWNLOAD {file} -> {normalized_name}")
+                    self._emit_progress(
+                        8 + int((processed_demo_files / total_demo_files) * 62),
+                        f"Downloading {normalized_name}",
+                        stage="ftp",
+                    )
+
+                    try:
+                        filesize = ftp.size(file)
+
+                        ftp_stage_start = 8 + int((processed_demo_files / total_demo_files) * 62)
+                        ftp_stage_end = 8 + int(((processed_demo_files + 1) / total_demo_files) * 62)
+                        last_state = {"absolute": -1, "file_percent": -1}
+
+                        def _on_file_progress(bytes_written, total_bytes):
+                            if not total_bytes:
+                                return
+
+                            ratio = bytes_written / max(1, total_bytes)
+                            ratio = max(0.0, min(1.0, ratio))
+                            absolute = ftp_stage_start + int((ftp_stage_end - ftp_stage_start) * ratio)
+                            file_pct = int(ratio * 100)
+
+                            if (
+                                absolute == last_state["absolute"]
+                                and file_pct == last_state["file_percent"]
+                            ):
+                                return
+                            last_state["absolute"] = absolute
+                            last_state["file_percent"] = file_pct
+
+                            self._emit_progress(
+                                absolute,
+                                f"Downloading {normalized_name} ({file_pct}%)",
+                                stage="ftp",
+                                file_percent=file_pct,
+                            )
+
+                        IOManager.stream_to_file(
+                            local_file,
+                            lambda cb: ftp.retrbinary(f"RETR {file}", cb),
+                            total_size=filesize,
+                            desc=normalized_name,
+                            progress_callback=_on_file_progress,
+                        )
+
+                        downloaded += 1
+
+                    except Exception as e:
+                        self._log_stage("FTP", f"FAILED {file}: {e}", level="ERROR")
+                finally:
+                    processed_demo_files += 1
+                    self._emit_progress(
+                        8 + int((processed_demo_files / total_demo_files) * 62),
+                        (
+                            f"FTP progress {processed_demo_files}/{total_demo_files} "
+                            f"(downloaded={downloaded}, skipped={skipped}, ignored={ignored})"
+                        ),
+                        stage="ftp",
+                    )
 
             self._log_stage("FTP", "Done")
             self._log_stage(
                 "FTP",
                 f"Summary downloaded={downloaded} skipped_local={skipped} skipped_parsed={skipped_parsed} ignored={ignored}",
+            )
+            self._emit_progress(
+                70,
+                (
+                    f"FTP done: downloaded={downloaded}, skipped={skipped}, "
+                    f"skipped_parsed={skipped_parsed}, ignored={ignored}"
+                ),
+                stage="ftp",
             )
 
             return {
@@ -358,7 +450,7 @@ class DemoScrapperIntegration:
         }
     # --- DEMO MATCH + LOAD ---
 
-    def match_and_load_demos(self):
+    def match_and_load_demos(self, progress_start=None, progress_end=None):
         demo_files = IOManager.list_files(self.demo_dir, ".dem")
         parsed_sources = IOManager.list_parsed_demo_sources(self.parsed_demo_dir)
 
@@ -367,8 +459,17 @@ class DemoScrapperIntegration:
         results = []
         failed = []
         skipped_parsed = 0
+        total_files = max(1, len(demo_files))
 
-        for file in demo_files:
+        for idx, file in enumerate(demo_files, start=1):
+            entry_start = None
+            entry_end = None
+            if progress_start is not None and progress_end is not None:
+                span = max(0, int(progress_end) - int(progress_start))
+                entry_start = int(progress_start) + int((idx - 1) / total_files * span)
+                entry_end = int(progress_start) + int(idx / total_files * span)
+                self._emit_progress(entry_start, f"Matcher {idx}/{total_files}: {file.name}", stage="matcher")
+
             if file.name in parsed_sources:
                 self._log_stage("MATCHER", f"SKIP parsed {file.name}", level="DEBUG")
                 skipped_parsed += 1
@@ -381,6 +482,9 @@ class DemoScrapperIntegration:
                 continue
 
             self._log_stage("MATCHER", f"LOAD {file.name} match={match_id} map={map_number}")
+            if entry_start is not None and entry_end is not None:
+                mid = entry_start + int((entry_end - entry_start) * 0.4)
+                self._emit_progress(mid, f"Parsing demo {file.name}", stage="matcher")
 
             try:
                 demo = Demo(str(file))
@@ -395,6 +499,9 @@ class DemoScrapperIntegration:
                     }
                 )
 
+                if entry_start is not None and entry_end is not None:
+                    self._emit_progress(entry_end, f"Matcher done {file.name}", stage="matcher")
+
             except Exception as e:
                 self._log_stage("MATCHER", f"FAILED {file.name}: {e}", level="ERROR")
                 failed.append(file.name)
@@ -408,6 +515,9 @@ class DemoScrapperIntegration:
             self._log_stage("MATCHER", "Failed demos list follows", level="ERROR")
             for failed_demo in failed:
                 self._log_stage("MATCHER", failed_demo, level="ERROR")
+
+        if progress_start is not None and progress_end is not None:
+            self._emit_progress(int(progress_end), "Matcher completed", stage="matcher")
 
         return results, {
             "loaded": len(results),
@@ -547,15 +657,30 @@ class DemoScrapperIntegration:
             logger.log_warning("No CVARs")
         return cvars
 
-    def build_demo_data(self, matched):
+    def build_demo_data(self, matched, progress_start=None, progress_end=None):
         cache_manifest = {}
         failed = 0
         rejected = 0
 
         self._log_stage("PARSER", "Building structured datasets")
 
+        total_entries = max(1, len(matched))
+
         with get_conn(db_file=self.db_file) as conn:
-            for entry in matched:
+            for idx, entry in enumerate(matched, start=1):
+                entry_start = None
+                entry_end = None
+                if progress_start is not None and progress_end is not None:
+                    span = max(0, int(progress_end) - int(progress_start))
+                    entry_start = int(progress_start) + int((idx - 1) / total_entries * span)
+                    entry_end = int(progress_start) + int(idx / total_entries * span)
+                    percent = entry_start
+                    self._emit_progress(
+                        percent,
+                        f"Parser {idx}/{total_entries}: {entry['file'].name}",
+                        stage="parser",
+                    )
+
                 match_id = entry["match_id"]
                 map_number = entry["map_number"]
                 demo = entry["demo"]
@@ -567,13 +692,22 @@ class DemoScrapperIntegration:
 
                 try:
                     data = self.parse_demo_full(demo)
+                    if entry_start is not None and entry_end is not None:
+                        p = entry_start + int((entry_end - entry_start) * 0.35)
+                        self._emit_progress(p, f"Validated structure {filename}", stage="parser")
 
                     if not self.validate_demo_players(match_id, map_number, data, conn=conn):
                         logger.log_warning(
                             f"[REJECTED] {filename} failed player validation for match={match_id}, map={map_number}"
                         )
                         rejected += 1
+                        if entry_end is not None:
+                            self._emit_progress(entry_end, f"Rejected {filename}", stage="parser")
                         continue
+
+                    if entry_start is not None and entry_end is not None:
+                        p = entry_start + int((entry_end - entry_start) * 0.65)
+                        self._emit_progress(p, f"Saving parsed payload {filename}", stage="parser")
 
                     manifest = demo_cache.save_parsed_demo(
                         cache_dir=self.parsed_demo_dir,
@@ -594,14 +728,22 @@ class DemoScrapperIntegration:
 
                     cache_manifest[key] = manifest
 
+                    if entry_end is not None:
+                        self._emit_progress(entry_end, f"Parser done {filename}", stage="parser")
+
                 except Exception as e:
                     self._log_stage("PARSER", f"FAILED {filename}: {e}", level="ERROR")
                     failed += 1
+                    if entry_end is not None:
+                        self._emit_progress(entry_end, f"Parser failed {filename}", stage="parser")
 
         self._log_stage(
             "PARSER",
             f"Summary parsed_cached={len(cache_manifest)} rejected={rejected} failed={failed}",
         )
+
+        if progress_start is not None and progress_end is not None:
+            self._emit_progress(int(progress_end), "Parser completed", stage="parser")
 
         return cache_manifest, {
             "parsed_cached": len(cache_manifest),
@@ -631,9 +773,24 @@ class DemoScrapperIntegration:
 
     def _run_pipeline(self):
         self._log_stage("PIPELINE", "Start")
+        self._emit_progress(0, "Pipeline started", stage="pipeline")
+
+        self._emit_progress(3, "Stage 1/3: FTP sync", stage="pipeline")
         ftp_stats = self.download_demo()
-        matched, matcher_stats = self.match_and_load_demos()
-        demo_data, parser_stats = self.build_demo_data(matched)
+
+        self._emit_progress(71, "Stage 2/3: Parse and match demos", stage="pipeline")
+        matched, matcher_stats = self.match_and_load_demos(progress_start=71, progress_end=88)
+
+        self._emit_progress(89, "Stage 3/3: Validate and cache parsed demos", stage="pipeline")
+        demo_data, parser_stats = self.build_demo_data(matched, progress_start=89, progress_end=99)
+
+        cached_matches = {
+            str(row.get("match_id"))
+            for row in demo_cache.list_existing_cached_demos(self.parsed_demo_dir)
+            if isinstance(row, dict) and row.get("match_id") is not None
+        }
+        from db.matches_db import set_demo_flags_by_match_ids
+        set_demo_flags_by_match_ids(cached_matches)
 
         self._log_stage(
             "PIPELINE",
@@ -644,6 +801,7 @@ class DemoScrapperIntegration:
         )
         self.print_compact_demo_headers(demo_data)
         self._log_stage("PIPELINE", "Done")
+        self._emit_progress(100, "Pipeline completed", stage="pipeline")
         return demo_data
 
     def run(self, on_complete=None, on_error=None):

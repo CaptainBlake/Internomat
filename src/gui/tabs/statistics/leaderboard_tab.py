@@ -184,6 +184,55 @@ def _build_leaderboard(title_text, headers, rows, value_suffix="", top3_colorize
     return frame
 
 
+def _compute_stat_overview_payload():
+    return {
+        "kills": leaderboard.get_top_kills(10),
+        "deaths": leaderboard.get_top_deaths(10),
+        "ratings": leaderboard.get_top_ratings(10),
+        "damage": leaderboard.get_top_damage_per_match(10),
+    }
+
+
+def _render_stat_overview_content(layout, payload):
+    content = QGridLayout()
+    content.setSpacing(12)
+
+    kills_board = _build_leaderboard(
+        "Most Kills",
+        ["#", "Player", "Kills"],
+        payload.get("kills") or [],
+        top3_colorize=True,
+    )
+
+    deaths_board = _build_leaderboard(
+        "Most Deaths",
+        ["#", "Player", "Deaths"],
+        payload.get("deaths") or [],
+        top3_colorize=True,
+    )
+
+    rating_board = _build_leaderboard(
+        "Top Rating",
+        ["#", "Player", "Rating"],
+        payload.get("ratings") or [],
+        top3_colorize=True,
+    )
+
+    damage_board = _build_leaderboard(
+        "Damage per Match",
+        ["#", "Player", "Avg Damage"],
+        payload.get("damage") or [],
+        top3_colorize=True,
+    )
+
+    content.addWidget(kills_board, 0, 0)
+    content.addWidget(deaths_board, 0, 1)
+    content.addWidget(rating_board, 1, 0)
+    content.addWidget(damage_board, 1, 1)
+
+    layout.addLayout(content, 1)
+
+
 def build_stat_overview_tab(parent):
     logger.log("[UI] Build Stat Overview tab", level="DEBUG")
 
@@ -201,44 +250,11 @@ def build_stat_overview_tab(parent):
     info.setStyleSheet("font-size: 12px; color: #5B7A72;")
     layout.addWidget(info)
 
-    content = QGridLayout()
-    content.setSpacing(12)
+    parent._stat_overview_cache_dirty = True
+    parent._stat_overview_payload = None
 
-    kills_board = _build_leaderboard(
-        "Most Kills",
-        ["#", "Player", "Kills"],
-        leaderboard.get_top_kills(10),
-        top3_colorize=True,
-    )
-
-    deaths_board = _build_leaderboard(
-        "Most Deaths",
-        ["#", "Player", "Deaths"],
-        leaderboard.get_top_deaths(10),
-        top3_colorize=True,
-    )
-
-    rating_board = _build_leaderboard(
-        "Top Rating",
-        ["#", "Player", "Rating"],
-        leaderboard.get_top_ratings(10),
-        top3_colorize=True,
-    )
-
-    damage_board = _build_leaderboard(
-        "Damage per Match",
-        ["#", "Player", "Avg Damage"],
-        leaderboard.get_top_damage_per_match(10),
-        top3_colorize=True,
-    )
-
-    content.addWidget(kills_board, 0, 0)
-    content.addWidget(deaths_board, 0, 1)
-    content.addWidget(rating_board, 1, 0)
-    content.addWidget(damage_board, 1, 1)
-
-    layout.addLayout(content, 1)
-
+    refresh_stat_overview(parent)
+    parent._stat_overview_on_update = lambda: on_stat_overview_data_updated(parent)
     parent._stat_overview_refresh = lambda: refresh_stat_overview(parent)
 
 
@@ -263,40 +279,18 @@ def refresh_stat_overview(parent):
         elif child_layout is not None:
             _clear_layout(child_layout)
 
-    content = QGridLayout()
-    content.setSpacing(12)
+    cache_dirty = getattr(parent, "_stat_overview_cache_dirty", True)
+    payload = getattr(parent, "_stat_overview_payload", None)
 
-    kills_board = _build_leaderboard(
-        "Most Kills",
-        ["#", "Player", "Kills"],
-        leaderboard.get_top_kills(10),
-        top3_colorize=True,
-    )
+    if cache_dirty or not isinstance(payload, dict):
+        payload = _compute_stat_overview_payload()
+        parent._stat_overview_payload = payload
+        parent._stat_overview_cache_dirty = False
 
-    deaths_board = _build_leaderboard(
-        "Most Deaths",
-        ["#", "Player", "Deaths"],
-        leaderboard.get_top_deaths(10),
-        top3_colorize=True,
-    )
+    _render_stat_overview_content(layout, payload)
 
-    rating_board = _build_leaderboard(
-        "Top Rating",
-        ["#", "Player", "Rating"],
-        leaderboard.get_top_ratings(10),
-        top3_colorize=True,
-    )
 
-    damage_board = _build_leaderboard(
-        "Damage per Match",
-        ["#", "Player", "Avg Damage"],
-        leaderboard.get_top_damage_per_match(10),
-        top3_colorize=True,
-    )
-
-    content.addWidget(kills_board, 0, 0)
-    content.addWidget(deaths_board, 0, 1)
-    content.addWidget(rating_board, 1, 0)
-    content.addWidget(damage_board, 1, 1)
-
-    layout.addLayout(content, 1)
+def on_stat_overview_data_updated(parent):
+    logger.log("[UI] Stat Overview data update triggered", level="DEBUG")
+    parent._stat_overview_cache_dirty = True
+    refresh_stat_overview(parent)

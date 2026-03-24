@@ -1,6 +1,6 @@
 import threading
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QCheckBox,
@@ -19,7 +19,9 @@ from PySide6.QtWidgets import (
     QListWidget,
     QLineEdit,
     QGridLayout,
-    QSpinBox
+    QSpinBox,
+    QDialog,
+    QProgressBar,
 )
 from PySide6.QtGui import QFont
 from core.settings.settings import settings
@@ -37,9 +39,74 @@ class SettingsDispatcher(QObject):
     sync_error = Signal(object)
     demos_sync_finished = Signal(object)
     demos_sync_error = Signal(object)
+    demos_sync_progress = Signal(object)
 
 
 LOG_WINDOW_INSTANCE = None
+
+
+class DemoSyncProgressDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Demo Sync Progress")
+        self.setModal(False)
+        self.resize(540, 190)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
+
+        self.title_label = QLabel("Syncing demos...")
+        self.title_label.setStyleSheet("font-size: 13px; font-weight: 700; color: #22384D;")
+
+        self.message_label = QLabel("Starting pipeline...")
+        self.message_label.setWordWrap(True)
+        self.message_label.setStyleSheet("font-size: 12px; color: #5A6B7C;")
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setFormat("%p%")
+
+        self.file_label = QLabel("Current file: -")
+        self.file_label.setStyleSheet("font-size: 11px; color: #5A6B7C;")
+
+        self.file_progress = QProgressBar()
+        self.file_progress.setRange(0, 100)
+        self.file_progress.setValue(0)
+        self.file_progress.setFormat("%p%")
+
+        layout.addWidget(self.title_label)
+        layout.addWidget(self.message_label)
+        layout.addWidget(self.progress)
+        layout.addWidget(self.file_label)
+        layout.addWidget(self.file_progress)
+
+    def update_status(self, payload):
+        if not isinstance(payload, dict):
+            return
+
+        percent = payload.get("percent")
+        file_percent = payload.get("file_percent")
+        message = str(payload.get("message") or "")
+        stage = str(payload.get("stage") or "pipeline")
+
+        if isinstance(percent, (int, float)):
+            self.progress.setValue(max(0, min(100, int(percent))))
+
+        if stage:
+            self.title_label.setText(f"Syncing demos ({stage})")
+
+        if message:
+            self.message_label.setText(message)
+
+        if isinstance(file_percent, (int, float)):
+            value = max(0, min(100, int(file_percent)))
+            self.file_progress.setValue(value)
+            self.file_label.setText(f"Current file: {value}%")
+        elif stage != "ftp":
+            self.file_progress.setValue(0)
+            self.file_label.setText("Current file: -")
 
 # SETTINGS TAB
 def build_settings_tab(parent, on_players_updated=None, on_data_updated=None):
@@ -95,6 +162,7 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None):
     layout.setSpacing(12)
     layout.setAlignment(Qt.AlignTop)
     dispatcher = SettingsDispatcher(parent)
+    demo_sync_progress_dialog = {"dialog": None}
     setting_bindings = []
     settings_dirty = {"value": False}
 
@@ -584,6 +652,13 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None):
         sync_demos_button.clearFocus()
         sync_demos_button.setEnabled(False)
 
+        dialog = DemoSyncProgressDialog(parent)
+        dialog.update_status({"percent": 0, "stage": "pipeline", "message": "Starting pipeline..."})
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        demo_sync_progress_dialog["dialog"] = dialog
+
         def worker():
             try:
                 integration = DemoScrapperIntegration(
@@ -592,6 +667,7 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None):
                     ftp_user=settings.demo_ftp_user,
                     ftp_password=settings.demo_ftp_password,
                     remote_dir=settings.demo_remote_path,
+                    progress_callback=lambda payload: dispatcher.demos_sync_progress.emit(payload),
                 )
                 demo_data = integration.run_sync()
                 dispatcher.demos_sync_finished.emit(demo_data)
@@ -621,18 +697,44 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None):
     def on_demos_sync_finished(demo_data):
         sync_demos_button.setEnabled(True)
         logger.log_info(f"[DEMOS] Sync completed ({len(demo_data)} parsed maps)")
+
+        dialog = demo_sync_progress_dialog.get("dialog")
+        if dialog is not None:
+            dialog.update_status({"percent": 100, "stage": "pipeline", "message": "Pipeline completed."})
+
+            def _close_dialog_later():
+                current = demo_sync_progress_dialog.get("dialog")
+                if current is not None:
+                    current.close()
+                    demo_sync_progress_dialog["dialog"] = None
+
+            QTimer.singleShot(700, _close_dialog_later)
+
         if callable(on_data_updated):
             on_data_updated()
 
     def on_demos_sync_error(e):
         sync_demos_button.setEnabled(True)
         logger.log_error(f"[DEMOS] Sync failed: {e}", exc=e)
+
+        dialog = demo_sync_progress_dialog.get("dialog")
+        if dialog is not None:
+            dialog.update_status({"stage": "pipeline", "message": f"Failed: {e}"})
+            dialog.close()
+            demo_sync_progress_dialog["dialog"] = None
+
         logger.show_debug_popup(
             parent,
             "Demo Sync Failed",
             str(e),
             logger.get_log_history()
         )
+
+    def on_demos_sync_progress(payload):
+        dialog = demo_sync_progress_dialog.get("dialog")
+        if dialog is None:
+            return
+        dialog.update_status(payload)
 
     # SIGNALS
 
@@ -648,6 +750,7 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None):
     dispatcher.sync_error.connect(on_sync_error)
     dispatcher.demos_sync_finished.connect(on_demos_sync_finished)
     dispatcher.demos_sync_error.connect(on_demos_sync_error)
+    dispatcher.demos_sync_progress.connect(on_demos_sync_progress)
 
     sidebar.setCurrentRow(0)
 

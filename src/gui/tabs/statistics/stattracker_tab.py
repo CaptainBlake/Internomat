@@ -50,6 +50,9 @@ def build_stattracker_tab(parent):
     info.setStyleSheet("font-size: 12px; color: #5B7A72;")
     layout.addWidget(info)
 
+    parent._stattracker_cache_dirty = True
+    parent._stattracker_overview = None
+    parent._stattracker_on_update = lambda: on_stattracker_data_updated(parent)
     parent._stattracker_refresh = lambda: refresh_stattracker(parent)
     refresh_stattracker(parent)
 
@@ -71,7 +74,12 @@ def refresh_stattracker(parent):
             widget.setParent(None)
             widget.deleteLater()
 
-    overview = stattracker.get_overview()
+    cache_dirty = getattr(parent, "_stattracker_cache_dirty", True)
+    overview = getattr(parent, "_stattracker_overview", None)
+    if cache_dirty or not isinstance(overview, dict):
+        overview = stattracker.get_overview()
+        parent._stattracker_overview = overview
+        parent._stattracker_cache_dirty = False
 
     metrics = QHBoxLayout()
     metrics.setSpacing(12)
@@ -84,3 +92,9 @@ def refresh_stattracker(parent):
     hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
     hint.setStyleSheet("font-size: 13px; color: #5B7A72; padding: 16px;")
     layout.addWidget(hint, 1)
+
+
+def on_stattracker_data_updated(parent):
+    logger.log("[UI] Stat Tracker data update triggered", level="DEBUG")
+    parent._stattracker_cache_dirty = True
+    refresh_stattracker(parent)

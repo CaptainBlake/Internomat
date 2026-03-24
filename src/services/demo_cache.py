@@ -31,6 +31,56 @@ def list_cached_demos_default():
     return list_cached_demos(_default_cache_dir())
 
 
+def list_existing_cached_demos(cache_dir):
+    rows = list_cached_demos(cache_dir)
+    existing = []
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+
+        match_id = row.get("match_id")
+        map_number = row.get("map_number")
+        if match_id is None or map_number is None:
+            continue
+
+        payload_path = _resolve_payload_path(
+            cache_dir=cache_dir,
+            match_id=match_id,
+            map_number=map_number,
+            filename=row.get("filename"),
+        )
+
+        if IOManager.file_exists(str(payload_path)):
+            existing.append(row)
+
+    return existing
+
+
+def list_existing_cached_demos_default():
+    return list_existing_cached_demos(_default_cache_dir())
+
+
+def cached_match_ids_default():
+    rows = list_existing_cached_demos_default()
+    ids = set()
+    for row in rows:
+        match_id = row.get("match_id") if isinstance(row, dict) else None
+        if match_id is None:
+            continue
+        ids.add(str(match_id))
+    return ids
+
+
+def reconcile_db_demo_flags_default():
+    from db.matches_db import set_demo_flags_by_match_ids
+
+    ids = cached_match_ids_default()
+    set_demo_flags_by_match_ids(ids)
+    logger.log_info(f"[CACHE] Reconciled DB demo flags from cache entries={len(ids)}")
+    return len(ids)
+
+
 def _iter_rows(table):
     if isinstance(table, pd.DataFrame):
         if table.empty:

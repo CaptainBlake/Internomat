@@ -37,7 +37,7 @@ class IOManager:
         return open(filepath, "wb")
 
     @staticmethod
-    def stream_to_file(filepath, stream_func, total_size=None, desc=None):
+    def stream_to_file(filepath, stream_func, total_size=None, desc=None, progress_callback=None):
         """
         stream_func(callback) should call callback(bytes)
         """
@@ -54,10 +54,19 @@ class IOManager:
             leave=False,
         ) as pbar:
 
+            bytes_written = 0
+
             def callback(data):
+                nonlocal bytes_written
                 f.write(data)
+                bytes_written += len(data)
                 if total_size:
                     pbar.update(len(data))
+                if callable(progress_callback):
+                    try:
+                        progress_callback(bytes_written, total_size)
+                    except Exception:
+                        pass
 
             stream_func(callback)
 
