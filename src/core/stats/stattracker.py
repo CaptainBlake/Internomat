@@ -1,42 +1,40 @@
+from db import stattracker_db as stattracker_repo
 import services.logger as logger
-from db import stattracker_db as tracker_repo
 
 
 def get_overview():
-    row = tracker_repo.fetch_overview()
+    row = stattracker_repo.fetch_player_overview()
 
     result = {
-        "total_matches": int(row["total_matches"] or 0),
-        "unique_players": int(row["unique_players"] or 0),
-        "avg_map_total_score": float(row["avg_map_total_score"] or 0.0),
+        "tracked_players": int(row["tracked_players"] or 0),
+        "player_stat_rows": int(row["player_stat_rows"] or 0),
+        "unique_player_maps": int(row["unique_player_maps"] or 0),
     }
 
     logger.log(
         "[STATTRACKER] "
-        f"overview matches={result['total_matches']} "
-        f"players={result['unique_players']} avg_score={result['avg_map_total_score']}",
+        f"overview tracked_players={result['tracked_players']} "
+        f"player_stat_rows={result['player_stat_rows']} "
+        f"unique_player_maps={result['unique_player_maps']}",
         level="DEBUG",
     )
 
     return result
 
 
-def get_recent_maps(limit=10):
-    rows = tracker_repo.fetch_recent_maps(limit)
+def get_player_samples(limit=10):
+    rows = stattracker_repo.fetch_top_player_samples(limit)
 
     result = [
         {
-            "match_id": str(r["match_id"]),
-            "map_number": int(r["map_number"] or 0),
-            "map_name": str(r["map_name"] or "?"),
-            "winner": str(r["winner"] or "?"),
-            "team1_score": int(r["team1_score"] or 0),
-            "team2_score": int(r["team2_score"] or 0),
-            "played_at": str(r["played_at"] or ""),
+            "player_name": str(r["player_name"] or "?"),
+            "steamid64": str(r["steamid64"] or ""),
+            "map_entries": int(r["map_entries"] or 0),
+            "total_kills": int(r["total_kills"] or 0),
+            "total_deaths": int(r["total_deaths"] or 0),
         }
         for r in rows
     ]
 
-    logger.log(f"[STATTRACKER] recent maps size={len(result)}", level="DEBUG")
-
+    logger.log(f"[STATTRACKER] player samples size={len(result)}", level="DEBUG")
     return result

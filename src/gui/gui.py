@@ -10,6 +10,7 @@ from gui.tabs.teambuilder_tab import build_team_tab
 from gui.tabs.map_roulette_tab import build_map_tab
 from gui.tabs.settings_tab import build_settings_tab
 from gui.tabs.leaderboard_tab import build_stat_overview_tab, refresh_stat_overview
+from gui.tabs.statistics_tab import build_statistics_tab, refresh_statistics_tab
 from gui.tabs.stattracker_tab import build_stattracker_tab, refresh_stattracker
 import services.logger as logger
 import os
@@ -30,8 +31,15 @@ MENU_TABS = [
     },
     {
         "category": "Statistics",
+        "id": "statistics",
+        "label": "Statistics",
+        "page_key": "statistics",
+        "on_select": "refresh_statistics",
+    },
+    {
+        "category": "Statistics",
         "id": "stat_tracker",
-        "label": "Stat-tracker",
+        "label": "Stat Tracker",
         "page_key": "stat_tracker",
         "on_select": "refresh_stattracker",
     },
@@ -99,12 +107,14 @@ class InternomatWindow(QMainWindow):
         self.team_page = QWidget()
         self.map_page = QWidget()
         self.stat_overview_page = QWidget()
+        self.statistics_page = QWidget()
         self.stat_tracker_page = QWidget()
 
         pages_by_key = {
             "team_builder": self.team_page,
             "map_roulette": self.map_page,
             "stat_overview": self.stat_overview_page,
+            "statistics": self.statistics_page,
             "stat_tracker": self.stat_tracker_page,
         }
 
@@ -112,6 +122,8 @@ class InternomatWindow(QMainWindow):
             callback = None
             if tab_def.get("on_select") == "refresh_stat_overview":
                 callback = lambda: refresh_stat_overview(self.stat_overview_page)
+            elif tab_def.get("on_select") == "refresh_statistics":
+                callback = lambda: refresh_statistics_tab(self.statistics_page)
             elif tab_def.get("on_select") == "refresh_stattracker":
                 callback = lambda: refresh_stattracker(self.stat_tracker_page)
 
@@ -135,6 +147,9 @@ class InternomatWindow(QMainWindow):
 
         build_stat_overview_tab(self.stat_overview_page)
         logger.log("[GUI] Stat Overview ready", level="INFO")
+
+        build_statistics_tab(self.statistics_page)
+        logger.log("[GUI] Statistics ready", level="INFO")
 
         build_stattracker_tab(self.stat_tracker_page)
         logger.log("[GUI] Stat Tracker ready", level="INFO")

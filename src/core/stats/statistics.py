@@ -1,0 +1,178 @@
+from pathlib import Path
+
+from db import statistics_db as statistics_repo
+from services import demo_cache
+import services.logger as logger
+
+
+_PARSED_PAYLOAD_CACHE = {}
+
+
+def _cache_dir():
+    base_dir = Path(__file__).resolve().parents[3]
+    return base_dir / "demos" / "parsed"
+
+
+def _safe_row_count(value):
+    if value is None:
+        return 0
+
+    if hasattr(value, "__len__"):
+        try:
+            return int(len(value))
+        except Exception:
+            return 0
+
+    return 0
+
+
+def _build_cache_manifest_map(cache_rows):
+    by_key = {}
+    for row in cache_rows:
+        match_id = str(row.get("match_id"))
+        map_number = int(row.get("map_number") or 0)
+        by_key[(match_id, map_number)] = row
+    return by_key
+
+
+def _manifest_fingerprint(manifest):
+    if not isinstance(manifest, dict):
+        return None, None
+    return manifest.get("filename"), manifest.get("updated_at")
+
+
+def _prune_payload_cache(valid_keys):
+    stale = [k for k in _PARSED_PAYLOAD_CACHE.keys() if k not in valid_keys]
+    for key in stale:
+        _PARSED_PAYLOAD_CACHE.pop(key, None)
+
+
+def _get_cached_payload(cache_dir, match_id, map_number, manifest):
+    key = (str(match_id), int(map_number))
+    fingerprint = _manifest_fingerprint(manifest)
+
+    cached = _PARSED_PAYLOAD_CACHE.get(key)
+    if cached and cached.get("fingerprint") == fingerprint:
+        return cached.get("payload"), True
+
+    payload = demo_cache.load_parsed_demo(cache_dir, match_id, map_number)
+    _PARSED_PAYLOAD_CACHE[key] = {
+        "fingerprint": fingerprint,
+        "payload": payload,
+    }
+    return payload, False
+
+
+def _extract_demo_metrics(parsed_payload):
+    if not isinstance(parsed_payload, dict):
+        return {
+            "demo_rounds": None,
+            "demo_kills": None,
+            "demo_damages": None,
+        }
+
+    return {
+        "demo_rounds": _safe_row_count(parsed_payload.get("rounds")),
+        "demo_kills": _safe_row_count(parsed_payload.get("kills")),
+        "demo_damages": _safe_row_count(parsed_payload.get("damages")),
+    }
+
+
+def get_overview():
+    row = statistics_repo.fetch_overview()
+    cache_rows = demo_cache.list_cached_demos(_cache_dir())
+
+    total_matches = int(row["total_matches"] or 0)
+    total_maps = int(row["total_maps"] or 0)
+    cached_maps = len(cache_rows)
+    cached_matches = len({str(r.get("match_id")) for r in cache_rows})
+    cache_map_coverage = (cached_maps / total_maps * 100.0) if total_maps else 0.0
+
+    result = {
+        "total_matches": total_matches,
+        "total_maps": total_maps,
+        "cached_maps": cached_maps,
+        "db_only_maps": max(total_maps - cached_maps, 0),
+        "cached_matches": cached_matches,
+        "cache_map_coverage": float(cache_map_coverage),
+        "unique_players": int(row["unique_players"] or 0),
+        "avg_map_total_score": float(row["avg_map_total_score"] or 0.0),
+    }
+
+    logger.log(
+        "[STATISTICS] "
+        f"overview matches={result['total_matches']} "
+        f"maps={result['total_maps']} cached_maps={result['cached_maps']} db_only_maps={result['db_only_maps']} "
+        f"cache_map_coverage={result['cache_map_coverage']:.2f}% "
+        f"players={result['unique_players']} avg_score={result['avg_map_total_score']}",
+        level="DEBUG",
+    )
+
+    return result
+
+
+def get_recent_maps(limit=10):
+    rows = statistics_repo.fetch_recent_maps(limit)
+    cache_dir = _cache_dir()
+    cache_rows = demo_cache.list_cached_demos(cache_dir)
+    cache_by_key = _build_cache_manifest_map(cache_rows)
+    _prune_payload_cache(set(cache_by_key.keys()))
+
+    cache_loaded = 0
+    cache_reused = 0
+
+    result = []
+    for r in rows:
+        match_id = str(r["match_id"])
+        map_number = int(r["map_number"] or 0)
+        key = (match_id, map_number)
+        manifest = cache_by_key.get(key)
+
+        demo_cached = manifest is not None
+        demo_metrics = {
+            "demo_rounds": None,
+            "demo_kills": None,
+            "demo_damages": None,
+        }
+
+        if demo_cached:
+            parsed_payload, reused = _get_cached_payload(cache_dir, match_id, map_number, manifest)
+            if reused:
+                cache_reused += 1
+            else:
+                cache_loaded += 1
+            demo_metrics = _extract_demo_metrics(parsed_payload)
+
+        result.append(
+            {
+                "match_id": match_id,
+                "map_number": map_number,
+                "map_name": str(r["map_name"] or "?"),
+                "winner": str(r["winner"] or "?"),
+                "team1_score": int(r["team1_score"] or 0),
+                "team2_score": int(r["team2_score"] or 0),
+                "played_at": str(r["played_at"] or ""),
+                "db_has_data": True,
+                "db_demo_flag": int(r["has_demo"] or 0) == 1,
+                "cached_demo": demo_cached,
+                "demo_rounds": (
+                    demo_metrics["demo_rounds"]
+                    if demo_metrics["demo_rounds"] is not None
+                    else (int(r["db_rounds"]) if r["db_rounds"] is not None else None)
+                ),
+                "demo_kills": (
+                    demo_metrics["demo_kills"]
+                    if demo_metrics["demo_kills"] is not None
+                    else (int(r["db_kills"]) if r["db_kills"] is not None else None)
+                ),
+                "demo_damages": demo_metrics["demo_damages"],
+            }
+        )
+
+    logger.log(f"[STATISTICS] recent maps size={len(result)}", level="DEBUG")
+    logger.log(
+        f"[STATISTICS] cache payloads loaded={cache_loaded} reused={cache_reused}",
+        level="DEBUG",
+    )
+
+    return result
