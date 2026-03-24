@@ -16,6 +16,9 @@ from db.demo_db import (
     resolve_map_number,
 )
 from db.matches_db import set_match_has_demo
+from db.matches_db import get_match_map_players
+from db.players_db import upsert_players_from_match_stats
+from core.settings.settings import settings
 from dotenv import load_dotenv
 from services.IO_manager import IOManager
 from services import demo_cache
@@ -771,6 +774,28 @@ class DemoScrapperIntegration:
                 tick_count = header.get("tick_count", "?")
                 logger.log_info(f"[M{match_id}|Map{map_number}] {map_name:15} | Ticks: {tick_count}")
 
+    def import_players_from_parsed_cache(self):
+        rows = demo_cache.list_existing_cached_demos(self.parsed_demo_dir)
+        import_rows = []
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+
+            match_id = row.get("match_id")
+            map_number = row.get("map_number")
+            if match_id is None or map_number is None:
+                continue
+
+            import_rows.extend(get_match_map_players(match_id=match_id, map_number=map_number))
+
+        imported = upsert_players_from_match_stats(import_rows)
+        self._log_stage(
+            "PLAYER_IMPORT",
+            f"Imported/updated players from parsed cache entries={len(rows)} players={imported}",
+        )
+        return imported
+
     def _run_pipeline(self):
         self._log_stage("PIPELINE", "Start")
         self._emit_progress(0, "Pipeline started", stage="pipeline")
@@ -792,12 +817,18 @@ class DemoScrapperIntegration:
         from db.matches_db import set_demo_flags_by_match_ids
         set_demo_flags_by_match_ids(cached_matches)
 
+        imported_players = 0
+        if settings.auto_import_match_players:
+            self._emit_progress(99, "Importing players from parsed cache", stage="pipeline")
+            imported_players = self.import_players_from_parsed_cache()
+
         self._log_stage(
             "PIPELINE",
             "Summary "
             f"ftp(downloaded={ftp_stats['downloaded']} skipped_local={ftp_stats['skipped']} skipped_parsed={ftp_stats.get('skipped_parsed', 0)} ignored={ftp_stats['ignored']}) "
             f"matcher(loaded={matcher_stats['loaded']} failed={matcher_stats['failed']} skipped_parsed={matcher_stats['skipped_parsed']}) "
-            f"parser(parsed_cached={parser_stats['parsed_cached']} rejected={parser_stats['rejected']} failed={parser_stats['failed']})",
+            f"parser(parsed_cached={parser_stats['parsed_cached']} rejected={parser_stats['rejected']} failed={parser_stats['failed']}) "
+            f"players(imported={imported_players})",
         )
         self.print_compact_demo_headers(demo_data)
         self._log_stage("PIPELINE", "Done")

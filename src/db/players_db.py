@@ -124,6 +124,46 @@ def upsert_player(player, mode="full", conn=None):
             conn.close()
     logger.log(f"[DB] Upsert player {logger.redact(player['steam64_id'])}", level="DEBUG")
 
+
+def upsert_players_from_match_stats(rows, conn=None):
+    own = conn is None
+    conn = conn or get_conn()
+
+    imported = 0
+    seen = set()
+
+    try:
+        for row in rows or []:
+            steam64_id = str(
+                (row or {}).get("steam64_id")
+                or (row or {}).get("steamid64")
+                or ""
+            ).strip()
+            if not steam64_id or steam64_id in seen:
+                continue
+
+            seen.add(steam64_id)
+            name = str((row or {}).get("name") or steam64_id)
+
+            upsert_player(
+                {
+                    "steam64_id": steam64_id,
+                    "name": name,
+                },
+                mode="import",
+                conn=conn,
+            )
+            imported += 1
+
+        if own:
+            conn.commit()
+    finally:
+        if own:
+            conn.close()
+
+    logger.log(f"[DB] Imported/updated players from match stats count={imported}", level="INFO")
+    return imported
+
 def get_players():
     with get_conn() as conn:
         return conn.execute("""

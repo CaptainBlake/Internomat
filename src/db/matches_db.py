@@ -223,6 +223,41 @@ def get_match_map_steamids(match_id, map_number, conn=None):
     return {str(row["steamid64"]) for row in rows}
 
 
+def get_match_map_players(match_id, map_number, conn=None):
+    own_conn = conn is None
+    conn = conn or get_conn()
+
+    try:
+        rows = conn.execute(
+            """
+            SELECT steamid64, name
+            FROM match_player_stats
+            WHERE match_id = ?
+              AND map_number = ?
+              AND steamid64 IS NOT NULL
+              AND steamid64 != ''
+            """,
+            (str(match_id), int(map_number)),
+        ).fetchall()
+    finally:
+        if own_conn:
+            conn.close()
+
+    players = []
+    for row in rows:
+        steam64_id = str(row["steamid64"]).strip()
+        if not steam64_id:
+            continue
+        players.append(
+            {
+                "steam64_id": steam64_id,
+                "name": str(row["name"] or steam64_id),
+            }
+        )
+
+    return players
+
+
 def get_all_matches_with_maps(conn=None):
     own_conn = conn is None
     conn = conn or get_conn()

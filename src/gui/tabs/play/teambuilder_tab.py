@@ -249,7 +249,7 @@ def _fill_team_table(table, team):
     return total
 
 
-def build_team_tab(parent):
+def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None):
     dispatcher = UiDispatcher(parent)
 
     layout = QVBoxLayout(parent)
@@ -466,6 +466,10 @@ def build_team_tab(parent):
         update_button.setEnabled(True)
         update_button.setText("Update")
         refresh_players()
+        if callable(on_players_data_updated):
+            on_players_data_updated()
+        if callable(on_data_updated):
+            on_data_updated()
         logger.log("[UPDATE] Finished", level="INFO")
 
     def on_error(e):

@@ -113,7 +113,7 @@ class DemoSyncProgressDialog(QDialog):
             self.file_label.setText("Current file: -")
 
 # SETTINGS TAB
-def build_settings_tab(parent, on_players_updated=None, on_data_updated=None):
+def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on_players_data_updated=None):
 
     section_order = ["Debug", "Settings", "Database", "MatchZy", "Demos"]
 
@@ -552,6 +552,15 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None):
         "matchzy_database"
     ))
 
+    checkbox_auto_import_match_players = QCheckBox()
+    checkbox_auto_import_match_players.setChecked(settings.auto_import_match_players)
+    matchzy_layout.addLayout(create_setting_row(
+        "Import match players:",
+        checkbox_auto_import_match_players,
+        "auto_import_match_players",
+        "Add players from MatchZy stats (steamid/name) into the team builder player pool during sync."
+    ))
+
     # DEMOS SETTINGS
     demos_frame, demos_layout = create_section("MatchZy Demos")
 
@@ -907,6 +916,12 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None):
 
         if callable(on_data_updated):
             on_data_updated()
+
+        if settings.auto_import_match_players and callable(on_players_updated):
+            logger.log("[UI] Refresh Team Builder player pool after sync import", level="DEBUG")
+            on_players_updated()
+            if callable(on_players_data_updated):
+                on_players_data_updated()
 
     def on_demos_sync_error(e):
         sync_demos_button.setEnabled(True)

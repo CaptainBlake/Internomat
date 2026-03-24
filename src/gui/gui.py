@@ -148,7 +148,21 @@ class InternomatWindow(QMainWindow):
 
         logger.log("[GUI] Tabs created", level="DEBUG")
 
-        refresh_players = build_team_tab(self.team_page)
+        def on_players_data_updated():
+            logger.log("[UI] Player data update event received", level="DEBUG")
+            on_stat_overview_data_updated(self.stat_overview_page)
+
+        def on_data_updated():
+            logger.log("[UI] Data update event received", level="DEBUG")
+            on_statistics_data_updated(self.statistics_page)
+            on_stat_overview_data_updated(self.stat_overview_page)
+            on_stattracker_data_updated(self.stat_tracker_page)
+
+        refresh_players = build_team_tab(
+            self.team_page,
+            on_data_updated=on_data_updated,
+            on_players_data_updated=on_players_data_updated,
+        )
         logger.log("[GUI] Team Builder ready", level="INFO")
 
         build_map_tab(self.map_page)
@@ -163,16 +177,11 @@ class InternomatWindow(QMainWindow):
         build_stattracker_tab(self.stat_tracker_page)
         logger.log("[GUI] Stat Tracker ready", level="INFO")
 
-        def on_data_updated():
-            logger.log("[UI] Data update event received", level="DEBUG")
-            on_statistics_data_updated(self.statistics_page)
-            on_stat_overview_data_updated(self.stat_overview_page)
-            on_stattracker_data_updated(self.stat_tracker_page)
-
         build_settings_tab(
             self.settings_page,
             on_players_updated=refresh_players,
             on_data_updated=on_data_updated,
+            on_players_data_updated=on_players_data_updated,
         )
         logger.log("[GUI] Settings ready", level="INFO")
 

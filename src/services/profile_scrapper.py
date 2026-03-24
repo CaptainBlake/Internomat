@@ -34,6 +34,15 @@ _driver = None
 _driver_lock = Lock()
 
 
+def _normalize_steam64_id(value):
+    steam_id = str(value or "").strip()
+    if not steam_id:
+        raise ValueError("Missing Steam ID")
+    if not steam_id.isdigit():
+        raise ValueError(f"Steam ID is not numeric: {steam_id}")
+    return steam_id
+
+
 # STEAM PARSING
 
 def get_player_identifier(url):
@@ -92,6 +101,7 @@ def get_leetify_player(steam_id, auto_close=False):
     if not LEETIFY_API:
         raise RuntimeError("Missing LEETIFY_API in .env file")
 
+    steam_id = _normalize_steam64_id(steam_id)
     redacted = logger.redact(steam_id)
     logger.log(f"[FETCH] Leetify API start {redacted}", level="DEBUG")
 
@@ -100,7 +110,7 @@ def get_leetify_player(steam_id, auto_close=False):
         params = {"steam64_id": steam_id}
         headers = {"Authorization": f"Bearer {LEETIFY_API}"}
 
-        r = requests.get(url, params=params, headers=headers, timeout=5)
+        r = requests.get(url, params=params, headers=headers, timeout=10)
 
         if r.status_code == 404:
             logger.log(f"[FETCH_FALLBACK] API 404 -> fallback {redacted}", level="INFO")
@@ -175,7 +185,7 @@ def _fetch_leetify_profile_html(steam_id):
         driver.get(url)
 
         try:
-            WebDriverWait(driver, 2).until(
+            WebDriverWait(driver, 8).until(
                 EC.presence_of_element_located((By.ID, "rank-summary"))
             )
         except:
@@ -208,13 +218,21 @@ def _get_leetify_profile_fallback(steam_id):
     redacted = logger.redact(steam_id)
     logger.log(f"[FETCH_FALLBACK] Start fallback {redacted}", level="INFO")
 
-    html = _fetch_leetify_profile_html(steam_id)
+    player = None
+    for attempt in range(1, 3):
+        html = _fetch_leetify_profile_html(steam_id)
 
-    try:
-        player = _parse_leetify_profile(html, steam_id)
-    except Exception as e:
-        logger.log(f"[FETCH_WARNING] Parse failed {redacted}: {e}", level="DEBUG")
-        player = None
+        try:
+            player = _parse_leetify_profile(html, steam_id)
+        except Exception as e:
+            logger.log(f"[FETCH_WARNING] Parse failed {redacted} attempt={attempt}: {e}", level="DEBUG")
+            player = None
+
+        if player:
+            break
+
+        if attempt < 2:
+            time.sleep(1.0)
 
     if not player:
         logger.log(f"[FETCH_FALLBACK] Default rating used {redacted}", level="INFO")

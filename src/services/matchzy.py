@@ -2,6 +2,7 @@ import mysql.connector
 from mysql.connector import Error
 
 import db.matches_db as match_db
+import db.players_db as players_db
 import services.logger as logger
 from core.settings.settings import settings
 
@@ -109,6 +110,8 @@ class MatchZy:
 
             total_maps = 0
             total_players = 0
+            imported_players = 0
+            players_for_pool_import = []
 
             for map_row in maps:
 
@@ -166,8 +169,7 @@ class MatchZy:
 
                 key = (matchid, mapnumber)
                 for p in players_by_match_map.get(key, []):
-
-                    match_db.insert_match_player_stats({
+                    player_payload = {
                         "steamid64": str(p[2]),
                         "match_id": matchid,
                         "map_number": mapnumber,
@@ -204,12 +206,25 @@ class MatchZy:
                         "head_shot_kills": self._to_int(p[33]),
                         "cash_earned": self._to_int(p[34]),
                         "enemies_flashed": self._to_int(p[35]),
-                    })
+                    }
+
+                    match_db.insert_match_player_stats(player_payload)
+
+                    if settings.auto_import_match_players:
+                        players_for_pool_import.append(
+                            {
+                                "steam64_id": player_payload["steamid64"],
+                                "name": player_payload["name"],
+                            }
+                        )
 
                     total_players += 1
 
+            if settings.auto_import_match_players and players_for_pool_import:
+                imported_players = players_db.upsert_players_from_match_stats(players_for_pool_import)
+
             logger.log(
-                f"[MATCHZY] Sync done maps={total_maps} players={total_players}",
+                f"[MATCHZY] Sync done maps={total_maps} players={total_players} imported_pool={imported_players}",
                 level="INFO"
             )
         finally:
