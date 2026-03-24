@@ -144,9 +144,32 @@ def match_exists(match_id):
     return exists
 
 
-def get_all_matches_with_maps(conn=None, db_file=None):
+def get_match_map_steamids(match_id, map_number, conn=None):
     own_conn = conn is None
-    conn = conn or get_conn(db_file=db_file)
+    conn = conn or get_conn()
+
+    try:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT steamid64
+            FROM match_player_stats
+            WHERE match_id = ?
+              AND map_number = ?
+              AND steamid64 IS NOT NULL
+              AND steamid64 != ''
+            """,
+            (str(match_id), int(map_number)),
+        ).fetchall()
+    finally:
+        if own_conn:
+            conn.close()
+
+    return {str(row["steamid64"]) for row in rows}
+
+
+def get_all_matches_with_maps(conn=None):
+    own_conn = conn is None
+    conn = conn or get_conn()
 
     try:
         rows = conn.execute("""

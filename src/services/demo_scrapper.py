@@ -1,6 +1,7 @@
 #/src/services/demo_scrapper.py
 
 import os
+import math
 from ftplib import FTP
 from pathlib import Path
 from threading import Lock
@@ -8,7 +9,12 @@ from threading import Lock
 import pandas as pd
 import polars as pl
 from awpy.demo import Demo
-from db.matches_db import get_all_matches_with_maps
+from db.connection_db import get_conn
+from db.demo_db import (
+    get_expected_demo_players,
+    load_demo_match_catalog,
+    resolve_map_number,
+)
 from dotenv import load_dotenv
 from services.IO_manager import IOManager
 from services import executor
@@ -53,10 +59,11 @@ class DemoScrapperIntegration:
 
         assert self.ftp_host and self.ftp_user and self.ftp_password, "Missing FTP env vars"
 
-        self.matches = get_all_matches_with_maps(db_file=self.db_file)
-        self.valid_match_ids = self.build_match_id_set(self.matches)
+        with get_conn(db_file=self.db_file) as conn:
+            self.match_catalog = load_demo_match_catalog(conn=conn)
+        self.valid_match_ids = set(self.match_catalog.keys())
 
-        logger.log_info(f"Loaded {len(self.matches)} matches")
+        logger.log_info(f"Loaded {len(self.match_catalog)} matches")
         logger.log_debug(f"Valid match_ids: {sorted(self.valid_match_ids)}")
 
     # --- SHARED UTILS ---
@@ -68,10 +75,6 @@ class DemoScrapperIntegration:
             return None
 
     @staticmethod
-    def build_match_id_set(matches):
-        return {m["match_id"] for m in matches}
-
-    @staticmethod
     def extract_parts(filename):
         # 2026-03-20_22-48-10_4_cs_office_team_...vs_...
         parts = filename.replace(".dem", "").split("_")
@@ -79,22 +82,151 @@ class DemoScrapperIntegration:
         try:
             date = parts[0]
             time = parts[1]
-            match_id = int(parts[2])
+            match_id = str(parts[2])
             map_name = f"{parts[3]}_{parts[4]}"
             return date, time, match_id, map_name
         except Exception:
             return None, None, None, None
 
     @staticmethod
-    def get_map_number(match, map_name):
-        for match_map in match["maps"]:
-            if match_map["map_name"] == map_name:
-                return match_map["map_number"]
-        return None
+    def _to_steamid64_string(value):
+        if value is None:
+            return None
+
+        if isinstance(value, bool):
+            return None
+
+        try:
+            if isinstance(value, int):
+                number = value
+            elif isinstance(value, float):
+                if math.isnan(value) or math.isinf(value):
+                    return None
+                number = int(value)
+            else:
+                text = str(value).strip()
+                if not text or text.lower() in {"nan", "none"}:
+                    return None
+
+                if text.endswith(".0"):
+                    text = text[:-2]
+
+                if not text.isdigit():
+                    return None
+
+                number = int(text)
+        except Exception:
+            return None
+
+        # Ignore non-player ids like 0 or tiny integers.
+        if number < 10_000_000_000_000_000:
+            return None
+
+        return str(number)
 
     @staticmethod
-    def build_match_lookup(matches):
-        return {m["match_id"]: m for m in matches}
+    def _steamid_like_column(col_name):
+        normalized = str(col_name).lower().replace("-", "_")
+        return "steamid" in normalized or "steam_id" in normalized
+
+    @staticmethod
+    def _get_table_columns(table):
+        if isinstance(table, pd.DataFrame):
+            return [str(c) for c in table.columns]
+        if isinstance(table, pl.DataFrame):
+            return [str(c) for c in table.columns]
+        return []
+
+    def extract_demo_steamids(self, data):
+        steamids = set()
+
+        table_candidates = [
+            data.get("player_round_totals"),
+            data.get("kills"),
+            data.get("damages"),
+            data.get("shots"),
+            data.get("grenades"),
+            data.get("footsteps"),
+        ]
+
+        scanned_columns = []
+
+        for table in table_candidates:
+            if isinstance(table, pd.DataFrame):
+                if table.empty:
+                    continue
+
+                for col in table.columns:
+                    col_name = str(col)
+                    scanned_columns.append(col_name)
+                    if not self._steamid_like_column(col_name):
+                        continue
+
+                    for value in table[col].dropna().tolist():
+                        sid = self._to_steamid64_string(value)
+                        if sid:
+                            steamids.add(sid)
+
+                continue
+
+            if isinstance(table, pl.DataFrame):
+                if table.height == 0:
+                    continue
+
+                for col in table.columns:
+                    col_name = str(col)
+                    scanned_columns.append(col_name)
+                    if not self._steamid_like_column(col_name):
+                        continue
+
+                    for value in table.get_column(col).drop_nulls().to_list():
+                        sid = self._to_steamid64_string(value)
+                        if sid:
+                            steamids.add(sid)
+
+        if not steamids and scanned_columns:
+            logger.log_debug(f"[Validator] Scanned columns without steamid hit: {sorted(set(scanned_columns))}")
+
+        return steamids
+
+    def validate_demo_players(self, match_id, map_number, data, conn=None):
+        expected_players = get_expected_demo_players(
+            match_id=match_id,
+            map_number=map_number,
+            conn=conn,
+        )
+
+        if not expected_players:
+            logger.log_warning(
+                f"[Validator] No expected players in DB for match={match_id}, map={map_number}; accepting demo"
+            )
+            return True
+
+        parsed_players = self.extract_demo_steamids(data)
+
+        if not parsed_players:
+            logger.log_warning(
+                f"[Validator] No parsed steamids for match={match_id}, map={map_number}; rejecting demo"
+            )
+            return False
+
+        is_valid = expected_players == parsed_players
+
+        if not is_valid:
+            missing = sorted(expected_players - parsed_players)
+            extra = sorted(parsed_players - expected_players)
+            logger.log_debug(
+                "[Validator] "
+                f"match={match_id} map={map_number} missing={missing} extra={extra}"
+            )
+
+        logger.log_info(
+            "[Validator] "
+            f"match={match_id} map={map_number} "
+            f"expected={len(expected_players)} parsed={len(parsed_players)} valid={is_valid}"
+        )
+
+        return is_valid
 
     @staticmethod
     def extract_ids_from_normalized(filename):
@@ -132,8 +264,6 @@ class DemoScrapperIntegration:
 
             downloaded, skipped, ignored = 0, 0, 0
 
-            match_lookup = self.build_match_lookup(self.matches)
-
             logger.log_info(f"[FTP] Found {len(files)} files")
 
             for file in files:
@@ -142,7 +272,7 @@ class DemoScrapperIntegration:
 
                 date, time, match_id, map_name = self.extract_parts(file)
 
-                if match_id is None or match_id <= 0:
+                if match_id is None:
                     ignored += 1
                     continue
 
@@ -150,8 +280,14 @@ class DemoScrapperIntegration:
                     ignored += 1
                     continue
 
-                match = match_lookup[match_id]
-                map_number = self.get_map_number(match, map_name)
+                map_number = resolve_map_number(self.match_catalog, match_id, map_name)
+
+                if map_number is None:
+                    ignored += 1
+                    logger.log_debug(
+                        f"[IGNORE] {file} map_name={map_name} does not exist for match={match_id}"
+                    )
+                    continue
 
                 normalized_name = f"{date}_{time}_match_{match_id}_map_{map_number}_{map_name}.dem"
                 local_file = self.demo_dir / normalized_name
@@ -318,29 +454,40 @@ class DemoScrapperIntegration:
     def build_demo_data(self, matched):
         demo_dict = {}
         failed = 0
+        rejected = 0
 
         logger.log_info("[Parser] Building structured datasets...")
 
-        for entry in matched:
-            match_id = entry["match_id"]
-            map_number = entry["map_number"]
-            demo = entry["demo"]
-            filename = entry["file"].name
+        with get_conn(db_file=self.db_file) as conn:
+            for entry in matched:
+                match_id = entry["match_id"]
+                map_number = entry["map_number"]
+                demo = entry["demo"]
+                filename = entry["file"].name
 
-            key = (match_id, map_number)
+                key = (match_id, map_number)
 
-            logger.log_info(f"[PARSE] {filename} -> match={match_id}, map={map_number}")
+                logger.log_info(f"[PARSE] {filename} -> match={match_id}, map={map_number}")
 
-            try:
-                data = self.parse_demo_full(demo)
-                demo_dict[key] = data
+                try:
+                    data = self.parse_demo_full(demo)
 
-            except Exception as e:
-                logger.log_error(f"[FAILED] {filename}: {e}")
-                failed += 1
+                    if not self.validate_demo_players(match_id, map_number, data, conn=conn):
+                        logger.log_warning(
+                            f"[REJECTED] {filename} failed player validation for match={match_id}, map={map_number}"
+                        )
+                        rejected += 1
+                        continue
+
+                    demo_dict[key] = data
+
+                except Exception as e:
+                    logger.log_error(f"[FAILED] {filename}: {e}")
+                    failed += 1
 
         logger.log_info("[Parser] Done")
         logger.log_info(f"Parsed: {len(demo_dict)}")
+        logger.log_info(f"Rejected: {rejected}")
         logger.log_info(f"Failed: {failed}")
 
         return demo_dict

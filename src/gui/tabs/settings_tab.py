@@ -44,6 +44,8 @@ LOG_WINDOW_INSTANCE = None
 # SETTINGS TAB
 def build_settings_tab(parent, on_players_updated=None):
 
+    section_order = ["Debug", "Settings", "Database", "MatchZy", "Demos"]
+
     root_layout = QHBoxLayout(parent)
     root_layout.setContentsMargins(20, 20, 20, 20)
     root_layout.setSpacing(20)
@@ -51,7 +53,7 @@ def build_settings_tab(parent, on_players_updated=None):
     # SIDEBAR
     sidebar = QListWidget()
     sidebar.setFixedWidth(170)
-    sidebar.addItems(["Debug", "Database", "Settings", "MatchZy", "Demos"])
+    sidebar.addItems(section_order)
     sidebar.setStyleSheet("""
         QListWidget {
             background: #FFFFFF;
@@ -75,6 +77,8 @@ def build_settings_tab(parent, on_players_updated=None):
         }
     """)
     root_layout.addWidget(sidebar)
+
+    section_frames = []
 
     # SCROLL AREA
     scroll = QScrollArea()
@@ -164,7 +168,7 @@ def build_settings_tab(parent, on_players_updated=None):
                     grid.addWidget(widget, r, c)
 
         section_layout.addLayout(grid)
-        layout.addWidget(frame)
+        return frame
 
     def create_setting_row(label_text, widget, attr_name, tooltip=None):
         row = QHBoxLayout()
@@ -271,28 +275,21 @@ def build_settings_tab(parent, on_players_updated=None):
     import_players_button = small_button("Import Playerlist")
     export_players_button = small_button("Export Playerlist")
 
-    import_db_button = small_button("Import Database")
-    export_db_button = small_button("Export Database")
-
     sync_matchzy_button = small_button("Sync with Matchzy")
     sync_demos_button = small_button("Sync demos")
-
-    # disable DB buttons for now
-    import_db_button.setEnabled(False)
-    export_db_button.setEnabled(False)
 
 
     # SECTIONS
 
     # DEBUG
-    create_grid_section("Debug", [
+    debug_frame = create_grid_section("Debug", [
         [open_logs_button, reload_ui_button]
     ], columns=2)
 
     # DATABASE
-    create_grid_section("Database", [
-        [import_players_button, import_db_button, None],
-        [export_players_button, export_db_button, None]
+    database_frame = create_grid_section("Database", [
+        [import_players_button, sync_matchzy_button, None],
+        [export_players_button, sync_demos_button, None]
     ])
 
     # SETTINGS
@@ -342,9 +339,6 @@ def build_settings_tab(parent, on_players_updated=None):
         "Fallback rating\nRecommended: 10000"
     ))
 
-    layout.addWidget(settings_frame)
-    layout.addStretch()
-
     # allow uneven teams
     checkbox_uneven = QCheckBox()
     checkbox_uneven.setChecked(settings.allow_uneven_teams)
@@ -359,10 +353,7 @@ def build_settings_tab(parent, on_players_updated=None):
     # MATCHZY SETTINGS
     matchzy_frame, matchzy_layout = create_section("MatchZy Database")
 
-    info_label = QLabel(
-        "Requires MatchZy to be configured with a MySQL database.\n"
-        "See MatchZy documentation for setup:\nhttps://shobhit-pathak.github.io/MatchZy/database_stats/#using-mysql-database-with-matchzy"
-    )
+    info_label = QLabel("Requires MatchZy to be configured with a MySQL database.")
     info_label.setWordWrap(True)
     info_label.setStyleSheet("""
         QLabel {
@@ -441,13 +432,8 @@ def build_settings_tab(parent, on_players_updated=None):
         "matchzy_database"
     ))
 
-    matchzy_layout.addSpacing(10)
-    matchzy_layout.addWidget(sync_matchzy_button)
-    
-    layout.addWidget(matchzy_frame)
-
     # DEMOS SETTINGS
-    demos_frame, demos_layout = create_section("Demos")
+    demos_frame, demos_layout = create_section("MatchZy Demos")
 
     input_demo_ftp_host = text_input(settings.demo_ftp_host)
     input_demo_ftp_host.setPlaceholderText("IP/domain")
@@ -492,10 +478,30 @@ def build_settings_tab(parent, on_players_updated=None):
         "demo_remote_path"
     ))
 
-    demos_layout.addSpacing(10)
-    demos_layout.addWidget(sync_demos_button)
+    sections_by_key = {
+        "Debug": debug_frame,
+        "Database": database_frame,
+        "Settings": settings_frame,
+        "MatchZy": matchzy_frame,
+        "Demos": demos_frame,
+    }
 
-    layout.addWidget(demos_frame)
+    for section_key in section_order:
+        frame = sections_by_key.get(section_key)
+        if frame is None:
+            continue
+
+        layout.addWidget(frame)
+        section_frames.append(frame)
+
+    layout.addStretch()
+
+    def go_to_section(index):
+        if index < 0 or index >= len(section_frames):
+            return
+
+        target = section_frames[index]
+        scroll.ensureWidgetVisible(target, 0, 16)
     
     # ACTIONS
 
@@ -599,10 +605,13 @@ def build_settings_tab(parent, on_players_updated=None):
     export_players_button.clicked.connect(export_players)
     sync_matchzy_button.clicked.connect(sync_matchzy_action)
     sync_demos_button.clicked.connect(sync_demos_action)
+    sidebar.currentRowChanged.connect(go_to_section)
     dispatcher.sync_finished.connect(on_sync_finished)
     dispatcher.sync_error.connect(on_sync_error)
     dispatcher.demos_sync_finished.connect(on_demos_sync_finished)
     dispatcher.demos_sync_error.connect(on_demos_sync_error)
+
+    sidebar.setCurrentRow(0)
 
 
         
