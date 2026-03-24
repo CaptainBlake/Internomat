@@ -1,4 +1,5 @@
 import pickle
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -17,6 +18,11 @@ _INDEX_NAME = "index.json"
 def _default_cache_dir():
     base_dir = Path(__file__).resolve().parents[2]
     return base_dir / "demos" / "parsed"
+
+
+def _default_demo_dir():
+    base_dir = Path(__file__).resolve().parents[2]
+    return base_dir / "demos"
 
 
 def _to_path(path_value):
@@ -79,6 +85,39 @@ def reconcile_db_demo_flags_default():
     set_demo_flags_by_match_ids(ids)
     logger.log_info(f"[CACHE] Reconciled DB demo flags from cache entries={len(ids)}")
     return len(ids)
+
+
+def clear_cache_default():
+    """Delete all content under the demos directory."""
+    return clear_cache(_default_demo_dir())
+
+
+def clear_cache(cache_dir):
+    """Delete all files and folders inside the given directory."""
+    cache_dir = _to_path(cache_dir)
+
+    if not cache_dir.exists():
+        logger.log_info(f"[CACHE] Cache directory does not exist: {cache_dir}")
+        return 0
+
+    try:
+        deleted_count = 0
+
+        for item in cache_dir.iterdir():
+            try:
+                if item.is_dir():
+                    shutil.rmtree(item)
+                else:
+                    item.unlink()
+                deleted_count += 1
+            except Exception as e:
+                logger.log_warning(f"[CACHE] Failed to delete {item}: {e}")
+
+        logger.log_info(f"[CACHE] Cleared cache: deleted {deleted_count} files")
+        return deleted_count
+    except Exception as e:
+        logger.log_error(f"[CACHE] Error clearing cache: {e}")
+        return 0
 
 
 def _iter_rows(table):

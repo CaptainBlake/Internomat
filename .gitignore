@@ -41,3 +41,5 @@ internomat.db-wal
 *.pfx
 settings.json
 demos/parsed/index.json
+backup_settings.json
+internomat_settings.json

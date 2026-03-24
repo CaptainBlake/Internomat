@@ -131,17 +131,7 @@ def build_round_timeline(summary):
         f"[TIMELINE_DEBUG] match={match_id} map={map_number} "
         f"team1={team1_name or '?'} team2={team2_name or '?'} rounds={len(timeline_rows)}"
     )
-    for entry in timeline_rows:
-        logger.log_debug(
-            "[TIMELINE_DEBUG] "
-            f"R{entry['round_no']}: "
-            f"{team1_name or '?'}={entry['team1_side']} "
-            f"{team2_name or '?'}={entry['team2_side']} "
-            f"winner={entry['winner_team_name'] or '?'} "
-            f"winner_side={entry['winner_side'] or '?'} "
-            f"winner_side_raw={entry.get('winner_side_raw') or '?'}"
-        )
-
+    
     return {
         "rounds": timeline_rows,
         "team1_name": team1_name,

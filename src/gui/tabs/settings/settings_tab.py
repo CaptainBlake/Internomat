@@ -1,4 +1,5 @@
 import threading
+import json
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QDialog,
     QProgressBar,
+    QMessageBox,
 )
 from PySide6.QtGui import QFont
 from core.settings.settings import settings
@@ -32,11 +34,13 @@ from db.IO_db import export_players as db_export_players
 from db.IO_db import import_players as db_import_players
 from services.matchzy import sync
 from services.demo_scrapper import DemoScrapperIntegration
+from services import demo_cache
 from PySide6.QtCore import QObject, Signal
 
 class SettingsDispatcher(QObject):
     sync_finished = Signal()
     sync_error = Signal(object)
+    sync_all_error = Signal(object)
     demos_sync_finished = Signal(object)
     demos_sync_error = Signal(object)
     demos_sync_progress = Signal(object)
@@ -222,6 +226,32 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None):
         """)
         return btn
 
+    def danger_button(text):
+        btn = QPushButton(text)
+        btn.setFixedHeight(32)
+        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn.setStyleSheet("""
+            QPushButton {
+                background-color: #C73A3A;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+                padding: 6px 12px;
+                font-weight: 700;
+            }
+            QPushButton:hover {
+                background-color: #D64B4B;
+            }
+            QPushButton:pressed {
+                background-color: #A82F2F;
+            }
+            QPushButton:disabled {
+                background-color: #E6B8B8;
+                color: #F8F3F3;
+            }
+        """)
+        return btn
+
     def create_grid_section(title, rows, columns=3):
         frame, section_layout = create_section(title)
 
@@ -334,21 +364,28 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None):
     # BUTTONS
 
     open_logs_button = small_button("Open Logs")
-    reload_ui_button = small_button("Reload UI")
 
     import_players_button = small_button("Import Playerlist")
     export_players_button = small_button("Export Playerlist")
+    import_settings_button = small_button("Import Settings")
+    export_settings_button = small_button("Export Settings")
     save_settings_button = small_button("Save Settings")
 
     sync_matchzy_button = small_button("Sync with Matchzy")
     sync_demos_button = small_button("Sync demos")
+    sync_all_button = small_button("Sync")
+    clear_cache_button = danger_button("Clear Cache")
 
     for btn in [
         import_players_button,
         export_players_button,
+        import_settings_button,
+        export_settings_button,
         save_settings_button,
         sync_matchzy_button,
         sync_demos_button,
+        sync_all_button,
+        clear_cache_button,
     ]:
         btn.setFocusPolicy(Qt.NoFocus)
 
@@ -359,13 +396,14 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None):
 
     # DEBUG
     debug_frame = create_grid_section("Debug", [
-        [open_logs_button, reload_ui_button]
-    ], columns=2)
+        [open_logs_button, sync_matchzy_button, sync_demos_button]
+    ], columns=3)
 
     # DATABASE
     database_frame = create_grid_section("Database", [
-        [import_players_button, sync_matchzy_button, save_settings_button],
-        [export_players_button, sync_demos_button, None]
+        [import_players_button, import_settings_button],
+        [export_players_button, export_settings_button],
+        [sync_all_button, clear_cache_button],
     ])
 
     # SETTINGS
@@ -425,6 +463,12 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None):
         "allow_uneven_teams",
         "Allow uneven teams (e.g. 3 vs 2)"
     ))
+
+    settings_button_row = QHBoxLayout()
+    settings_button_row.setSpacing(10)
+    settings_button_row.addWidget(save_settings_button)
+    settings_button_row.addStretch()
+    settings_layout.addLayout(settings_button_row)
 
     # MATCHZY SETTINGS
     matchzy_frame, matchzy_layout = create_section("MatchZy Database")
@@ -589,11 +633,6 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None):
         LOG_WINDOW_INSTANCE.raise_()
         LOG_WINDOW_INSTANCE.activateWindow()
 
-    def reload_ui():
-        logger.log_user_action("Reload UI")
-        from gui.gui import restart_window
-        restart_window()
-
     def import_players():
         path, _ = QFileDialog.getOpenFileName(parent, "Import Players", "", "JSON Files (*.json)")
         if path:
@@ -605,6 +644,77 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None):
         path, _ = QFileDialog.getSaveFileName(parent, "Export Players", "players.json", "JSON Files (*.json)")
         if path:
             db_export_players(path)
+
+    def export_settings_action():
+        path, _ = QFileDialog.getSaveFileName(
+            parent,
+            "Export Settings",
+            "internomat_settings.json",
+            "JSON Files (*.json)",
+        )
+        if not path:
+            return
+
+        payload = {attr_name: read_widget_value(widget) for attr_name, widget in setting_bindings}
+
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+            logger.log_info(f"[SETTINGS] Exported to {path}")
+        except Exception as e:
+            logger.log_error(f"[SETTINGS] Export failed: {e}")
+
+    def import_settings_action():
+        path, _ = QFileDialog.getOpenFileName(parent, "Import Settings", "", "JSON Files (*.json)")
+        if not path:
+            return
+
+        confirm = QMessageBox.question(
+            parent,
+            "Confirm Settings Import",
+            "Importing settings will overwrite current values in this form. Continue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+
+            if not isinstance(payload, dict):
+                raise ValueError("Invalid settings file format")
+
+            for attr_name, widget in setting_bindings:
+                if attr_name not in payload:
+                    continue
+
+                value = payload[attr_name]
+                if isinstance(widget, QCheckBox):
+                    widget.setChecked(bool(value))
+                elif isinstance(widget, QLineEdit):
+                    widget.setText("" if value is None else str(value))
+                elif isinstance(widget, QComboBox):
+                    text_value = "" if value is None else str(value)
+                    idx = widget.findText(text_value)
+                    if idx >= 0:
+                        widget.setCurrentIndex(idx)
+                elif isinstance(widget, QSpinBox):
+                    widget.setValue(int(value))
+                elif isinstance(widget, QDoubleSpinBox):
+                    widget.setValue(float(value))
+
+            apply_form_to_settings(save=True)
+            settings_dirty["value"] = False
+            save_settings_button.setEnabled(False)
+            logger.log_info(f"[SETTINGS] Imported from {path}")
+
+            if callable(on_data_updated):
+                on_data_updated()
+
+        except Exception as e:
+            logger.log_error(f"[SETTINGS] Import failed: {e}")
 
     def read_widget_value(widget):
         if isinstance(widget, QCheckBox):
@@ -643,6 +753,69 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None):
                 dispatcher.sync_error.emit(e)
 
         executor.submit(worker)
+
+    def sync_all_action():
+        if not sync_all_button.isEnabled():
+            return
+
+        apply_form_to_settings(save=False)
+        sync_all_button.setEnabled(False)
+        sync_matchzy_button.setEnabled(False)
+        sync_demos_button.setEnabled(False)
+
+        dialog = DemoSyncProgressDialog(parent)
+        dialog.update_status({"percent": 0, "stage": "matchzy", "message": "Starting MatchZy sync..."})
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        demo_sync_progress_dialog["dialog"] = dialog
+
+        def worker():
+            try:
+                dispatcher.demos_sync_progress.emit(
+                    {"percent": 5, "stage": "matchzy", "message": "Syncing MatchZy database..."}
+                )
+                sync()
+                dispatcher.demos_sync_progress.emit(
+                    {"percent": 15, "stage": "matchzy", "message": "MatchZy sync completed. Starting demos..."}
+                )
+
+                integration = DemoScrapperIntegration(
+                    ftp_host=settings.demo_ftp_host,
+                    ftp_port=settings.demo_ftp_port,
+                    ftp_user=settings.demo_ftp_user,
+                    ftp_password=settings.demo_ftp_password,
+                    remote_dir=settings.demo_remote_path,
+                    progress_callback=lambda payload: dispatcher.demos_sync_progress.emit(payload),
+                )
+                demo_data = integration.run_sync()
+                dispatcher.demos_sync_finished.emit(demo_data)
+            except Exception as e:
+                dispatcher.sync_all_error.emit(e)
+
+        executor.submit(worker)
+
+    def clear_cache_action():
+        confirm = QMessageBox.question(
+            parent,
+            "Confirm Cache Clear",
+            "This will delete all content inside the demos folder. Continue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            logger.log_info("Cache clear cancelled by user.")
+            return
+
+        try:
+            deleted = demo_cache.clear_cache_default()
+            from db.matches_db import set_demo_flags_by_match_ids
+            set_demo_flags_by_match_ids(set())  # Clear all demo flags
+            logger.log_info(f"Cleared cache: {deleted} files deleted. Demo flags reset.")
+            if on_data_updated:
+                on_data_updated()
+        except Exception as e:
+            logger.log_error(f"Failed to clear cache: {e}")
 
     def sync_demos_action():
         if not sync_demos_button.isEnabled():
@@ -694,8 +867,30 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None):
             logger.get_log_history()
         )
 
+    def on_sync_all_error(e):
+        sync_all_button.setEnabled(True)
+        sync_matchzy_button.setEnabled(True)
+        sync_demos_button.setEnabled(True)
+
+        dialog = demo_sync_progress_dialog.get("dialog")
+        if dialog is not None:
+            dialog.update_status({"stage": "pipeline", "message": f"Failed: {e}"})
+            dialog.close()
+            demo_sync_progress_dialog["dialog"] = None
+
+        logger.log_error(f"[SYNC] Unified sync failed: {e}", exc=e)
+
+        logger.show_debug_popup(
+            parent,
+            "Unified Sync Failed",
+            str(e),
+            logger.get_log_history()
+        )
+
     def on_demos_sync_finished(demo_data):
         sync_demos_button.setEnabled(True)
+        sync_matchzy_button.setEnabled(True)
+        sync_all_button.setEnabled(True)
         logger.log_info(f"[DEMOS] Sync completed ({len(demo_data)} parsed maps)")
 
         dialog = demo_sync_progress_dialog.get("dialog")
@@ -715,6 +910,8 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None):
 
     def on_demos_sync_error(e):
         sync_demos_button.setEnabled(True)
+        sync_matchzy_button.setEnabled(True)
+        sync_all_button.setEnabled(True)
         logger.log_error(f"[DEMOS] Sync failed: {e}", exc=e)
 
         dialog = demo_sync_progress_dialog.get("dialog")
@@ -739,15 +936,19 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None):
     # SIGNALS
 
     open_logs_button.clicked.connect(open_logs)
-    reload_ui_button.clicked.connect(reload_ui)
     import_players_button.clicked.connect(import_players)
     export_players_button.clicked.connect(export_players)
+    import_settings_button.clicked.connect(import_settings_action)
+    export_settings_button.clicked.connect(export_settings_action)
     save_settings_button.clicked.connect(save_settings_action)
+    sync_all_button.clicked.connect(sync_all_action)
     sync_matchzy_button.clicked.connect(sync_matchzy_action)
     sync_demos_button.clicked.connect(sync_demos_action)
+    clear_cache_button.clicked.connect(clear_cache_action)
     sidebar.currentRowChanged.connect(go_to_section)
     dispatcher.sync_finished.connect(on_sync_finished)
     dispatcher.sync_error.connect(on_sync_error)
+    dispatcher.sync_all_error.connect(on_sync_all_error)
     dispatcher.demos_sync_finished.connect(on_demos_sync_finished)
     dispatcher.demos_sync_error.connect(on_demos_sync_error)
     dispatcher.demos_sync_progress.connect(on_demos_sync_progress)
