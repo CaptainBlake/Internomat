@@ -8,9 +8,14 @@ from typing import Optional
 
 
 _executor = ThreadPoolExecutor(max_workers=2)
+_state_lock = Lock()
+_is_shutdown = False
 
 def submit(fn, *args, **kwargs):
-    return _executor.submit(fn, *args, **kwargs)
+    with _state_lock:
+        if _is_shutdown:
+            return None
+        return _executor.submit(fn, *args, **kwargs)
 
 
 def run_async(task, lock: Optional[Lock] = None, on_error=None):
@@ -31,8 +36,20 @@ def run_async(task, lock: Optional[Lock] = None, on_error=None):
             if lock:
                 lock.release()
 
-    _executor.submit(wrapper)
+    future = submit(wrapper)
+    if future is None:
+        if lock:
+            lock.release()
+        return False
+
     return True
 
 def shutdown():
-    _executor.shutdown(wait=False)
+    global _is_shutdown
+
+    with _state_lock:
+        if _is_shutdown:
+            return
+        _is_shutdown = True
+
+    _executor.shutdown(wait=False, cancel_futures=True)

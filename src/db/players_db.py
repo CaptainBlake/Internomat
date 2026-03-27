@@ -1,7 +1,6 @@
 from datetime import datetime, timedelta
-from .connection_db import get_conn
+from .connection_db import execute_write, get_conn
 import services.logger as logger
-from core.settings.settings import settings
 
 
 def insert_player(player, conn=None):
@@ -11,7 +10,7 @@ def insert_player(player, conn=None):
     now = datetime.utcnow().isoformat()
 
     try:
-        conn.execute("""
+        execute_write(conn, """
             INSERT INTO players VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             player["steam64_id"],
@@ -40,7 +39,7 @@ def update_player(player, conn=None):
     now = datetime.utcnow().isoformat()
 
     try:
-        conn.execute("""
+        execute_write(conn, """
             UPDATE players SET
                 leetify_id = ?,
                 name = ?,
@@ -70,7 +69,7 @@ def update_player(player, conn=None):
 
 def delete_player(steam_id):
     with get_conn() as conn:
-        conn.execute("DELETE FROM players WHERE steam64_id = ?", (steam_id,))
+        execute_write(conn, "DELETE FROM players WHERE steam64_id = ?", (steam_id,))
 
     logger.log(f"[DB] Delete player {logger.redact(steam_id)}", level="INFO")
 
@@ -82,7 +81,7 @@ def upsert_player(player, mode="full", conn=None):
 
     try:
         if mode == "import":
-            conn.execute("""
+            execute_write(conn, """
                 INSERT INTO players (steam64_id, name, added_at, last_updated)
                 VALUES (?, ?, ?, ?)
                 ON CONFLICT(steam64_id) DO UPDATE SET
@@ -95,7 +94,7 @@ def upsert_player(player, mode="full", conn=None):
                 now
             ))
         else:
-            conn.execute("""
+            execute_write(conn, """
                 INSERT INTO players VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(steam64_id) DO UPDATE SET
                     leetify_id=excluded.leetify_id,
@@ -177,7 +176,7 @@ def update_player_name(player):
     now = datetime.utcnow().isoformat()
 
     with get_conn() as conn:
-        conn.execute("""
+        execute_write(conn, """
             UPDATE players SET
                 name = ?,
                 last_updated = ?
@@ -189,9 +188,7 @@ def update_player_name(player):
         ))
     logger.log(f"[DB] Update player name {logger.redact(player['steam64_id'])}", level="INFO")
 
-def get_players_to_update(max_age_minutes=None):
-    if max_age_minutes is None:
-        max_age_minutes = settings.update_cooldown_minutes
+def get_players_to_update(max_age_minutes=0):
     
     logger.log(
         f"[DB] Cooldown used = {max_age_minutes} minutes",

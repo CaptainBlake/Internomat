@@ -15,9 +15,50 @@ class IOManager:
 
     @staticmethod
     def write_json(filepath, data, indent=2):
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        directory = os.path.dirname(filepath)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=indent)
+
+    @staticmethod
+    def read_cfg(filepath):
+        payload = {}
+        with open(filepath, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                if line.startswith("#") or line.startswith(";"):
+                    continue
+                if "=" not in line:
+                    continue
+
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if not key:
+                    continue
+                payload[key] = value
+
+        return payload
+
+    @staticmethod
+    def write_cfg(filepath, data):
+        directory = os.path.dirname(filepath)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write("# Internomat settings export\n")
+            f.write("# Format: key=value\n\n")
+            for key in sorted(data.keys()):
+                value = data[key]
+                if isinstance(value, bool):
+                    rendered = "true" if value else "false"
+                else:
+                    rendered = "" if value is None else str(value)
+                f.write(f"{key}={rendered}\n")
 
     # --- filesystem ---
 

@@ -2,6 +2,7 @@ import db.players_db as player_db
 import services.profile_scrapper as profile_scrapper
 import services.logger as logger
 import core.players.pipeline as pipeline
+from core.settings.settings import settings
 
 
 
@@ -12,7 +13,7 @@ def get_players():
 
 
 def get_players_to_update():
-    return player_db.get_players_to_update()
+    return player_db.get_players_to_update(settings.update_cooldown_minutes)
 
 
 # --- CREATE / UPDATE ---

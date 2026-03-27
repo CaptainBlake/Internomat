@@ -1,6 +1,3 @@
-import threading
-import json
-
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
@@ -13,7 +10,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QComboBox,
-    QTextEdit,
     QFileDialog,
     QScrollArea,
     QFrame,
@@ -25,17 +21,17 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QMessageBox,
 )
-from PySide6.QtGui import QFont
 from core.settings.settings import settings
+from core.settings import service as settings_service
 from services import executor
-from services.logger import get_log_history
 import services.logger as logger
 from db.IO_db import export_players as db_export_players
 from db.IO_db import import_players as db_import_players
 from services.matchzy import sync
-from services.demo_scrapper import DemoScrapperIntegration
+from services.demo_scrapper import DemoScrapperIntegration, DemoSyncCancelled
 from services import demo_cache
 from PySide6.QtCore import QObject, Signal
+from gui.tabs.settings.log_window import open_log_window
 
 class SettingsDispatcher(QObject):
     sync_finished = Signal()
@@ -43,11 +39,8 @@ class SettingsDispatcher(QObject):
     sync_all_error = Signal(object)
     demos_sync_finished = Signal(object)
     demos_sync_error = Signal(object)
+    demos_sync_cancelled = Signal(str)
     demos_sync_progress = Signal(object)
-
-
-LOG_WINDOW_INSTANCE = None
-
 
 class DemoSyncProgressDialog(QDialog):
     def __init__(self, parent=None):
@@ -86,6 +79,10 @@ class DemoSyncProgressDialog(QDialog):
         layout.addWidget(self.file_label)
         layout.addWidget(self.file_progress)
 
+        self._running = False
+        self._allow_close = False
+        self._cancel_handler = None
+
     def update_status(self, payload):
         if not isinstance(payload, dict):
             return
@@ -111,6 +108,41 @@ class DemoSyncProgressDialog(QDialog):
         elif stage != "ftp":
             self.file_progress.setValue(0)
             self.file_label.setText("Current file: -")
+
+    def set_running(self, running):
+        self._running = bool(running)
+
+    def set_cancel_handler(self, handler):
+        self._cancel_handler = handler
+
+    def allow_close_once(self):
+        self._allow_close = True
+
+    def closeEvent(self, event):
+        if self._allow_close:
+            super().closeEvent(event)
+            return
+
+        if self._running:
+            confirm = QMessageBox.question(
+                self,
+                "Cancel Demo Sync",
+                "You sure you want to cancel?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+
+            if confirm != QMessageBox.Yes:
+                event.ignore()
+                return
+
+            if callable(self._cancel_handler):
+                try:
+                    self._cancel_handler()
+                except Exception:
+                    pass
+
+        super().closeEvent(event)
 
 # SETTINGS TAB
 def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on_players_data_updated=None):
@@ -635,12 +667,7 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
     # ACTIONS
 
     def open_logs():
-        global LOG_WINDOW_INSTANCE
-        if LOG_WINDOW_INSTANCE is None or not LOG_WINDOW_INSTANCE.isVisible():
-            LOG_WINDOW_INSTANCE = LogWindow()
-        LOG_WINDOW_INSTANCE.show()
-        LOG_WINDOW_INSTANCE.raise_()
-        LOG_WINDOW_INSTANCE.activateWindow()
+        open_log_window(parent)
 
     def import_players():
         path, _ = QFileDialog.getOpenFileName(parent, "Import Players", "", "JSON Files (*.json)")
@@ -658,8 +685,8 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
         path, _ = QFileDialog.getSaveFileName(
             parent,
             "Export Settings",
-            "internomat_settings.json",
-            "JSON Files (*.json)",
+            "internomat_settings.cfg",
+            "CFG Files (*.cfg);;JSON Files (*.json)",
         )
         if not path:
             return
@@ -667,14 +694,18 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
         payload = {attr_name: read_widget_value(widget) for attr_name, widget in setting_bindings}
 
         try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2)
+            settings_service.export_settings_payload(path, payload)
             logger.log_info(f"[SETTINGS] Exported to {path}")
         except Exception as e:
             logger.log_error(f"[SETTINGS] Export failed: {e}")
 
     def import_settings_action():
-        path, _ = QFileDialog.getOpenFileName(parent, "Import Settings", "", "JSON Files (*.json)")
+        path, _ = QFileDialog.getOpenFileName(
+            parent,
+            "Import Settings",
+            "",
+            "CFG Files (*.cfg);;JSON Files (*.json)",
+        )
         if not path:
             return
 
@@ -689,8 +720,7 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
             return
 
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                payload = json.load(f)
+            payload = settings_service.import_settings_payload(path)
 
             if not isinstance(payload, dict):
                 raise ValueError("Invalid settings file format")
@@ -774,6 +804,14 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
 
         dialog = DemoSyncProgressDialog(parent)
         dialog.update_status({"percent": 0, "stage": "matchzy", "message": "Starting MatchZy sync..."})
+        cancel_state = {"requested": False}
+
+        def _request_cancel():
+            cancel_state["requested"] = True
+            dialog.update_status({"stage": "pipeline", "message": "Cancelling sync..."})
+
+        dialog.set_running(True)
+        dialog.set_cancel_handler(_request_cancel)
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
@@ -785,6 +823,10 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
                     {"percent": 5, "stage": "matchzy", "message": "Syncing MatchZy database..."}
                 )
                 sync()
+
+                if cancel_state["requested"]:
+                    raise DemoSyncCancelled("Sync cancelled by user")
+
                 dispatcher.demos_sync_progress.emit(
                     {"percent": 15, "stage": "matchzy", "message": "MatchZy sync completed. Starting demos..."}
                 )
@@ -796,9 +838,12 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
                     ftp_password=settings.demo_ftp_password,
                     remote_dir=settings.demo_remote_path,
                     progress_callback=lambda payload: dispatcher.demos_sync_progress.emit(payload),
+                    cancel_requested=lambda: cancel_state["requested"],
                 )
                 demo_data = integration.run_sync()
                 dispatcher.demos_sync_finished.emit(demo_data)
+            except DemoSyncCancelled as e:
+                dispatcher.demos_sync_cancelled.emit(str(e))
             except Exception as e:
                 dispatcher.sync_all_error.emit(e)
 
@@ -836,6 +881,14 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
 
         dialog = DemoSyncProgressDialog(parent)
         dialog.update_status({"percent": 0, "stage": "pipeline", "message": "Starting pipeline..."})
+        cancel_state = {"requested": False}
+
+        def _request_cancel():
+            cancel_state["requested"] = True
+            dialog.update_status({"stage": "pipeline", "message": "Cancelling sync..."})
+
+        dialog.set_running(True)
+        dialog.set_cancel_handler(_request_cancel)
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
@@ -850,9 +903,12 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
                     ftp_password=settings.demo_ftp_password,
                     remote_dir=settings.demo_remote_path,
                     progress_callback=lambda payload: dispatcher.demos_sync_progress.emit(payload),
+                    cancel_requested=lambda: cancel_state["requested"],
                 )
                 demo_data = integration.run_sync()
                 dispatcher.demos_sync_finished.emit(demo_data)
+            except DemoSyncCancelled as e:
+                dispatcher.demos_sync_cancelled.emit(str(e))
             except Exception as e:
                 dispatcher.demos_sync_error.emit(e)
 
@@ -883,7 +939,9 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
 
         dialog = demo_sync_progress_dialog.get("dialog")
         if dialog is not None:
+            dialog.set_running(False)
             dialog.update_status({"stage": "pipeline", "message": f"Failed: {e}"})
+            dialog.allow_close_once()
             dialog.close()
             demo_sync_progress_dialog["dialog"] = None
 
@@ -904,11 +962,13 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
 
         dialog = demo_sync_progress_dialog.get("dialog")
         if dialog is not None:
+            dialog.set_running(False)
             dialog.update_status({"percent": 100, "stage": "pipeline", "message": "Pipeline completed."})
 
             def _close_dialog_later():
                 current = demo_sync_progress_dialog.get("dialog")
                 if current is not None:
+                    current.allow_close_once()
                     current.close()
                     demo_sync_progress_dialog["dialog"] = None
 
@@ -931,7 +991,9 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
 
         dialog = demo_sync_progress_dialog.get("dialog")
         if dialog is not None:
+            dialog.set_running(False)
             dialog.update_status({"stage": "pipeline", "message": f"Failed: {e}"})
+            dialog.allow_close_once()
             dialog.close()
             demo_sync_progress_dialog["dialog"] = None
 
@@ -941,6 +1003,20 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
             str(e),
             logger.get_log_history()
         )
+
+    def on_demos_sync_cancelled(message):
+        sync_demos_button.setEnabled(True)
+        sync_matchzy_button.setEnabled(True)
+        sync_all_button.setEnabled(True)
+        logger.log_info(f"[DEMOS] Sync cancelled: {message}")
+
+        dialog = demo_sync_progress_dialog.get("dialog")
+        if dialog is not None:
+            dialog.set_running(False)
+            dialog.update_status({"stage": "pipeline", "message": "Sync cancelled by user."})
+            dialog.allow_close_once()
+            dialog.close()
+            demo_sync_progress_dialog["dialog"] = None
 
     def on_demos_sync_progress(payload):
         dialog = demo_sync_progress_dialog.get("dialog")
@@ -966,113 +1042,9 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
     dispatcher.sync_all_error.connect(on_sync_all_error)
     dispatcher.demos_sync_finished.connect(on_demos_sync_finished)
     dispatcher.demos_sync_error.connect(on_demos_sync_error)
+    dispatcher.demos_sync_cancelled.connect(on_demos_sync_cancelled)
     dispatcher.demos_sync_progress.connect(on_demos_sync_progress)
 
     sidebar.setCurrentRow(0)
 
 
-        
-
-# LOG WINDOW 
-class LogWindow(QWidget):
-
-    def __init__(self):
-        super().__init__()
-
-        self.setWindowTitle("Internomat Logs")
-        self.resize(900, 600)
-
-        layout = QVBoxLayout(self)
-
-        # TOP BAR
-
-        top = QHBoxLayout()
-
-        self.log_mode = QComboBox()
-        self.log_mode.addItems(["INFO", "DEBUG", "ERROR"])
-        font = self.log_mode.font()
-        font.setPointSize(10)
-
-        self.log_mode.setFont(font)
-        self.log_mode.view().setFont(font)
-        top.addStretch(1)
-        top.addWidget(QLabel("Log Mode:"))
-        top.addWidget(self.log_mode)
-
-        layout.addLayout(top)
-
-        # LOG VIEW
-
-        self.log_view = QTextEdit()
-        self.log_view.setReadOnly(True)
-        self.log_view.setLineWrapMode(QTextEdit.NoWrap)
-
-        layout.addWidget(self.log_view)
-
-        self.last_snapshot = ""
-
-        # SIGNALS
-
-        self.log_mode.currentTextChanged.connect(self.reload_logs)
-
-        # LOGGER SUBSCRIBE
-
-        logger.subscribe(self.append_log)
-
-        # INITIAL LOAD
-
-        self.reload_logs()
-
-    # ACTIONS
-
-    def filter_logs(self, logs):
-        mode = self.log_mode.currentText()
-
-        if mode == "INFO":
-            return [l for l in logs if "[DEBUG]" not in l]
-
-        if mode == "ERROR":
-            return [l for l in logs if "[ERROR]" in l]
-
-        return logs
-
-    def reload_logs(self):
-        logs = get_log_history()
-        filtered = self.filter_logs(logs)
-
-        new_text = "\n".join(filtered)
-
-        if new_text == self.last_snapshot:
-            return
-
-        self.last_snapshot = new_text
-
-        self.log_view.setPlainText(new_text)
-
-        self.log_view.verticalScrollBar().setValue(
-            self.log_view.verticalScrollBar().maximum()
-        )
-
-    def append_log(self, entry):
-        mode = self.log_mode.currentText()
-
-        if mode == "ERROR":
-            if "[ERROR]" not in entry:
-                return
-
-        elif mode == "INFO":
-            if "[DEBUG]" in entry:
-                return
-
-        self.log_view.append(entry)
-
-        self.log_view.verticalScrollBar().setValue(
-            self.log_view.verticalScrollBar().maximum()
-        )
-
-    def closeEvent(self, event):
-        global LOG_WINDOW_INSTANCE
-        LOG_WINDOW_INSTANCE = None
-
-        logger.unsubscribe(self.append_log)
-        super().closeEvent(event)

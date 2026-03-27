@@ -1,5 +1,4 @@
 import traceback
-import core.teams.balancer as balancer
 from datetime import datetime
 
 # --- config ---
@@ -105,6 +104,12 @@ def _top_diff(team_a, team_b):
     top_b = sum(sorted([p[2] for p in team_b], reverse=True)[:2])
     return abs(top_a - top_b)
 
+
+def _distribution_diff(team_a, team_b):
+    a_sorted = sorted([p[2] for p in team_a], reverse=True)
+    b_sorted = sorted([p[2] for p in team_b], reverse=True)
+    return sum(abs(a - b) for a, b in zip(a_sorted, b_sorted))
+
 # --- generic log ---
 
 def log(message, level="INFO"):
@@ -204,7 +209,7 @@ def log_team_roll(
     sum_b = _team_sum(team_b)
 
     total_diff = abs(sum_a - sum_b)
-    dist_diff = balancer.distribution_score(team_a, team_b)
+    dist_diff = _distribution_diff(team_a, team_b)
 
     lines = []
     lines.append("\n=== TEAM ROLL ===")
@@ -255,8 +260,8 @@ def log_team_roll_compact(
     sum_b = _team_sum(team_b)
 
     total_diff = abs(sum_a - sum_b)
-    dist_diff = balancer.distribution_score(team_a, team_b)
-    top_diff = balancer.top_diff(team_a, team_b)
+    dist_diff = _distribution_diff(team_a, team_b)
+    top_diff = _top_diff(team_a, team_b)
 
     line = (
         f"[S:{chosen[0]:.0f}/{best_score:.0f} "
@@ -278,7 +283,7 @@ def log_balance_summary(team_a, team_b):
     sum_b = _team_sum(team_b)
 
     total_diff = abs(sum_a - sum_b)
-    dist_diff = balancer.distribution_score(team_a, team_b)
+    dist_diff = _distribution_diff(team_a, team_b)
     top_diff = _top_diff(team_a, team_b)
 
     log_event(

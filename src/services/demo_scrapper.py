@@ -25,6 +25,10 @@ from services import demo_cache
 from services import executor
 import services.logger as logger
 
+
+class DemoSyncCancelled(Exception):
+    """Raised when the user cancels an in-flight demo sync."""
+
 class DemoScrapperIntegration:
     """flow for downloading, parsing, and structuring demos."""
 
@@ -43,6 +47,7 @@ class DemoScrapperIntegration:
         ftp_user: str | None = None,
         ftp_password: str | None = None,
         progress_callback=None,
+        cancel_requested=None,
     ):
         self.base_dir = base_dir or Path(__file__).parent.parent.parent
         self.db_file = db_file or (self.base_dir / "internomat.db")
@@ -51,6 +56,7 @@ class DemoScrapperIntegration:
         self.remote_dir = remote_dir
         self._run_lock = Lock()
         self.progress_callback = progress_callback
+        self.cancel_requested = cancel_requested
 
         logger.log_info(f"Using DB: {self.db_file}")
 
@@ -79,6 +85,19 @@ class DemoScrapperIntegration:
         logger.log_info(f"Loaded {len(self.match_catalog)} matches")
         logger.log_debug(f"Valid match_ids: {sorted(self.valid_match_ids)}")
         logger.log_info(f"Parsed demo cache dir: {self.parsed_demo_dir}")
+
+    def _is_cancel_requested(self):
+        try:
+            return bool(self.cancel_requested and self.cancel_requested())
+        except Exception:
+            return False
+
+    def _ensure_not_cancelled(self, stage="pipeline"):
+        if not self._is_cancel_requested():
+            return
+
+        self._emit_progress(0, "Sync cancelled by user.", stage=stage)
+        raise DemoSyncCancelled("Sync cancelled by user")
 
     def _emit_progress(self, percent, message, stage="pipeline", file_percent=None):
         if not callable(self.progress_callback):
@@ -283,6 +302,8 @@ class DemoScrapperIntegration:
     # --- FTP ---
 
     def download_demo(self):
+        self._ensure_not_cancelled(stage="ftp")
+
         self._log_stage("FTP", f"Connecting to {self.ftp_host}:{self.ftp_port}...")
         self._emit_progress(5, "Connecting to FTP server...", stage="ftp")
 
@@ -317,6 +338,8 @@ class DemoScrapperIntegration:
                     continue
 
                 try:
+                    self._ensure_not_cancelled(stage="ftp")
+
                     self._emit_progress(
                         8 + int((processed_demo_files / total_demo_files) * 62),
                         f"Scanning {processed_demo_files + 1}/{total_demo_files}: {file}",
@@ -344,6 +367,7 @@ class DemoScrapperIntegration:
 
                     normalized_name = f"{date}_{time}_match_{match_id}_map_{map_number}_{map_name}.dem"
                     local_file = self.demo_dir / normalized_name
+                    temp_local_file = self.demo_dir / f"{normalized_name}.part"
 
                     if normalized_name in parsed_sources:
                         self._log_stage("FTP", f"SKIP parsed cache {normalized_name}", level="DEBUG")
@@ -370,6 +394,9 @@ class DemoScrapperIntegration:
                         last_state = {"absolute": -1, "file_percent": -1}
 
                         def _on_file_progress(bytes_written, total_bytes):
+                            if self._is_cancel_requested():
+                                raise DemoSyncCancelled("Sync cancelled by user")
+
                             if not total_bytes:
                                 return
 
@@ -394,16 +421,31 @@ class DemoScrapperIntegration:
                             )
 
                         IOManager.stream_to_file(
-                            local_file,
+                            temp_local_file,
                             lambda cb: ftp.retrbinary(f"RETR {file}", cb),
                             total_size=filesize,
                             desc=normalized_name,
                             progress_callback=_on_file_progress,
                         )
 
+                        # Promote to final name only when download completed successfully.
+                        temp_local_file.replace(local_file)
+
                         downloaded += 1
 
+                    except DemoSyncCancelled:
+                        if IOManager.file_exists(temp_local_file):
+                            try:
+                                Path(temp_local_file).unlink()
+                            except Exception:
+                                pass
+                        raise
                     except Exception as e:
+                        if IOManager.file_exists(temp_local_file):
+                            try:
+                                Path(temp_local_file).unlink()
+                            except Exception:
+                                pass
                         self._log_stage("FTP", f"FAILED {file}: {e}", level="ERROR")
                 finally:
                     processed_demo_files += 1
@@ -454,6 +496,8 @@ class DemoScrapperIntegration:
     # --- DEMO MATCH + LOAD ---
 
     def match_and_load_demos(self, progress_start=None, progress_end=None):
+        self._ensure_not_cancelled(stage="matcher")
+
         demo_files = IOManager.list_files(self.demo_dir, ".dem")
         parsed_sources = IOManager.list_parsed_demo_sources(self.parsed_demo_dir)
 
@@ -465,6 +509,8 @@ class DemoScrapperIntegration:
         total_files = max(1, len(demo_files))
 
         for idx, file in enumerate(demo_files, start=1):
+            self._ensure_not_cancelled(stage="matcher")
+
             entry_start = None
             entry_end = None
             if progress_start is not None and progress_end is not None:
@@ -661,6 +707,8 @@ class DemoScrapperIntegration:
         return cvars
 
     def build_demo_data(self, matched, progress_start=None, progress_end=None):
+        self._ensure_not_cancelled(stage="parser")
+
         cache_manifest = {}
         failed = 0
         rejected = 0
@@ -671,6 +719,8 @@ class DemoScrapperIntegration:
 
         with get_conn(db_file=self.db_file) as conn:
             for idx, entry in enumerate(matched, start=1):
+                self._ensure_not_cancelled(stage="parser")
+
                 entry_start = None
                 entry_end = None
                 if progress_start is not None and progress_end is not None:
@@ -775,6 +825,8 @@ class DemoScrapperIntegration:
                 logger.log_info(f"[M{match_id}|Map{map_number}] {map_name:15} | Ticks: {tick_count}")
 
     def import_players_from_parsed_cache(self):
+        self._ensure_not_cancelled(stage="player_import")
+
         rows = demo_cache.list_existing_cached_demos(self.parsed_demo_dir)
         import_rows = []
 
@@ -797,17 +849,25 @@ class DemoScrapperIntegration:
         return imported
 
     def _run_pipeline(self):
+        self._ensure_not_cancelled(stage="pipeline")
+
         self._log_stage("PIPELINE", "Start")
         self._emit_progress(0, "Pipeline started", stage="pipeline")
 
         self._emit_progress(3, "Stage 1/3: FTP sync", stage="pipeline")
         ftp_stats = self.download_demo()
 
+        self._ensure_not_cancelled(stage="pipeline")
+
         self._emit_progress(71, "Stage 2/3: Parse and match demos", stage="pipeline")
         matched, matcher_stats = self.match_and_load_demos(progress_start=71, progress_end=88)
 
+        self._ensure_not_cancelled(stage="pipeline")
+
         self._emit_progress(89, "Stage 3/3: Validate and cache parsed demos", stage="pipeline")
         demo_data, parser_stats = self.build_demo_data(matched, progress_start=89, progress_end=99)
+
+        self._ensure_not_cancelled(stage="pipeline")
 
         cached_matches = {
             str(row.get("match_id"))

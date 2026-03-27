@@ -1,29 +1,16 @@
-from db.connection_db import get_conn
+from db.connection_db import execute_write, get_conn
 
 
 def get(key: str, default=None):
-    conn = get_conn()
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
-        row = cursor.fetchone()
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
         return row[0] if row else default
-    finally:
-        cursor.close()
-        conn.close()
 
 
 def set(key: str, value):
-    conn = get_conn()
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute(
+    with get_conn() as conn:
+        execute_write(
+            conn,
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-            (key, str(value))
+            (key, str(value)),
         )
-        conn.commit()
-    finally:
-        cursor.close()
-        conn.close()

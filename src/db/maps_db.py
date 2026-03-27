@@ -1,4 +1,4 @@
-from .connection_db import get_conn
+from .connection_db import execute_write, get_conn
 import services.logger as logger
 
 def get_maps():
@@ -12,14 +12,14 @@ def get_maps():
 
 def add_map(name):
     with get_conn() as conn:
-        conn.execute("INSERT OR IGNORE INTO maps(name) VALUES(?)", (name.strip(),))
+        execute_write(conn, "INSERT OR IGNORE INTO maps(name) VALUES(?)", (name.strip(),))
 
     logger.log(f"[DB] Add map {name}", level="INFO")
 
 
 def delete_map(name):
     with get_conn() as conn:
-        conn.execute("DELETE FROM maps WHERE name = ?", (name,))
+        execute_write(conn, "DELETE FROM maps WHERE name = ?", (name,))
 
     logger.log(f"[DB] Delete map {name}", level="INFO")
 

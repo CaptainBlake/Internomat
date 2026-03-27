@@ -1,4 +1,4 @@
-from .connection_db import get_conn
+from .connection_db import execute_write, get_conn
 import services.logger as logger
 
 
@@ -7,7 +7,7 @@ def insert_match(data, conn=None):
     conn = conn or get_conn()
 
     try:
-        conn.execute("""
+        execute_write(conn, """
         INSERT INTO matches (
             match_id,
             start_time,
@@ -54,7 +54,7 @@ def insert_match_map(data, conn=None):
     conn = conn or get_conn()
 
     try:
-        conn.execute("""
+        execute_write(conn, """
         INSERT INTO match_maps (
             match_id,
             map_number,
@@ -96,7 +96,7 @@ def insert_match_player_stats(data, conn=None):
     conn = conn or get_conn()
 
     try:
-        conn.execute("""
+        execute_write(conn, """
         INSERT INTO match_player_stats (
             steamid64, match_id, map_number,
             name, team,
@@ -158,7 +158,7 @@ def set_match_has_demo(match_id, has_demo=True, conn=None):
     conn = conn or get_conn()
 
     try:
-        conn.execute(
+        execute_write(conn,
             "UPDATE matches SET demo = ? WHERE match_id = ?",
             (1 if has_demo else 0, str(match_id)),
         )
@@ -179,11 +179,11 @@ def set_demo_flags_by_match_ids(match_ids, conn=None):
     ids = [str(mid) for mid in (match_ids or []) if str(mid).strip()]
 
     try:
-        conn.execute("UPDATE matches SET demo = 0")
+        execute_write(conn, "UPDATE matches SET demo = 0")
 
         if ids:
             placeholders = ",".join("?" for _ in ids)
-            conn.execute(
+            execute_write(conn,
                 f"UPDATE matches SET demo = 1 WHERE match_id IN ({placeholders})",
                 ids,
             )

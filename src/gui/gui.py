@@ -9,6 +9,7 @@ from gui.tabs.menu_controller import MenuController
 from gui.tabs.play.teambuilder_tab import build_team_tab
 from gui.tabs.tools.map_roulette_tab import build_map_tab
 from gui.tabs.settings.settings_tab import build_settings_tab
+from gui.tabs.settings.log_window import close_log_window
 from gui.tabs.statistics.leaderboard_tab import build_stat_overview_tab, refresh_stat_overview
 from gui.tabs.statistics.statistics_tab import (
     build_statistics_tab,
@@ -205,6 +206,15 @@ class InternomatWindow(QMainWindow):
         """Keep submenu anchored while the main window changes size."""
         super().resizeEvent(event)
         self.menu.handle_resize()
+
+    def closeEvent(self, event):
+        """Ensure auxiliary windows and workers stop when main window closes."""
+        close_log_window()
+        super().closeEvent(event)
+
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
 
 
 
