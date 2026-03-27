@@ -29,3 +29,34 @@ def map_exists(name):
         cur = conn.execute("SELECT 1 FROM maps WHERE name = ?", (name,))
         return cur.fetchone() is not None
 
+
+def import_maps_from_match_history(conn=None):
+    own_conn = conn is None
+    conn = conn or get_conn()
+
+    try:
+        before = conn.execute("SELECT COUNT(*) AS total FROM maps").fetchone()["total"]
+
+        execute_write(
+            conn,
+            """
+            INSERT OR IGNORE INTO maps(name)
+            SELECT DISTINCT TRIM(map_name)
+            FROM match_maps
+            WHERE map_name IS NOT NULL
+              AND TRIM(map_name) != ''
+            """,
+        )
+
+        after = conn.execute("SELECT COUNT(*) AS total FROM maps").fetchone()["total"]
+
+        if own_conn:
+            conn.commit()
+    finally:
+        if own_conn:
+            conn.close()
+
+    imported = int(after or 0) - int(before or 0)
+    logger.log(f"[DB] Imported maps from history count={imported}", level="INFO")
+    return max(0, imported)
+

@@ -153,6 +153,7 @@ def init_db():
         # --- INDEXES ---
         conn.execute("CREATE INDEX IF NOT EXISTS idx_match_player_match ON match_player_stats(match_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_match_maps_match ON match_maps(match_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_match_maps_name ON match_maps(map_name)")
 
         # --- DEFAULT MAPS ---
         cur = conn.execute("SELECT COUNT(*) FROM maps")

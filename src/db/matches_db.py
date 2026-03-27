@@ -303,3 +303,40 @@ def get_all_matches_with_maps(conn=None):
             })
 
     return list(matches.values())
+
+
+def get_total_matches_count(conn=None):
+    own_conn = conn is None
+    conn = conn or get_conn()
+
+    try:
+        row = conn.execute("SELECT COUNT(*) AS total FROM matches").fetchone()
+    finally:
+        if own_conn:
+            conn.close()
+
+    return int(row["total"] or 0) if row else 0
+
+
+def get_map_play_counts(conn=None):
+    own_conn = conn is None
+    conn = conn or get_conn()
+
+    try:
+        rows = conn.execute(
+            """
+            SELECT map_name, COUNT(*) AS played_count
+            FROM match_maps
+            WHERE map_name IS NOT NULL
+              AND map_name != ''
+            GROUP BY map_name
+            """
+        ).fetchall()
+    finally:
+        if own_conn:
+            conn.close()
+
+    return {
+        str(row["map_name"]): int(row["played_count"] or 0)
+        for row in rows
+    }

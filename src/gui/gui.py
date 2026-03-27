@@ -158,6 +158,8 @@ class InternomatWindow(QMainWindow):
             on_statistics_data_updated(self.statistics_page)
             on_stat_overview_data_updated(self.stat_overview_page)
             on_stattracker_data_updated(self.stat_tracker_page)
+            if callable(refresh_maps):
+                refresh_maps()
 
         refresh_players = build_team_tab(
             self.team_page,
@@ -166,7 +168,7 @@ class InternomatWindow(QMainWindow):
         )
         logger.log("[GUI] Team Builder ready", level="INFO")
 
-        build_map_tab(self.map_page)
+        refresh_maps = build_map_tab(self.map_page)
         logger.log("[GUI] Map Roulette ready", level="INFO")
 
         build_stat_overview_tab(self.stat_overview_page)
