@@ -17,6 +17,7 @@ SETTINGS_SCHEMA = {
     "dist_weight": float,
     "default_rating": int,
     "allow_uneven_teams": _to_bool,
+    "maproulette_use_history": _to_bool,
     "matchzy_host": str,
     "matchzy_port": int,
     "matchzy_user": str,

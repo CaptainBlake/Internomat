@@ -3,6 +3,7 @@ from mysql.connector import Error
 
 from db.connection_db import write_transaction
 import db.matches_db as match_db
+import db.maps_db as maps_db
 import db.players_db as players_db
 import services.logger as logger
 from core.settings.settings import settings
@@ -112,6 +113,7 @@ class MatchZy:
             total_maps = 0
             total_players = 0
             imported_players = 0
+            imported_maps = 0
             players_for_pool_import = []
 
             with write_transaction() as local_conn:
@@ -228,8 +230,11 @@ class MatchZy:
                         conn=local_conn,
                     )
 
+                if settings.auto_import_match_players:
+                    imported_maps = maps_db.import_maps_from_match_history(conn=local_conn)
+
             logger.log(
-                f"[MATCHZY] Sync done maps={total_maps} players={total_players} imported_pool={imported_players}",
+                f"[MATCHZY] Sync done maps={total_maps} players={total_players} imported_pool_players={imported_players} imported_pool_maps={imported_maps}",
                 level="INFO"
             )
         finally:

@@ -10,6 +10,9 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QLineEdit,
+    QTableWidget,
+    QTableWidgetItem,
+    QHeaderView,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -21,6 +24,7 @@ from PySide6.QtWidgets import (
 
 import db.maps_db as maps_db
 from core.maps.service import choose_map
+from core.settings.settings import settings
 
 # TODO: add map display for map in database & a seperate display for map pool from which to gamble from
 
@@ -458,6 +462,92 @@ class SlotMachineWidget(QFrame):
         self.update()
 
 
+def _apply_pool_table_style(table):
+    table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+    table.setAlternatingRowColors(True)
+    table.setShowGrid(False)
+    table.verticalHeader().setVisible(False)
+    table.horizontalHeader().hide()
+    table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+    table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+
+    table.setStyleSheet("""
+        QTableWidget {
+            background: transparent;
+            border: none;
+            outline: none;
+            alternate-background-color: #F8FCFA;
+            color: #20443D;
+        }
+        QTableWidget:focus {
+            border: none;
+            outline: none;
+        }
+        QTableWidget::item {
+            padding: 6px;
+            border: none;
+            outline: none;
+        }
+        QTableWidget::item:selected {
+            background: #DFF7EF;
+            color: #4A7168;
+            border: none;
+            outline: none;
+        }
+        QTableWidget::item:focus {
+            border: none;
+            outline: none;
+        }
+        QAbstractItemView {
+            outline: none;
+        }
+        QAbstractItemView::item {
+            border: none;
+            outline: none;
+        }
+        QAbstractItemView::item:selected {
+            border: none;
+            outline: none;
+        }
+    """)
+
+
+def _build_pool_card(title_text, table):
+    card = QFrame()
+    card.setStyleSheet("""
+        QFrame {
+            background: rgba(255, 255, 255, 0.94);
+            border: none;
+            border-radius: 16px;
+        }
+    """)
+
+    card_layout = QVBoxLayout(card)
+    card_layout.setContentsMargins(0, 0, 0, 0)
+    card_layout.setSpacing(0)
+
+    title = QLabel(title_text)
+    title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    title.setStyleSheet("""
+        QLabel {
+            background: #EAF8F3;
+            color: #4A7168;
+            padding: 8px 12px;
+            font-size: 13px;
+            font-weight: 800;
+            border-top-left-radius: 16px;
+            border-top-right-radius: 16px;
+            border-bottom-left-radius: 0px;
+            border-bottom-right-radius: 0px;
+        }
+    """)
+
+    card_layout.addWidget(title)
+    card_layout.addWidget(table, 1)
+    return card
+
+
 def build_map_tab(parent):
     layout = QVBoxLayout(parent)
     layout.setContentsMargins(24, 20, 24, 20)
@@ -474,66 +564,60 @@ def build_map_tab(parent):
     left_panel = QVBoxLayout()
     left_panel.setSpacing(6)
 
-    list_frame = QFrame()
-    list_frame.setStyleSheet("""
-        QFrame {
-            background: #FFFFFF;
-            border: 1px solid #B9CADC;
-            border-radius: 14px;
-        }
-    """)
-    list_layout = QVBoxLayout(list_frame)
-    list_layout.setContentsMargins(10, 10, 10, 10)
-    list_layout.setSpacing(4)
+    available_map_table = QTableWidget(0, 1)
+    available_map_table.setHorizontalHeaderLabels(["Map"])
+    _apply_pool_table_style(available_map_table)
+    available_map_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
 
-    map_list = MapListWidget()
-    map_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-    map_list.setStyleSheet("""
-        QListWidget {
-            background: transparent;
-            border: none;
-            padding: 0px;
-        }
-        QListWidget::item {
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                                            stop:0 #FFFFFF, stop:1 #F8FBFE);
-            border: 1px solid #D4E1EE;
-            border-radius: 12px;
-            padding: 7px 10px;
-            color: #1E2B38;
-            margin: 1px;
-            margin-bottom: 8px;
-        }
-        QListWidget::item:hover {
-            background: #EAF2FA;
-            border: 1px solid #B9CADC;
-        }
-        QListWidget::item:selected {
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                                            stop:0 #DCEAF7, stop:1 #C9DDF0);
-            color: #1E2B38;
-            border: 1px solid #8FB2D8;
-        }
-    """)
-    list_layout.addWidget(map_list, 1)
+    selected_map_table = QTableWidget(0, 2)
+    selected_map_table.setHorizontalHeaderLabels(["#", "Map"])
+    _apply_pool_table_style(selected_map_table)
+    selected_map_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+    selected_map_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
 
-    left_panel.addWidget(list_frame, 0)
+    lists_row = QHBoxLayout()
+    lists_row.setSpacing(10)
 
-    controls = QHBoxLayout()
-    controls.setSpacing(8)
+    button_col = QVBoxLayout()
+    button_col.setSpacing(8)
+    button_col.addStretch(1)
+
+    add_to_pool_button = QPushButton(">")
+    remove_from_pool_button = QPushButton("<")
+    add_to_pool_button.setFixedWidth(40)
+    remove_from_pool_button.setFixedWidth(40)
+
+    button_col.addWidget(add_to_pool_button, alignment=Qt.AlignmentFlag.AlignHCenter)
+    button_col.addWidget(remove_from_pool_button, alignment=Qt.AlignmentFlag.AlignHCenter)
+    button_col.addStretch(1)
+
+    lists_row.addWidget(_build_pool_card("Map Pool", available_map_table), 1)
+    lists_row.addLayout(button_col)
+    lists_row.addWidget(_build_pool_card("Selected Maps", selected_map_table), 1)
+    left_panel.addLayout(lists_row, 1)
+
+    db_controls = QHBoxLayout()
+    db_controls.setSpacing(8)
 
     entry = QLineEdit()
     entry.setPlaceholderText("Add map name")
-    controls.addWidget(entry, 1)
+    db_controls.addWidget(entry, 1)
 
     add_button = QPushButton("Add")
     remove_button = QPushButton("Remove")
+    db_controls.addWidget(add_button)
+    db_controls.addWidget(remove_button)
+    left_panel.addLayout(db_controls)
+
+    spin_controls = QHBoxLayout()
+    spin_controls.setSpacing(8)
+
+    clear_pool_button = QPushButton("Clear Pool")
     spin_button = QPushButton("Spin")
 
-    controls.addWidget(add_button)
-    controls.addWidget(remove_button)
-    controls.addWidget(spin_button)
-    left_panel.addLayout(controls)
+    spin_controls.addWidget(clear_pool_button)
+    spin_controls.addWidget(spin_button)
+    left_panel.addLayout(spin_controls)
 
     result_label = QLabel("Selected Map: -")
     result_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -542,7 +626,6 @@ def build_map_tab(parent):
 
     right_panel = QVBoxLayout()
     right_panel.setSpacing(6)
-
     spin_machine = SlotMachineWidget()
     right_panel.addWidget(spin_machine, 1)
 
@@ -552,31 +635,123 @@ def build_map_tab(parent):
 
     spinning = False
 
-    def refresh_maps():
-        map_list.clear()
+    def _selected_rows(table, reverse=False):
+        rows = sorted({idx.row() for idx in table.selectedIndexes()})
+        return list(reversed(rows)) if reverse else rows
+
+    def _contains_selected_map(raw_name):
+        for row in range(selected_map_table.rowCount()):
+            item = selected_map_table.item(row, 1)
+            if item is None:
+                continue
+            if str(item.data(Qt.ItemDataRole.UserRole)) == str(raw_name):
+                return True
+        return False
+
+    def _refresh_selected_index_labels():
+        for row in range(selected_map_table.rowCount()):
+            index_item = QTableWidgetItem(str(row + 1))
+            index_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            selected_map_table.setItem(row, 0, index_item)
+
+    def _append_selected_map(raw_name):
+        if _contains_selected_map(raw_name):
+            return
+
+        row = selected_map_table.rowCount()
+        selected_map_table.insertRow(row)
+
+        map_item = QTableWidgetItem(str(raw_name).replace("de_", ""))
+        map_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        map_item.setData(Qt.ItemDataRole.UserRole, raw_name)
+        selected_map_table.setItem(row, 1, map_item)
+
+        _refresh_selected_index_labels()
+
+    def _selected_pool_maps():
+        maps = []
+        for row in range(selected_map_table.rowCount()):
+            item = selected_map_table.item(row, 1)
+            if item is not None:
+                maps.append(str(item.data(Qt.ItemDataRole.UserRole)))
+        return maps
+
+    def _sync_slot_machine_items():
+        spin_machine.set_items(_selected_pool_maps())
+
+    def refresh_available_maps():
+        available_map_table.setRowCount(0)
         maps = maps_db.get_maps()
-        for m in maps:
-            item = QListWidgetItem(m.replace("de_", ""))
+        map_set = set(maps)
+
+        for raw_name in maps:
+            row = available_map_table.rowCount()
+            available_map_table.insertRow(row)
+            item = QTableWidgetItem(raw_name.replace("de_", ""))
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            map_list.addItem(item)
-        map_list._update_grid()
-        spin_machine.set_items(maps)
+            item.setData(Qt.ItemDataRole.UserRole, raw_name)
+            available_map_table.setItem(row, 0, item)
+
+        selected_raw = _selected_pool_maps()
+        selected_map_table.setRowCount(0)
+        for raw_name in selected_raw:
+            if raw_name in map_set:
+                _append_selected_map(raw_name)
+
+        _sync_slot_machine_items()
 
     def add_map():
         name = entry.text().strip()
         if not name:
             return
+
+        if not name.startswith("de_"):
+            name = f"de_{name}"
+
         maps_db.add_map(name)
         entry.clear()
-        refresh_maps()
+        refresh_available_maps()
 
     def remove_map():
-        items = map_list.selectedItems()
-        if not items:
+        rows = _selected_rows(available_map_table, reverse=True)
+        if not rows:
             return
-        for item in items:
-            maps_db.delete_map(item.text())
-        refresh_maps()
+
+        for row in rows:
+            item = available_map_table.item(row, 0)
+            if item is None:
+                continue
+            maps_db.delete_map(str(item.data(Qt.ItemDataRole.UserRole)))
+
+        refresh_available_maps()
+
+    def add_to_pool():
+        rows = _selected_rows(available_map_table)
+        if not rows:
+            return
+
+        for row in rows:
+            item = available_map_table.item(row, 0)
+            if item is None:
+                continue
+            _append_selected_map(str(item.data(Qt.ItemDataRole.UserRole)))
+
+        _sync_slot_machine_items()
+
+    def remove_from_pool():
+        rows = _selected_rows(selected_map_table, reverse=True)
+        if not rows:
+            return
+
+        for row in rows:
+            selected_map_table.removeRow(row)
+
+        _refresh_selected_index_labels()
+        _sync_slot_machine_items()
+
+    def clear_pool():
+        selected_map_table.setRowCount(0)
+        _sync_slot_machine_items()
 
     def finish_spin(winner):
         nonlocal spinning
@@ -586,9 +761,9 @@ def build_map_tab(parent):
     def spin():
         nonlocal spinning
 
-        maps = maps_db.get_maps()
+        maps = _selected_pool_maps()
         if not maps:
-            QMessageBox.critical(parent, "Error", "No maps available")
+            QMessageBox.critical(parent, "Error", "No maps selected for roulette")
             return
         if spinning:
             return
@@ -596,12 +771,16 @@ def build_map_tab(parent):
         spinning = True
         result_label.setText("Spinning...")
 
-        winner = choose_map(maps)
+        winner = choose_map(maps, use_history=settings.maproulette_use_history)
         spin_machine.set_items(maps)
         spin_machine.start_spin(winner, lambda: finish_spin(winner))
 
     add_button.clicked.connect(add_map)
     remove_button.clicked.connect(remove_map)
+    add_to_pool_button.clicked.connect(add_to_pool)
+    remove_from_pool_button.clicked.connect(remove_from_pool)
+    clear_pool_button.clicked.connect(clear_pool)
     spin_button.clicked.connect(spin)
 
-    refresh_maps()
+    refresh_available_maps()
+    return refresh_available_maps

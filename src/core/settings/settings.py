@@ -11,6 +11,7 @@ class Settings:
         self.dist_weight = 0.25
         self.default_rating = 10000
         self.allow_uneven_teams = False
+        self.maproulette_use_history = False
         # Matchzy integration settings
         self.matchzy_host = ""
         self.matchzy_port = 3306
@@ -32,6 +33,7 @@ class Settings:
         self.dist_weight = float(settings_db.get("dist_weight", 0.25))
         self.default_rating = int(settings_db.get("default_rating", 10000))
         self.allow_uneven_teams = settings_db.get("allow_uneven_teams", "False") == "True"
+        self.maproulette_use_history = settings_db.get("maproulette_use_history", "False") == "True"
         # Matchzy settings
         self.matchzy_host = settings_db.get("matchzy_host", "")
         self.matchzy_port = int(settings_db.get("matchzy_port", 3306))
@@ -53,6 +55,7 @@ class Settings:
         settings_db.set("dist_weight", self.dist_weight)
         settings_db.set("default_rating", self.default_rating)
         settings_db.set("allow_uneven_teams", str(self.allow_uneven_teams))
+        settings_db.set("maproulette_use_history", str(self.maproulette_use_history))
         # Matchzy settings
         settings_db.set("matchzy_host", self.matchzy_host)
         settings_db.set("matchzy_port", self.matchzy_port)

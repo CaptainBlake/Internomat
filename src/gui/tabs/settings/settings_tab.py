@@ -496,6 +496,16 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
         "Allow uneven teams (e.g. 3 vs 2)"
     ))
 
+    checkbox_maproulette_history = QCheckBox()
+    checkbox_maproulette_history.setChecked(settings.maproulette_use_history)
+
+    settings_layout.addLayout(create_setting_row(
+        "Map roulette uses history:",
+        checkbox_maproulette_history,
+        "maproulette_use_history",
+        "When enabled, map roulette uses match history percentages as map weights."
+    ))
+
     settings_button_row = QHBoxLayout()
     settings_button_row.setSpacing(10)
     settings_button_row.addWidget(save_settings_button)
@@ -587,10 +597,10 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
     checkbox_auto_import_match_players = QCheckBox()
     checkbox_auto_import_match_players.setChecked(settings.auto_import_match_players)
     matchzy_layout.addLayout(create_setting_row(
-        "Import match players:",
+        "Import match players/maps:",
         checkbox_auto_import_match_players,
         "auto_import_match_players",
-        "Add players from MatchZy stats (steamid/name) into the team builder player pool during sync."
+        "When enabled, MatchZy sync imports players into the team pool and map names from match history into the map pool."
     ))
 
     # DEMOS SETTINGS
