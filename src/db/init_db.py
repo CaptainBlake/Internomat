@@ -1,4 +1,5 @@
 from .connection_db import get_conn
+from .weapon_catalog import iter_seed_alias_rows, iter_seed_weapon_rows
 import services.logger as logger
 
 def init_db():
@@ -138,9 +139,23 @@ def init_db():
                 cash_earned INTEGER,
                 enemies_flashed INTEGER,
 
+                kast REAL,
+                impact REAL,
+                rating REAL,
+
                 PRIMARY KEY (steamid64, match_id, map_number)
             )
         """)
+
+        # Backward-compatible migration for existing databases.
+        mps_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(match_player_stats)").fetchall()
+        }
+        for col, col_type in [("kast", "REAL"), ("impact", "REAL"), ("rating", "REAL")]:
+            if col not in mps_columns:
+                conn.execute(f"ALTER TABLE match_player_stats ADD COLUMN {col} {col_type}")
+                logger.log(f"[DB] Added match_player_stats.{col} column", level="INFO")
 
         # --- GLOBAL MAP POOL ---
         conn.execute("""
@@ -154,6 +169,111 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_match_player_match ON match_player_stats(match_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_match_maps_match ON match_maps(match_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_match_maps_name ON match_maps(map_name)")
+
+        # --- CACHE RESTORE SIGNATURES ---
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cache_restore_state (
+                source_match_id TEXT NOT NULL,
+                source_map_number INTEGER NOT NULL,
+                payload_sha256 TEXT NOT NULL,
+                canonical_match_id TEXT,
+                canonical_map_number INTEGER,
+                source_file TEXT,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (source_match_id, source_map_number)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cache_restore_sha ON cache_restore_state(payload_sha256)"
+        )
+
+        # --- WEAPON CATALOG ---
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS weapon_dim (
+                weapon TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                category TEXT,
+                source TEXT NOT NULL DEFAULT 'seed-cs2',
+                is_active INTEGER NOT NULL DEFAULT 1,
+                first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS weapon_alias (
+                raw_weapon TEXT PRIMARY KEY,
+                canonical_weapon TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'seed-cs2',
+                first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (canonical_weapon) REFERENCES weapon_dim(weapon)
+            )
+        """)
+
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_weapon_alias_canonical ON weapon_alias(canonical_weapon)")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS player_map_weapon_stats (
+                steamid64 TEXT NOT NULL,
+                match_id TEXT NOT NULL,
+                map_number INTEGER NOT NULL,
+                weapon TEXT NOT NULL,
+                shots_fired INTEGER NOT NULL DEFAULT 0,
+                shots_hit INTEGER NOT NULL DEFAULT 0,
+                kills INTEGER NOT NULL DEFAULT 0,
+                headshot_kills INTEGER NOT NULL DEFAULT 0,
+                damage INTEGER NOT NULL DEFAULT 0,
+                rounds_with_weapon INTEGER NOT NULL DEFAULT 0,
+                first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (steamid64, match_id, map_number, weapon),
+                FOREIGN KEY (weapon) REFERENCES weapon_dim(weapon)
+            )
+        """)
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_player_weapon_player ON player_map_weapon_stats(steamid64)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_player_weapon_weapon ON player_map_weapon_stats(weapon)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_player_weapon_match_map ON player_map_weapon_stats(match_id, map_number)"
+        )
+
+        weapon_seed_rows = list(iter_seed_weapon_rows())
+        conn.executemany(
+            """
+            INSERT INTO weapon_dim (weapon, display_name, category, source)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(weapon) DO UPDATE SET
+                display_name = excluded.display_name,
+                category = excluded.category,
+                source = excluded.source,
+                is_active = 1,
+                updated_at = datetime('now')
+            """,
+            weapon_seed_rows,
+        )
+
+        alias_seed_rows = list(iter_seed_alias_rows())
+        conn.executemany(
+            """
+            INSERT INTO weapon_alias (raw_weapon, canonical_weapon, source)
+            VALUES (?, ?, ?)
+            ON CONFLICT(raw_weapon) DO UPDATE SET
+                canonical_weapon = excluded.canonical_weapon,
+                source = excluded.source,
+                updated_at = datetime('now')
+            """,
+            alias_seed_rows,
+        )
+
+        logger.log(
+            f"[DB] Seeded CS2 weapon catalog weapons={len(weapon_seed_rows)} aliases={len(alias_seed_rows)}",
+            level="INFO",
+        )
 
         # --- DEFAULT MAPS ---
         cur = conn.execute("SELECT COUNT(*) FROM maps")

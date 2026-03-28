@@ -377,6 +377,19 @@ class DemoScrapperIntegration(
         self._emit_progress(71, "Stage 2/3: Parse and match demos", stage="pipeline")
         matched, matcher_stats = self.match_and_load_demos(progress_start=71, progress_end=88)
 
+        max_demos_per_update = int(getattr(settings, "max_demos_per_update", 0) or 0)
+        if max_demos_per_update > 0 and len(matched) > max_demos_per_update:
+            self._log_stage(
+                "PIPELINE",
+                (
+                    "Apply demo cap "
+                    f"max_demos_per_update={max_demos_per_update} "
+                    f"matched_before={len(matched)} matched_after={max_demos_per_update}"
+                ),
+                level="INFO",
+            )
+            matched = matched[:max_demos_per_update]
+
         self._ensure_not_cancelled(stage="pipeline")
 
         self._emit_progress(89, "Stage 3/4: Validate and cache parsed demos", stage="pipeline")
@@ -401,6 +414,18 @@ class DemoScrapperIntegration(
                 continue
             seen_restore_keys.add(key)
             restore_rows.append(row)
+
+        if max_demos_per_update > 0 and len(restore_rows) > max_demos_per_update:
+            self._log_stage(
+                "RESTORE",
+                (
+                    "Apply restore cap "
+                    f"max_demos_per_update={max_demos_per_update} "
+                    f"rows_before={len(restore_rows)} rows_after={max_demos_per_update}"
+                ),
+                level="INFO",
+            )
+            restore_rows = restore_rows[:max_demos_per_update]
 
         if restore_rows:
             self._emit_progress(95, "Stage 4/4: Restore database from parsed cache", stage="pipeline")

@@ -2,7 +2,11 @@ from datetime import datetime
 from pathlib import Path
 
 from db.connection_db import get_conn, write_transaction
-from db.demo_db import resolve_equivalent_match_map
+from db.demo_db import (
+    is_restore_signature_current,
+    resolve_equivalent_match_map,
+    upsert_restore_signature,
+)
 from db.matches_db import (
     get_next_local_match_id,
     get_next_map_number_for_match,
@@ -12,6 +16,7 @@ from db.matches_db import (
     match_map_has_player_stats,
     set_match_has_demo,
 )
+from db.stattracker_db import upsert_player_map_weapon_stats_many
 from services import demo_cache
 import services.logger as logger
 
@@ -681,12 +686,53 @@ class DemoScrapperRestoreMixin:
 
         return team1, team2
 
+    def _build_weapon_stats_rows(self, *, match_id, map_number, parsed_payload):
+        derived = (parsed_payload or {}).get("derived_weapon_stats")
+        if not isinstance(derived, dict):
+            return []
+
+        now = datetime.utcnow().isoformat()
+        rows = []
+
+        for steamid64, weapon_map in derived.items():
+            sid = self._to_steamid64_string(steamid64)
+            if sid is None:
+                continue
+            if not isinstance(weapon_map, dict):
+                continue
+
+            for weapon, metrics in weapon_map.items():
+                weapon_name = str(weapon or "").strip().lower()
+                if not weapon_name:
+                    continue
+
+                values = metrics if isinstance(metrics, dict) else {}
+                rows.append(
+                    {
+                        "steamid64": str(sid),
+                        "match_id": str(match_id),
+                        "map_number": int(map_number),
+                        "weapon": weapon_name,
+                        "shots_fired": int(values.get("shots_fired") or 0),
+                        "shots_hit": int(values.get("shots_hit") or 0),
+                        "kills": int(values.get("kills") or 0),
+                        "headshot_kills": int(values.get("headshot_kills") or 0),
+                        "damage": int(values.get("damage") or 0),
+                        "rounds_with_weapon": int(values.get("rounds_with_weapon") or 0),
+                        "first_seen_at": now,
+                        "updated_at": now,
+                    }
+                )
+
+        return rows
+
     def _restore_db_entities_from_payload(
         self,
         match_id,
         map_number,
         parsed_payload,
         source_file,
+        payload_sha256,
         conn,
         source_match_to_canonical,
         next_local_match_id_state,
@@ -778,6 +824,11 @@ class DemoScrapperRestoreMixin:
             default_team1_name=player_team1_name,
             default_team2_name=player_team2_name,
         )
+        weapon_rows = self._build_weapon_stats_rows(
+            match_id=target_match_id,
+            map_number=target_map_number,
+            parsed_payload=parsed_payload,
+        )
 
         # Batch all inserts for this match into a single transaction to reduce lock acquisitions
         with write_transaction(conn):
@@ -812,6 +863,7 @@ class DemoScrapperRestoreMixin:
             )
 
             insert_match_player_stats_many(player_rows, conn=conn)
+            upsert_player_map_weapon_stats_many(weapon_rows, conn=conn)
 
             set_match_has_demo(match_id=target_match_id, has_demo=True, conn=conn)
 
@@ -822,6 +874,16 @@ class DemoScrapperRestoreMixin:
             canonical_map_number=target_map_number,
             parsed_payload=parsed_payload,
             source_file=source_file,
+        )
+
+        upsert_restore_signature(
+            source_match_id=match_id,
+            source_map_number=map_number,
+            payload_sha256=payload_sha256,
+            canonical_match_id=target_match_id,
+            canonical_map_number=target_map_number,
+            source_file=source_file,
+            conn=conn,
         )
         return True, len(player_rows), str(target_match_id), int(target_map_number)
 
@@ -888,6 +950,7 @@ class DemoScrapperRestoreMixin:
 
         restored_maps = 0
         restored_players = 0
+        skipped = 0
         failed = 0
         canonical_match_ids = set()
         canonical_match_maps = set()
@@ -921,6 +984,30 @@ class DemoScrapperRestoreMixin:
                     )
 
                 try:
+                    payload_sha256 = demo_cache.compute_payload_sha256(
+                        cache_dir=self.parsed_demo_dir,
+                        match_id=match_id,
+                        map_number=map_number,
+                        filename=row.get("filename"),
+                    )
+
+                    if is_restore_signature_current(
+                        source_match_id=match_id,
+                        source_map_number=map_number,
+                        payload_sha256=payload_sha256,
+                        conn=conn,
+                    ):
+                        skipped += 1
+                        self._log_stage(
+                            "RESTORE",
+                            (
+                                "SKIP unchanged payload "
+                                f"match={match_id} map={map_number} sha256={str(payload_sha256)[:12]}"
+                            ),
+                            level="INFO",
+                        )
+                        continue
+
                     payload = demo_cache.load_parsed_demo(
                         cache_dir=self.parsed_demo_dir,
                         match_id=match_id,
@@ -931,6 +1018,7 @@ class DemoScrapperRestoreMixin:
                         map_number=map_number,
                         parsed_payload=payload,
                         source_file=row.get("source_file") or row.get("filename"),
+                        payload_sha256=payload_sha256,
                         conn=conn,
                         source_match_to_canonical=source_match_to_canonical,
                         next_local_match_id_state=next_local_match_id_state,
@@ -965,6 +1053,30 @@ class DemoScrapperRestoreMixin:
                     )
 
                 try:
+                    payload_sha256 = demo_cache.compute_payload_sha256(
+                        cache_dir=self.parsed_demo_dir,
+                        match_id=match_id,
+                        map_number=map_number,
+                        filename=filename,
+                    )
+
+                    if is_restore_signature_current(
+                        source_match_id=match_id,
+                        source_map_number=map_number,
+                        payload_sha256=payload_sha256,
+                        conn=conn,
+                    ):
+                        skipped += 1
+                        self._log_stage(
+                            "RESTORE",
+                            (
+                                "SKIP unchanged orphaned payload "
+                                f"match={match_id} map={map_number} sha256={str(payload_sha256)[:12]}"
+                            ),
+                            level="INFO",
+                        )
+                        continue
+
                     payload = demo_cache.load_parsed_demo(
                         cache_dir=self.parsed_demo_dir,
                         match_id=match_id,
@@ -980,6 +1092,7 @@ class DemoScrapperRestoreMixin:
                         map_number=map_number,
                         parsed_payload=payload,
                         source_file=filename,
+                        payload_sha256=payload_sha256,
                         conn=conn,
                         source_match_to_canonical=source_match_to_canonical,
                         next_local_match_id_state=next_local_match_id_state,
@@ -1021,11 +1134,12 @@ class DemoScrapperRestoreMixin:
 
         self._log_stage(
             "RESTORE",
-            f"Summary restored_maps={restored_maps} restored_players={restored_players} failed={failed}",
+            f"Summary restored_maps={restored_maps} restored_players={restored_players} skipped={skipped} failed={failed}",
         )
         return {
             "restored_maps": restored_maps,
             "restored_players": restored_players,
+            "skipped": skipped,
             "failed": failed,
             "cache_rows": len(rows),
             "orphaned_files": len(orphaned_files),

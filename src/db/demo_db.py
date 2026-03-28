@@ -1,5 +1,5 @@
 from .matches_db import get_all_matches_with_maps, get_match_map_steamids
-from .connection_db import get_conn
+from .connection_db import execute_write, get_conn
 import services.logger as logger
 from datetime import datetime
 
@@ -238,3 +238,81 @@ def resolve_equivalent_match_map(
         level="DEBUG",
     )
     return best
+
+
+def is_restore_signature_current(source_match_id, source_map_number, payload_sha256, conn=None):
+    if not str(payload_sha256 or "").strip():
+        return False
+
+    own_conn = conn is None
+    conn = conn or get_conn()
+
+    try:
+        row = conn.execute(
+            """
+            SELECT payload_sha256
+            FROM cache_restore_state
+            WHERE source_match_id = ?
+              AND source_map_number = ?
+            LIMIT 1
+            """,
+            (str(source_match_id), int(source_map_number)),
+        ).fetchone()
+    finally:
+        if own_conn:
+            conn.close()
+
+    return row is not None and str(row["payload_sha256"] or "") == str(payload_sha256)
+
+
+def upsert_restore_signature(
+    source_match_id,
+    source_map_number,
+    payload_sha256,
+    canonical_match_id=None,
+    canonical_map_number=None,
+    source_file=None,
+    conn=None,
+):
+    if not str(payload_sha256 or "").strip():
+        return
+
+    own_conn = conn is None
+    conn = conn or get_conn()
+
+    try:
+        execute_write(
+            conn,
+            """
+            INSERT INTO cache_restore_state (
+                source_match_id,
+                source_map_number,
+                payload_sha256,
+                canonical_match_id,
+                canonical_map_number,
+                source_file,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(source_match_id, source_map_number) DO UPDATE SET
+                payload_sha256 = excluded.payload_sha256,
+                canonical_match_id = excluded.canonical_match_id,
+                canonical_map_number = excluded.canonical_map_number,
+                source_file = excluded.source_file,
+                updated_at = datetime('now')
+            """,
+            (
+                str(source_match_id),
+                int(source_map_number),
+                str(payload_sha256),
+                str(canonical_match_id) if canonical_match_id is not None else None,
+                int(canonical_map_number) if canonical_map_number is not None else None,
+                str(source_file) if source_file is not None else None,
+            ),
+        )
+
+        if own_conn:
+            conn.commit()
+    finally:
+        if own_conn:
+            conn.close()

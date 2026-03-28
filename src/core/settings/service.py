@@ -13,6 +13,8 @@ def _to_bool(value):
 
 SETTINGS_SCHEMA = {
     "update_cooldown_minutes": int,
+    "max_ram_mb": int,
+    "max_demos_per_update": int,
     "log_level": str,
     "dist_weight": float,
     "default_rating": int,

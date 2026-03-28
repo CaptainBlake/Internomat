@@ -1,5 +1,6 @@
 import pickle
 import shutil
+import hashlib
 from datetime import datetime
 from pathlib import Path
 
@@ -318,3 +319,26 @@ def payload_table_stats(data):
             }
 
     return stats
+
+
+def compute_payload_sha256_from_path(file_path):
+    path = _to_path(file_path)
+    if not IOManager.file_exists(str(path)):
+        return None
+
+    hasher = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            hasher.update(chunk)
+
+    return hasher.hexdigest()
+
+
+def compute_payload_sha256(cache_dir, match_id, map_number, filename=None):
+    payload_path = _resolve_payload_path(
+        cache_dir=cache_dir,
+        match_id=match_id,
+        map_number=map_number,
+        filename=filename,
+    )
+    return compute_payload_sha256_from_path(payload_path)

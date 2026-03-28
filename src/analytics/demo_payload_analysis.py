@@ -3,6 +3,7 @@ from bisect import bisect_right
 
 import pandas as pd
 import polars as pl
+from db.weapon_catalog import normalize_weapon_name
 
 
 KILL_REWARD_BY_WEAPON_TOKEN = {
@@ -612,6 +613,145 @@ def _calc_equipment_value_and_saved_money(payload, derived):
         if item is None:
             continue
         item["money_saved"] += int(value)
+
+
+def build_derived_weapon_stats(parsed_payload):
+    """Build per-player per-weapon stats for one match-map payload."""
+    payload = parsed_payload or {}
+    stats = {}
+
+    def ensure_entry(steamid64, weapon):
+        if not steamid64 or not weapon:
+            return None
+        if steamid64 not in stats:
+            stats[steamid64] = {}
+        if weapon not in stats[steamid64]:
+            stats[steamid64][weapon] = {
+                "shots_fired": 0,
+                "shots_hit": 0,
+                "kills": 0,
+                "headshot_kills": 0,
+                "damage": 0,
+                "rounds_with_weapon": 0,
+                "_round_set": set(),
+            }
+        return stats[steamid64][weapon]
+
+    # Shots fired per weapon
+    for row in iter_rows(payload.get("shots")):
+        sid = to_steamid64_string(
+            pick_value(row, ["steamid", "steamid64", "player_steamid", "shooter_steamid"])
+        )
+        weapon = normalize_weapon_name(
+            pick_value(row, ["weapon", "weapon_name", "weapon_class", "weapon_type", "weapon_item"])
+        )
+        if not sid or not weapon:
+            continue
+
+        item = ensure_entry(sid, weapon)
+        if item is None:
+            continue
+        item["shots_fired"] += 1
+
+        round_num = to_int(pick_value(row, ["round_num", "round", "round_number"]), default=0)
+        if round_num > 0:
+            item["_round_set"].add(round_num)
+
+    # Hits and damage per weapon from damages table
+    for row in iter_rows(payload.get("damages")):
+        sid = to_steamid64_string(
+            pick_value(row, ["attacker_steamid", "attacker_steamid64", "attacker"])
+        )
+        weapon = normalize_weapon_name(
+            pick_value(row, ["weapon", "weapon_name", "weapon_class", "weapon_type", "weapon_item"])
+        )
+        if not sid or not weapon:
+            continue
+
+        attacker_side = normalize_side_label(
+            pick_value(row, ["attacker_side", "attacker_team", "attacker_team_name"])
+        )
+        victim_side = normalize_side_label(
+            pick_value(row, ["victim_side", "victim_team", "victim_team_name"])
+        )
+        if attacker_side and victim_side and attacker_side == victim_side:
+            continue
+
+        item = ensure_entry(sid, weapon)
+        if item is None:
+            continue
+
+        item["shots_hit"] += 1
+        item["damage"] += to_int(
+            pick_value(
+                row,
+                [
+                    "health_damage",
+                    "health_damage_taken",
+                    "hp_damage",
+                    "dmg_health",
+                    "damage_health",
+                    "damage",
+                ],
+            ),
+            default=0,
+        )
+
+        round_num = to_int(pick_value(row, ["round_num", "round", "round_number"]), default=0)
+        if round_num > 0:
+            item["_round_set"].add(round_num)
+
+    # Kills/headshots per weapon
+    for row in iter_rows(payload.get("kills")):
+        sid = to_steamid64_string(
+            pick_value(row, ["attacker_steamid", "attacker_steamid64", "attacker"])
+        )
+        weapon = normalize_weapon_name(
+            pick_value(row, ["weapon", "weapon_name", "weapon_class", "weapon_type", "weapon_item"])
+        )
+        if not sid or not weapon:
+            continue
+
+        attacker_side = normalize_side_label(
+            pick_value(row, ["attacker_side", "attacker_team", "attacker_team_name"])
+        )
+        victim_side = normalize_side_label(
+            pick_value(row, ["victim_side", "victim_team", "victim_team_name"])
+        )
+        if attacker_side and victim_side and attacker_side == victim_side:
+            continue
+
+        item = ensure_entry(sid, weapon)
+        if item is None:
+            continue
+
+        item["kills"] += 1
+        is_hs = pick_value(row, ["is_headshot", "headshot", "isheadshot"])
+        if is_hs in {True, 1, "1", "true", "True"}:
+            item["headshot_kills"] += 1
+
+        round_num = to_int(pick_value(row, ["round_num", "round", "round_number"]), default=0)
+        if round_num > 0:
+            item["_round_set"].add(round_num)
+
+    # Finalize rounds_with_weapon and strip internal fields.
+    for sid, weapons in list(stats.items()):
+        for weapon, item in list(weapons.items()):
+            item["rounds_with_weapon"] = int(len(item.get("_round_set") or set()))
+            item.pop("_round_set", None)
+
+            if (
+                item["shots_fired"] <= 0
+                and item["shots_hit"] <= 0
+                and item["kills"] <= 0
+                and item["damage"] <= 0
+            ):
+                weapons.pop(weapon, None)
+
+        if not weapons:
+            stats.pop(sid, None)
+
+    return stats
 
 
 def build_derived_restore_stats(parsed_payload):

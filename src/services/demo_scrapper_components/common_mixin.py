@@ -407,10 +407,12 @@ class DemoScrapperCommonMixin:
             data["derived_player_stats"] = demo_payload_analysis.build_derived_player_stats(data)
             data["derived_round_timeline"] = demo_payload_analysis.build_derived_round_timeline(data)
             data["derived_restore_stats"] = demo_payload_analysis.build_derived_restore_stats(data)
+            data["derived_weapon_stats"] = demo_payload_analysis.build_derived_weapon_stats(data)
         except Exception:
             data["derived_player_stats"] = {}
             data["derived_round_timeline"] = []
             data["derived_restore_stats"] = {}
+            data["derived_weapon_stats"] = {}
 
         # Compute advanced awpy stats functions if available
         # These provide precomputed aggregates (ADR, KAST, Impact, Rating, etc.)

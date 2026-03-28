@@ -415,8 +415,12 @@ class DemoScrapperMetricsMixin:
                     steamid = self._pick_value(row_dict, ["steamid", "steamid64"])
                     steamid64 = self._to_steamid64_string(steamid)
                     if steamid64 and steamid64 in metrics:
-                        # Store KAST for potential UI use
-                        pass
+                        kast_val = self._pick_value(row_dict, ["kast%", "kast_pct", "kast"])
+                        if kast_val is not None:
+                            try:
+                                metrics[steamid64]["kast"] = float(kast_val)
+                            except (ValueError, TypeError):
+                                pass
             except Exception:
                 pass
 
@@ -428,8 +432,12 @@ class DemoScrapperMetricsMixin:
                     steamid = self._pick_value(row_dict, ["steamid", "steamid64"])
                     steamid64 = self._to_steamid64_string(steamid)
                     if steamid64 and steamid64 in metrics:
-                        # Store Impact for potential UI use
-                        pass
+                        impact_val = self._pick_value(row_dict, ["impact"])
+                        if impact_val is not None:
+                            try:
+                                metrics[steamid64]["impact"] = float(impact_val)
+                            except (ValueError, TypeError):
+                                pass
             except Exception:
                 pass
 
@@ -441,8 +449,12 @@ class DemoScrapperMetricsMixin:
                     steamid = self._pick_value(row_dict, ["steamid", "steamid64"])
                     steamid64 = self._to_steamid64_string(steamid)
                     if steamid64 and steamid64 in metrics:
-                        # Store Rating for potential UI use
-                        pass
+                        rating_val = self._pick_value(row_dict, ["rating"])
+                        if rating_val is not None:
+                            try:
+                                metrics[steamid64]["rating"] = float(rating_val)
+                            except (ValueError, TypeError):
+                                pass
             except Exception:
                 pass
 
@@ -531,6 +543,9 @@ class DemoScrapperMetricsMixin:
                     "live_time": 0,
                     "cash_earned": 0,
                     "enemies_flashed": 0,
+                    "kast": None,
+                    "impact": None,
+                    "rating": None,
                 }
             else:
                 if name:
@@ -777,6 +792,9 @@ class DemoScrapperMetricsMixin:
                     "head_shot_kills": self._to_int(item.get("head_shot_kills")),
                     "cash_earned": self._to_int(item.get("cash_earned")),
                     "enemies_flashed": self._to_int(item.get("enemies_flashed")),
+                    "kast": float(item["kast"]) if item.get("kast") is not None else None,
+                    "impact": float(item["impact"]) if item.get("impact") is not None else None,
+                    "rating": float(item["rating"]) if item.get("rating") is not None else None,
                 }
             )
 
