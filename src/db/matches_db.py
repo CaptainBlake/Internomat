@@ -1,5 +1,75 @@
-from .connection_db import execute_write, get_conn
+from .connection_db import execute_write, executemany_write, get_conn
 import services.logger as logger
+
+
+_UPSERT_PLAYER_STATS_SQL = """
+        INSERT INTO match_player_stats (
+            steamid64, match_id, map_number,
+            name, team,
+            kills, deaths, assists, damage,
+            enemy5ks, enemy4ks, enemy3ks, enemy2ks,
+            utility_count, utility_damage, utility_successes, utility_enemies,
+            flash_count, flash_successes,
+            health_points_removed_total, health_points_dealt_total,
+            shots_fired_total, shots_on_target_total,
+            v1_count, v1_wins, v2_count, v2_wins,
+            entry_count, entry_wins,
+            equipment_value, money_saved, kill_reward, live_time,
+            head_shot_kills, cash_earned, enemies_flashed
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(steamid64, match_id, map_number) DO UPDATE SET
+            name=excluded.name,
+            team=excluded.team,
+            kills=excluded.kills,
+            deaths=excluded.deaths,
+            assists=excluded.assists,
+            damage=excluded.damage,
+            enemy5ks=excluded.enemy5ks,
+            enemy4ks=excluded.enemy4ks,
+            enemy3ks=excluded.enemy3ks,
+            enemy2ks=excluded.enemy2ks,
+            utility_count=excluded.utility_count,
+            utility_damage=excluded.utility_damage,
+            utility_successes=excluded.utility_successes,
+            utility_enemies=excluded.utility_enemies,
+            flash_count=excluded.flash_count,
+            flash_successes=excluded.flash_successes,
+            health_points_removed_total=excluded.health_points_removed_total,
+            health_points_dealt_total=excluded.health_points_dealt_total,
+            shots_fired_total=excluded.shots_fired_total,
+            shots_on_target_total=excluded.shots_on_target_total,
+            v1_count=excluded.v1_count,
+            v1_wins=excluded.v1_wins,
+            v2_count=excluded.v2_count,
+            v2_wins=excluded.v2_wins,
+            entry_count=excluded.entry_count,
+            entry_wins=excluded.entry_wins,
+            equipment_value=excluded.equipment_value,
+            money_saved=excluded.money_saved,
+            kill_reward=excluded.kill_reward,
+            live_time=excluded.live_time,
+            head_shot_kills=excluded.head_shot_kills,
+            cash_earned=excluded.cash_earned,
+            enemies_flashed=excluded.enemies_flashed
+        """
+
+
+def _player_stats_params(data):
+    return (
+        data["steamid64"], data["match_id"], data["map_number"],
+        data["name"], data["team"],
+        data["kills"], data["deaths"], data["assists"], data["damage"],
+        data["enemy5ks"], data["enemy4ks"], data["enemy3ks"], data["enemy2ks"],
+        data["utility_count"], data["utility_damage"], data["utility_successes"], data["utility_enemies"],
+        data["flash_count"], data["flash_successes"],
+        data["health_points_removed_total"], data["health_points_dealt_total"],
+        data["shots_fired_total"], data["shots_on_target_total"],
+        data["v1_count"], data["v1_wins"], data["v2_count"], data["v2_wins"],
+        data["entry_count"], data["entry_wins"],
+        data["equipment_value"], data["money_saved"], data["kill_reward"], data["live_time"],
+        data["head_shot_kills"], data["cash_earned"], data["enemies_flashed"],
+    )
 
 
 def insert_match(data, conn=None):
@@ -96,42 +166,25 @@ def insert_match_player_stats(data, conn=None):
     conn = conn or get_conn()
 
     try:
-        execute_write(conn, """
-        INSERT INTO match_player_stats (
-            steamid64, match_id, map_number,
-            name, team,
-            kills, deaths, assists, damage,
-            enemy5ks, enemy4ks, enemy3ks, enemy2ks,
-            utility_count, utility_damage, utility_successes, utility_enemies,
-            flash_count, flash_successes,
-            health_points_removed_total, health_points_dealt_total,
-            shots_fired_total, shots_on_target_total,
-            v1_count, v1_wins, v2_count, v2_wins,
-            entry_count, entry_wins,
-            equipment_value, money_saved, kill_reward, live_time,
-            head_shot_kills, cash_earned, enemies_flashed
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(steamid64, match_id, map_number) DO UPDATE SET
-            kills=excluded.kills,
-            deaths=excluded.deaths,
-            assists=excluded.assists,
-            damage=excluded.damage,
-            cash_earned=excluded.cash_earned
-        """, (
-            data["steamid64"], data["match_id"], data["map_number"],
-            data["name"], data["team"],
-            data["kills"], data["deaths"], data["assists"], data["damage"],
-            data["enemy5ks"], data["enemy4ks"], data["enemy3ks"], data["enemy2ks"],
-            data["utility_count"], data["utility_damage"], data["utility_successes"], data["utility_enemies"],
-            data["flash_count"], data["flash_successes"],
-            data["health_points_removed_total"], data["health_points_dealt_total"],
-            data["shots_fired_total"], data["shots_on_target_total"],
-            data["v1_count"], data["v1_wins"], data["v2_count"], data["v2_wins"],
-            data["entry_count"], data["entry_wins"],
-            data["equipment_value"], data["money_saved"], data["kill_reward"], data["live_time"],
-            data["head_shot_kills"], data["cash_earned"], data["enemies_flashed"]
-        ))
+        execute_write(conn, _UPSERT_PLAYER_STATS_SQL, _player_stats_params(data))
+
+        if own_conn:
+            conn.commit()
+    finally:
+        if own_conn:
+            conn.close()
+
+
+def insert_match_player_stats_many(rows, conn=None):
+    if not rows:
+        return
+
+    own_conn = conn is None
+    conn = conn or get_conn()
+
+    try:
+        params = [_player_stats_params(row) for row in rows]
+        executemany_write(conn, _UPSERT_PLAYER_STATS_SQL, params)
 
         if own_conn:
             conn.commit()
@@ -221,6 +274,86 @@ def get_match_map_steamids(match_id, map_number, conn=None):
             conn.close()
 
     return {str(row["steamid64"]) for row in rows}
+
+
+def get_next_local_match_id(conn=None, start_from=1):
+    """Return the next positive integer match_id reserved for Internomat-local ids."""
+    own_conn = conn is None
+    conn = conn or get_conn()
+
+    try:
+        row = conn.execute(
+            """
+            SELECT MAX(CAST(match_id AS INTEGER)) AS max_id
+            FROM matches
+            WHERE match_id GLOB '[0-9]*'
+            """
+        ).fetchone()
+    finally:
+        if own_conn:
+            conn.close()
+
+    max_id = 0
+    if row is not None and row["max_id"] is not None:
+        try:
+            max_id = int(row["max_id"])
+        except Exception:
+            max_id = 0
+
+    next_id = max(max_id + 1, int(start_from))
+    return str(next_id)
+
+
+def get_next_map_number_for_match(match_id, conn=None, start_from=0):
+    own_conn = conn is None
+    conn = conn or get_conn()
+
+    try:
+        row = conn.execute(
+            """
+            SELECT MAX(map_number) AS max_map
+            FROM match_maps
+            WHERE match_id = ?
+            """,
+            (str(match_id),),
+        ).fetchone()
+    finally:
+        if own_conn:
+            conn.close()
+
+    max_map = None
+    if row is not None:
+        max_map = row["max_map"]
+
+    if max_map is None:
+        return int(start_from)
+
+    try:
+        return int(max_map) + 1
+    except Exception:
+        return int(start_from)
+
+
+def match_map_has_player_stats(match_id, map_number, conn=None):
+    own_conn = conn is None
+    conn = conn or get_conn()
+
+    try:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM match_player_stats
+            WHERE match_id = ?
+              AND map_number = ?
+            LIMIT 1
+            """,
+            (str(match_id), int(map_number)),
+        ).fetchone()
+    finally:
+        if own_conn:
+            conn.close()
+
+    return row is not None
 
 
 def get_match_map_players(match_id, map_number, conn=None):

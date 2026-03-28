@@ -1,21 +1,10 @@
-#/src/services/demo_scrapper.py
-
 import os
-import math
 from ftplib import FTP
 from pathlib import Path
 from threading import Lock
 
-import pandas as pd
-import polars as pl
-from awpy.demo import Demo
 from db.connection_db import get_conn
-from db.demo_db import (
-    get_expected_demo_players,
-    load_demo_match_catalog,
-    resolve_map_number,
-)
-from db.matches_db import set_match_has_demo
+from db.demo_db import load_demo_match_catalog
 from db.matches_db import get_match_map_players
 from db.players_db import upsert_players_from_match_stats
 from core.settings.settings import settings
@@ -24,13 +13,24 @@ from services.IO_manager import IOManager
 from services import demo_cache
 from services import executor
 import services.logger as logger
+from services.demo_scrapper_components import (
+    DemoScrapperCommonMixin,
+    DemoScrapperMetricsMixin,
+    DemoScrapperParserLayer,
+    DemoScrapperRestoreMixin,
+)
 
 
 class DemoSyncCancelled(Exception):
     """Raised when the user cancels an in-flight demo sync."""
 
-class DemoScrapperIntegration:
-    """flow for downloading, parsing, and structuring demos."""
+
+class DemoScrapperIntegration(
+    DemoScrapperCommonMixin,
+    DemoScrapperMetricsMixin,
+    DemoScrapperRestoreMixin,
+):
+    """Flow for downloading, parsing, and structuring demos."""
 
     @staticmethod
     def _log_stage(stage, message, level="INFO"):
@@ -86,6 +86,9 @@ class DemoScrapperIntegration:
         logger.log_debug(f"Valid match_ids: {sorted(self.valid_match_ids)}")
         logger.log_info(f"Parsed demo cache dir: {self.parsed_demo_dir}")
 
+        # Keep parser concerns in a dedicated layer so awpy usage stays isolated.
+        self.parser_layer = DemoScrapperParserLayer(self)
+
     def _is_cancel_requested(self):
         try:
             return bool(self.cancel_requested and self.cancel_requested())
@@ -120,185 +123,6 @@ class DemoScrapperIntegration:
         except Exception:
             pass
 
-    # --- SHARED UTILS ---
-
-    def extract_match_id(self, filename):
-        try:
-            return int(filename.split("_")[2])
-        except Exception:
-            return None
-
-    @staticmethod
-    def extract_parts(filename):
-        # 2026-03-20_22-48-10_4_cs_office_team_...vs_...
-        parts = filename.replace(".dem", "").split("_")
-
-        try:
-            date = parts[0]
-            time = parts[1]
-            match_id = str(parts[2])
-            map_name = f"{parts[3]}_{parts[4]}"
-            return date, time, match_id, map_name
-        except Exception:
-            return None, None, None, None
-
-    @staticmethod
-    def _to_steamid64_string(value):
-        if value is None:
-            return None
-
-        if isinstance(value, bool):
-            return None
-
-        try:
-            if isinstance(value, int):
-                number = value
-            elif isinstance(value, float):
-                if math.isnan(value) or math.isinf(value):
-                    return None
-                number = int(value)
-            else:
-                text = str(value).strip()
-                if not text or text.lower() in {"nan", "none"}:
-                    return None
-
-                if text.endswith(".0"):
-                    text = text[:-2]
-
-                if not text.isdigit():
-                    return None
-
-                number = int(text)
-        except Exception:
-            return None
-
-        # Ignore non-player ids like 0 or tiny integers.
-        if number < 10_000_000_000_000_000:
-            return None
-
-        return str(number)
-
-    @staticmethod
-    def _steamid_like_column(col_name):
-        normalized = str(col_name).lower().replace("-", "_")
-        return "steamid" in normalized or "steam_id" in normalized
-
-    @staticmethod
-    def _get_table_columns(table):
-        if isinstance(table, pd.DataFrame):
-            return [str(c) for c in table.columns]
-        if isinstance(table, pl.DataFrame):
-            return [str(c) for c in table.columns]
-        return []
-
-    def extract_demo_steamids(self, data):
-        steamids = set()
-
-        table_candidates = [
-            data.get("player_round_totals"),
-            data.get("kills"),
-            data.get("damages"),
-            data.get("shots"),
-            data.get("grenades"),
-            data.get("footsteps"),
-        ]
-
-        scanned_columns = []
-
-        for table in table_candidates:
-            if isinstance(table, pd.DataFrame):
-                if table.empty:
-                    continue
-
-                for col in table.columns:
-                    col_name = str(col)
-                    scanned_columns.append(col_name)
-                    if not self._steamid_like_column(col_name):
-                        continue
-
-                    for value in table[col].dropna().tolist():
-                        sid = self._to_steamid64_string(value)
-                        if sid:
-                            steamids.add(sid)
-
-                continue
-
-            if isinstance(table, pl.DataFrame):
-                if table.height == 0:
-                    continue
-
-                for col in table.columns:
-                    col_name = str(col)
-                    scanned_columns.append(col_name)
-                    if not self._steamid_like_column(col_name):
-                        continue
-
-                    for value in table.get_column(col).drop_nulls().to_list():
-                        sid = self._to_steamid64_string(value)
-                        if sid:
-                            steamids.add(sid)
-
-        if not steamids and scanned_columns:
-            logger.log_debug(f"[Validator] Scanned columns without steamid hit: {sorted(set(scanned_columns))}")
-
-        return steamids
-
-    def validate_demo_players(self, match_id, map_number, data, conn=None):
-        expected_players = get_expected_demo_players(
-            match_id=match_id,
-            map_number=map_number,
-            conn=conn,
-        )
-
-        if not expected_players:
-            logger.log_warning(
-                f"[Validator] No expected players in DB for match={match_id}, map={map_number}; accepting demo"
-            )
-            return True
-
-        parsed_players = self.extract_demo_steamids(data)
-
-        if not parsed_players:
-            logger.log_warning(
-                f"[Validator] No parsed steamids for match={match_id}, map={map_number}; rejecting demo"
-            )
-            return False
-
-        is_valid = expected_players == parsed_players
-
-        if not is_valid:
-            missing = sorted(expected_players - parsed_players)
-            extra = sorted(parsed_players - expected_players)
-            logger.log_debug(
-                "[Validator] "
-                f"match={match_id} map={map_number} missing={missing} extra={extra}"
-            )
-
-        logger.log_info(
-            "[Validator] "
-            f"match={match_id} map={map_number} "
-            f"expected={len(expected_players)} parsed={len(parsed_players)} valid={is_valid}"
-        )
-
-        return is_valid
-
-    @staticmethod
-    def extract_ids_from_normalized(filename):
-        # 2026-03-20_22-48-10_match_4_map_1_cs_office.dem
-        parts = filename.replace(".dem", "").split("_")
-
-        try:
-            # find dynamic positions (safer than fixed indices)
-            match_idx = parts.index("match")
-            map_idx = parts.index("map")
-
-            match_id = int(parts[match_idx + 1])
-            map_number = int(parts[map_idx + 1])
-
-            return match_id, map_number
-        except Exception:
-            return None, None
-
     # --- FTP ---
 
     def download_demo(self):
@@ -324,7 +148,7 @@ class DemoScrapperIntegration:
             total_demo_files = max(1, len(demo_files))
             processed_demo_files = 0
 
-            downloaded, skipped, skipped_parsed, ignored = 0, 0, 0, 0
+            downloaded, skipped, skipped_parsed, ignored, recovered = 0, 0, 0, 0, 0
 
             self._log_stage("FTP", f"Found {len(files)} remote files")
             self._emit_progress(
@@ -346,28 +170,25 @@ class DemoScrapperIntegration:
                         stage="ftp",
                     )
 
-                    date, time, match_id, map_name = self.extract_parts(file)
-
-                    if match_id is None:
+                    normalized = self._normalize_demo_identity(file)
+                    if not normalized:
                         ignored += 1
                         continue
 
-                    if match_id not in self.valid_match_ids:
-                        ignored += 1
-                        continue
-
-                    map_number = resolve_map_number(self.match_catalog, match_id, map_name)
-
-                    if map_number is None:
-                        ignored += 1
-                        logger.log_debug(
-                            f"[IGNORE] {file} map_name={map_name} does not exist for match={match_id}"
-                        )
-                        continue
-
-                    normalized_name = f"{date}_{time}_match_{match_id}_map_{map_number}_{map_name}.dem"
+                    normalized_name = normalized["normalized_name"]
                     local_file = self.demo_dir / normalized_name
                     temp_local_file = self.demo_dir / f"{normalized_name}.part"
+
+                    if normalized.get("recovered_from_catalog_miss"):
+                        recovered += 1
+                        self._log_stage(
+                            "FTP",
+                            (
+                                f"RECOVERED mapping for {file} "
+                                f"-> match={normalized['match_id']} map={normalized['map_number']}"
+                            ),
+                            level="DEBUG",
+                        )
 
                     if normalized_name in parsed_sources:
                         self._log_stage("FTP", f"SKIP parsed cache {normalized_name}", level="DEBUG")
@@ -461,13 +282,16 @@ class DemoScrapperIntegration:
             self._log_stage("FTP", "Done")
             self._log_stage(
                 "FTP",
-                f"Summary downloaded={downloaded} skipped_local={skipped} skipped_parsed={skipped_parsed} ignored={ignored}",
+                (
+                    f"Summary downloaded={downloaded} skipped_local={skipped} "
+                    f"skipped_parsed={skipped_parsed} ignored={ignored} recovered={recovered}"
+                ),
             )
             self._emit_progress(
                 70,
                 (
                     f"FTP done: downloaded={downloaded}, skipped={skipped}, "
-                    f"skipped_parsed={skipped_parsed}, ignored={ignored}"
+                    f"skipped_parsed={skipped_parsed}, ignored={ignored}, recovered={recovered}"
                 ),
                 stage="ftp",
             )
@@ -477,6 +301,7 @@ class DemoScrapperIntegration:
                 "skipped": skipped,
                 "skipped_parsed": skipped_parsed,
                 "ignored": ignored,
+                "recovered": recovered,
                 "remote_files": len(files),
             }
 
@@ -486,365 +311,55 @@ class DemoScrapperIntegration:
             except Exception:
                 pass
 
-        return {
-            "downloaded": 0,
-            "skipped": 0,
-            "skipped_parsed": 0,
-            "ignored": 0,
-            "remote_files": 0,
-        }
     # --- DEMO MATCH + LOAD ---
 
     def match_and_load_demos(self, progress_start=None, progress_end=None):
-        self._ensure_not_cancelled(stage="matcher")
-
-        demo_files = IOManager.list_files(self.demo_dir, ".dem")
-        parsed_sources = IOManager.list_parsed_demo_sources(self.parsed_demo_dir)
-
-        self._log_stage("MATCHER", f"Found normalized_demos={len(demo_files)} cached_entries={len(parsed_sources)}")
-
-        results = []
-        failed = []
-        skipped_parsed = 0
-        total_files = max(1, len(demo_files))
-
-        for idx, file in enumerate(demo_files, start=1):
-            self._ensure_not_cancelled(stage="matcher")
-
-            entry_start = None
-            entry_end = None
-            if progress_start is not None and progress_end is not None:
-                span = max(0, int(progress_end) - int(progress_start))
-                entry_start = int(progress_start) + int((idx - 1) / total_files * span)
-                entry_end = int(progress_start) + int(idx / total_files * span)
-                self._emit_progress(entry_start, f"Matcher {idx}/{total_files}: {file.name}", stage="matcher")
-
-            if file.name in parsed_sources:
-                self._log_stage("MATCHER", f"SKIP parsed {file.name}", level="DEBUG")
-                skipped_parsed += 1
-                continue
-
-            match_id, map_number = self.extract_ids_from_normalized(file.name)
-
-            if match_id is None or map_number is None:
-                self._log_stage("MATCHER", f"Invalid normalized file {file.name}", level="ERROR")
-                continue
-
-            self._log_stage("MATCHER", f"LOAD {file.name} match={match_id} map={map_number}")
-            if entry_start is not None and entry_end is not None:
-                mid = entry_start + int((entry_end - entry_start) * 0.4)
-                self._emit_progress(mid, f"Parsing demo {file.name}", stage="matcher")
-
-            try:
-                demo = Demo(str(file))
-                demo.parse()
-
-                results.append(
-                    {
-                        "file": file,
-                        "match_id": match_id,
-                        "map_number": map_number,
-                        "demo": demo,
-                    }
-                )
-
-                if entry_start is not None and entry_end is not None:
-                    self._emit_progress(entry_end, f"Matcher done {file.name}", stage="matcher")
-
-            except Exception as e:
-                self._log_stage("MATCHER", f"FAILED {file.name}: {e}", level="ERROR")
-                failed.append(file.name)
-
-        self._log_stage(
-            "MATCHER",
-            f"Summary loaded={len(results)} failed={len(failed)} skipped_parsed={skipped_parsed}",
+        return self.parser_layer.match_and_load_demos(
+            progress_start=progress_start,
+            progress_end=progress_end,
         )
-
-        if failed:
-            self._log_stage("MATCHER", "Failed demos list follows", level="ERROR")
-            for failed_demo in failed:
-                self._log_stage("MATCHER", failed_demo, level="ERROR")
-
-        if progress_start is not None and progress_end is not None:
-            self._emit_progress(int(progress_end), "Matcher completed", stage="matcher")
-
-        return results, {
-            "loaded": len(results),
-            "failed": len(failed),
-            "failed_files": failed,
-            "skipped_parsed": skipped_parsed,
-            "normalized_files": len(demo_files),
-            "cached_entries": len(parsed_sources),
-        }
 
     # --- PARSER ---
 
-    @staticmethod
-    def parse_demo_full(demo):
-        data = {"header": demo.header}
-
-        for raw_key in ["events", "game_events", "ticks_df"]:
-            try:
-                raw_value = getattr(demo, raw_key, None)
-                if raw_value is not None:
-                    data[raw_key] = raw_value
-            except Exception:
-                data[raw_key] = None
-
-        table_map = {
-            "rounds": "rounds",
-            "rounds_stats": "rounds_stats",
-            "kills": "kills",
-            "damages": "damages",
-            "grenades": "grenades",
-            "shots": "shots",
-            "footsteps": "footsteps",
-            "smokes": "smokes",
-            "infernos": "infernos",
-            "bomb": "bomb",
-            "bomb_plants": "bomb_plants",
-            "bomb_defuses": "bomb_defuses",
-            "ticks": "ticks",
-            "frames": "frames",
-            "player_frames": "player_frames",
-            "player_round_totals": "player_round_totals",
-            "weapon_fires": "weapon_fires",
-            "flashes": "flashes",
-            "hegrenades": "hegrenades",
-            "server_cvars": "server_cvars",
-        }
-
-        for key, attr in table_map.items():
-            try:
-                value = getattr(demo, attr, None)
-
-                if value is None:
-                    data[key] = None
-                    continue
-
-                if isinstance(value, pd.DataFrame):
-                    df = value
-                elif isinstance(value, list):
-                    df = pd.DataFrame(value)
-                else:
-                    df = value
-
-                data[key] = df
-
-            except Exception:
-                data[key] = None
-
-        return data
-
-    @staticmethod
-    def _verify_cached_roundtrip(match_id, map_number, data, cached_data):
-        source_stats = demo_cache.payload_table_stats(data)
-        cached_stats = demo_cache.payload_table_stats(cached_data)
-
-        source_keys = set(source_stats.keys())
-        cached_keys = set(cached_stats.keys())
-
-        if source_keys != cached_keys:
-            missing = sorted(source_keys - cached_keys)
-            extra = sorted(cached_keys - source_keys)
-            logger.log_warning(
-                "[CACHE] Roundtrip key mismatch "
-                f"match={match_id} map={map_number} missing={missing} extra={extra}"
-            )
-            return
-
-        diffs = []
-        for key in sorted(source_keys):
-            if source_stats[key] != cached_stats[key]:
-                diffs.append(key)
-
-        if diffs:
-            logger.log_warning(
-                "[CACHE] Roundtrip table stats mismatch "
-                f"match={match_id} map={map_number} keys={diffs}"
-            )
-            return
-
-        logger.log_debug(
-            f"[CACHE] Roundtrip verified match={match_id} map={map_number} tables={len(source_keys)}"
-        )
-
-    @staticmethod
-    def print_headers(data, preview=False):
-        logger.log_info("=== TABLE HEADERS ===")
-
-        for key, value in data.items():
-            logger.log_info(f"[TABLE] {key}")
-
-            if value is None:
-                logger.log_info("  -> None")
-                continue
-
-            if isinstance(value, pd.DataFrame):
-                logger.log_info(f"  Rows: {len(value)}")
-                logger.log_info(f"  Columns ({len(value.columns)}):")
-                for col in value.columns:
-                    logger.log_info(f"    - {col}")
-
-                if preview:
-                    logger.log_info("  Preview:")
-                    logger.log_info(f"{value.head(3)}")
-
-            elif isinstance(value, pl.DataFrame):
-                logger.log_info(f"  Rows: {value.height}")
-                logger.log_info(f"  Columns ({len(value.columns)}):")
-                for col in value.columns:
-                    logger.log_info(f"    - {col}")
-
-            else:
-                logger.log_info(f"  Type: {type(value).__name__}")
-
-    @staticmethod
-    def get_cvars(data):
-        cvars = data.get("server_cvars")
-        if cvars is None:
-            logger.log_warning("No CVARs")
-        return cvars
-
     def build_demo_data(self, matched, progress_start=None, progress_end=None):
-        self._ensure_not_cancelled(stage="parser")
-
-        cache_manifest = {}
-        failed = 0
-        rejected = 0
-
-        self._log_stage("PARSER", "Building structured datasets")
-
-        total_entries = max(1, len(matched))
-
-        with get_conn(db_file=self.db_file) as conn:
-            for idx, entry in enumerate(matched, start=1):
-                self._ensure_not_cancelled(stage="parser")
-
-                entry_start = None
-                entry_end = None
-                if progress_start is not None and progress_end is not None:
-                    span = max(0, int(progress_end) - int(progress_start))
-                    entry_start = int(progress_start) + int((idx - 1) / total_entries * span)
-                    entry_end = int(progress_start) + int(idx / total_entries * span)
-                    percent = entry_start
-                    self._emit_progress(
-                        percent,
-                        f"Parser {idx}/{total_entries}: {entry['file'].name}",
-                        stage="parser",
-                    )
-
-                match_id = entry["match_id"]
-                map_number = entry["map_number"]
-                demo = entry["demo"]
-                filename = entry["file"].name
-
-                key = (match_id, map_number)
-
-                self._log_stage("PARSER", f"PARSE {filename} match={match_id} map={map_number}")
-
-                try:
-                    data = self.parse_demo_full(demo)
-                    if entry_start is not None and entry_end is not None:
-                        p = entry_start + int((entry_end - entry_start) * 0.35)
-                        self._emit_progress(p, f"Validated structure {filename}", stage="parser")
-
-                    if not self.validate_demo_players(match_id, map_number, data, conn=conn):
-                        logger.log_warning(
-                            f"[REJECTED] {filename} failed player validation for match={match_id}, map={map_number}"
-                        )
-                        rejected += 1
-                        if entry_end is not None:
-                            self._emit_progress(entry_end, f"Rejected {filename}", stage="parser")
-                        continue
-
-                    if entry_start is not None and entry_end is not None:
-                        p = entry_start + int((entry_end - entry_start) * 0.65)
-                        self._emit_progress(p, f"Saving parsed payload {filename}", stage="parser")
-
-                    manifest = demo_cache.save_parsed_demo(
-                        cache_dir=self.parsed_demo_dir,
-                        match_id=match_id,
-                        map_number=map_number,
-                        data=data,
-                        source_file=entry["file"],
-                    )
-
-                    cached_data = demo_cache.load_parsed_demo(
-                        cache_dir=self.parsed_demo_dir,
-                        match_id=match_id,
-                        map_number=map_number,
-                    )
-                    self._verify_cached_roundtrip(match_id, map_number, data, cached_data)
-
-                    set_match_has_demo(match_id=match_id, has_demo=True, conn=conn)
-
-                    cache_manifest[key] = manifest
-
-                    if entry_end is not None:
-                        self._emit_progress(entry_end, f"Parser done {filename}", stage="parser")
-
-                except Exception as e:
-                    self._log_stage("PARSER", f"FAILED {filename}: {e}", level="ERROR")
-                    failed += 1
-                    if entry_end is not None:
-                        self._emit_progress(entry_end, f"Parser failed {filename}", stage="parser")
-
-        self._log_stage(
-            "PARSER",
-            f"Summary parsed_cached={len(cache_manifest)} rejected={rejected} failed={failed}",
+        return self.parser_layer.build_demo_data(
+            matched=matched,
+            progress_start=progress_start,
+            progress_end=progress_end,
         )
 
-        if progress_start is not None and progress_end is not None:
-            self._emit_progress(int(progress_end), "Parser completed", stage="parser")
-
-        return cache_manifest, {
-            "parsed_cached": len(cache_manifest),
-            "rejected": rejected,
-            "failed": failed,
-        }
-
-    def load_cached_demo(self, match_id, map_number):
-        return demo_cache.load_parsed_demo(
-            cache_dir=self.parsed_demo_dir,
-            match_id=match_id,
-            map_number=map_number,
-        )
-
-    def list_cached_demos(self):
-        return demo_cache.list_cached_demos(self.parsed_demo_dir)
-
-    @staticmethod
-    def print_compact_demo_headers(demo_data):
-        if demo_data:
-            logger.log_info("=== DEMO HEADERS (COMPACT) ===")
-            for (match_id, map_number), sample_data in sorted(demo_data.items()):
-                header = sample_data.get("header", {}) if isinstance(sample_data, dict) else {}
-                map_name = header.get("map_name", "?")
-                tick_count = header.get("tick_count", "?")
-                logger.log_info(f"[M{match_id}|Map{map_number}] {map_name:15} | Ticks: {tick_count}")
-
-    def import_players_from_parsed_cache(self):
+    def import_players_from_parsed_cache(self, canonical_entries=None):
         self._ensure_not_cancelled(stage="player_import")
-
-        rows = demo_cache.list_existing_cached_demos(self.parsed_demo_dir)
         import_rows = []
 
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
+        if canonical_entries:
+            for item in canonical_entries:
+                if not isinstance(item, dict):
+                    continue
+                match_id = item.get("match_id")
+                map_number = item.get("map_number")
+                if match_id is None or map_number is None:
+                    continue
+                import_rows.extend(get_match_map_players(match_id=match_id, map_number=map_number))
+            cache_entry_count = len(canonical_entries)
+        else:
+            rows = demo_cache.list_existing_cached_demos(self.parsed_demo_dir)
+            cache_entry_count = len(rows)
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
 
-            match_id = row.get("match_id")
-            map_number = row.get("map_number")
-            if match_id is None or map_number is None:
-                continue
+                match_id = row.get("match_id")
+                map_number = row.get("map_number")
+                if match_id is None or map_number is None:
+                    continue
 
-            import_rows.extend(get_match_map_players(match_id=match_id, map_number=map_number))
+                import_rows.extend(get_match_map_players(match_id=match_id, map_number=map_number))
 
         imported = upsert_players_from_match_stats(import_rows)
         self._log_stage(
             "PLAYER_IMPORT",
-            f"Imported/updated players from parsed cache entries={len(rows)} players={imported}",
+            f"Imported/updated players from parsed cache entries={cache_entry_count} players={imported}",
         )
         return imported
 
@@ -864,32 +379,94 @@ class DemoScrapperIntegration:
 
         self._ensure_not_cancelled(stage="pipeline")
 
-        self._emit_progress(89, "Stage 3/3: Validate and cache parsed demos", stage="pipeline")
+        self._emit_progress(89, "Stage 3/4: Validate and cache parsed demos", stage="pipeline")
         demo_data, parser_stats = self.build_demo_data(matched, progress_start=89, progress_end=99)
 
         self._ensure_not_cancelled(stage="pipeline")
 
+        parsed_entries = list((demo_data or {}).values())
+        skipped_cached_entries = list((matcher_stats or {}).get("skipped_parsed_entries") or [])
+
+        restore_rows = []
+        seen_restore_keys = set()
+        for row in parsed_entries + skipped_cached_entries:
+            if not isinstance(row, dict):
+                continue
+            match_id = row.get("match_id")
+            map_number = row.get("map_number")
+            if match_id is None or map_number is None:
+                continue
+            key = (str(match_id), int(map_number))
+            if key in seen_restore_keys:
+                continue
+            seen_restore_keys.add(key)
+            restore_rows.append(row)
+
+        if restore_rows:
+            self._emit_progress(95, "Stage 4/4: Restore database from parsed cache", stage="pipeline")
+            restore_stats = self.restore_db_from_parsed_cache(
+                progress_start=95,
+                progress_end=99,
+                rows=restore_rows,
+                include_orphaned=False,
+            )
+        else:
+            restore_stats = {
+                "restored_maps": 0,
+                "restored_players": 0,
+                "failed": 0,
+                "cache_rows": 0,
+                "orphaned_files": 0,
+                "canonical_match_ids": [],
+                "canonical_match_maps": [],
+            }
+            self._log_stage(
+                "RESTORE",
+                "Skip restore: no parsed or cache-skipped demos in this sync run",
+                level="INFO",
+            )
+
+        self._ensure_not_cancelled(stage="pipeline")
+
         cached_matches = {
-            str(row.get("match_id"))
-            for row in demo_cache.list_existing_cached_demos(self.parsed_demo_dir)
-            if isinstance(row, dict) and row.get("match_id") is not None
+            str(mid)
+            for mid in (restore_stats.get("canonical_match_ids") or [])
+            if mid is not None
         }
+        if not cached_matches:
+            cached_matches = {
+                str(row.get("match_id"))
+                for row in demo_cache.list_existing_cached_demos(self.parsed_demo_dir)
+                if isinstance(row, dict) and row.get("match_id") is not None
+            }
         from db.matches_db import set_demo_flags_by_match_ids
+
         set_demo_flags_by_match_ids(cached_matches)
 
         imported_players = 0
         if settings.auto_import_match_players:
-            self._emit_progress(99, "Importing players from parsed cache", stage="pipeline")
-            imported_players = self.import_players_from_parsed_cache()
+            canonical_entries = restore_stats.get("canonical_match_maps") or []
+            if canonical_entries:
+                self._emit_progress(99, "Importing players from parsed cache", stage="pipeline")
+                imported_players = self.import_players_from_parsed_cache(
+                    canonical_entries=canonical_entries
+                )
+            else:
+                self._log_stage(
+                    "PLAYER_IMPORT",
+                    "Skip player import: no restored canonical maps in this sync run",
+                    level="INFO",
+                )
 
-        self._log_stage(
-            "PIPELINE",
-            "Summary "
-            f"ftp(downloaded={ftp_stats['downloaded']} skipped_local={ftp_stats['skipped']} skipped_parsed={ftp_stats.get('skipped_parsed', 0)} ignored={ftp_stats['ignored']}) "
+        summary = (
+            f"Summary ftp(downloaded={ftp_stats['downloaded']} skipped_local={ftp_stats['skipped']} "
+            f"skipped_parsed={ftp_stats.get('skipped_parsed', 0)} ignored={ftp_stats['ignored']} recovered={ftp_stats.get('recovered', 0)}) "
             f"matcher(loaded={matcher_stats['loaded']} failed={matcher_stats['failed']} skipped_parsed={matcher_stats['skipped_parsed']}) "
             f"parser(parsed_cached={parser_stats['parsed_cached']} rejected={parser_stats['rejected']} failed={parser_stats['failed']}) "
-            f"players(imported={imported_players})",
+            f"restore(restored_maps={restore_stats['restored_maps']} restored_players={restore_stats['restored_players']} failed={restore_stats['failed']}) "
+            f"players(imported={imported_players})"
         )
+        self._log_stage("PIPELINE", summary)
         self.print_compact_demo_headers(demo_data)
         self._log_stage("PIPELINE", "Done")
         self._emit_progress(100, "Pipeline completed", stage="pipeline")

@@ -179,6 +179,8 @@ def _build_recent_maps_table(rows, on_row_activated=None):
             "match_id": str(row["match_id"]),
             "map_number": int(row["map_number"]),
             "map_name": str(row["map_name"]),
+            "cached_demo": bool(row.get("cached_demo")),
+            "db_demo_flag": bool(row.get("db_demo_flag")),
         }
 
         values = [
@@ -294,12 +296,34 @@ def _open_scoreboard_view(parent, payload):
     if getattr(parent, "_statistics_scoreboard_loading", False):
         return
 
+    def _cache_is_stale(cached_scoreboard):
+        if not isinstance(cached_scoreboard, dict):
+            return True
+
+        wants_demo_timeline = bool(payload.get("cached_demo") or payload.get("db_demo_flag"))
+        if not wants_demo_timeline:
+            return False
+
+        timeline = cached_scoreboard.get("timeline")
+        rounds = (timeline or {}).get("rounds") if isinstance(timeline, dict) else None
+        if isinstance(rounds, list) and rounds:
+            return False
+
+        return True
+
     key = (str(payload.get("match_id")), int(payload.get("map_number") or 0))
     scoreboard_cache = getattr(parent, "_statistics_scoreboard_cache", {})
     cached_scoreboard = scoreboard_cache.get(key)
-    if isinstance(cached_scoreboard, dict):
+    if isinstance(cached_scoreboard, dict) and not _cache_is_stale(cached_scoreboard):
         _render_scoreboard_content(parent, payload, cached_scoreboard)
         return
+
+    if isinstance(cached_scoreboard, dict):
+        logger.log(
+            f"[UI] Refreshing stale scoreboard cache match={key[0]} map={key[1]}",
+            level="DEBUG",
+        )
+        scoreboard_cache.pop(key, None)
 
     request_id = int(getattr(parent, "_statistics_scoreboard_request_id", 0)) + 1
     parent._statistics_scoreboard_request_id = request_id

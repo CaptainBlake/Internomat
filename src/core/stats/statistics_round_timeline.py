@@ -82,16 +82,26 @@ def build_round_timeline(summary):
     team1_name = str(summary.get("team1_name") or "")
     team2_name = str(summary.get("team2_name") or "")
 
-    rows = demo_cache.load_round_rows(match_id, map_number)
+    payload = demo_cache.load_parsed_demo_default(match_id, map_number)
+    if not isinstance(payload, dict):
+        return None
+
+    rows = demo_cache._iter_rows(payload.get("rounds"))
     if not rows:
+        rows = demo_cache._iter_rows(payload.get("rounds_stats"))
+
+    derived_rows = payload.get("derived_round_timeline")
+    has_derived = isinstance(derived_rows, list) and len(derived_rows) > 0
+    if not has_derived and not rows:
         return None
 
     initial_side_team1 = _infer_initial_side_team1(rows, team1_name, team2_name)
-    has_overtime = len(rows) > 24
+    round_source = derived_rows if has_derived else rows
+    has_overtime = len(round_source) > 24
 
     timeline_rows = []
-    for idx, row in enumerate(rows):
-        round_no_raw = _pick(row, ["round_num", "round_number", "round", "number"])
+    for idx, row in enumerate(round_source):
+        round_no_raw = _pick(row, ["round_no", "round_num", "round_number", "round", "number"])
         try:
             round_no = int(round_no_raw)
         except Exception:
@@ -100,7 +110,13 @@ def build_round_timeline(summary):
         side_team1 = _side_for_team1(round_no, initial_side_team1, has_overtime)
         side_team2 = "T" if side_team1 == "CT" else "CT"
 
-        winner_side, winner_side_raw = _extract_winner_side(row)
+        if has_derived:
+            winner_side = _norm(_pick(row, ["winner_side", "winner_side_raw"]))
+            winner_side_raw = str(_pick(row, ["winner_side", "winner_side_raw"]) or "")
+            if winner_side not in ("ct", "t"):
+                winner_side = ""
+        else:
+            winner_side, winner_side_raw = _extract_winner_side(row)
 
         winner_team_name = _pick(
             row,

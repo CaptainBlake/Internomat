@@ -148,6 +148,32 @@ def render_split_scoreboard(layout, summary, rows, timeline=None):
     team2_score = int(summary.get("team2_score") or 0)
     winner = str(summary.get("winner") or "").strip().lower()
 
+    # Legacy restored rows can carry generic TeamA/TeamB labels while summary uses
+    # concrete team names. Remap groups so score and timeline winner matching works.
+    if team1_name and team2_name:
+        generic_map = {}
+        for label, members in team_groups.items():
+            norm = str(label or "").strip().lower()
+            if norm == "teama":
+                generic_map["TeamA"] = members
+            elif norm == "teamb":
+                generic_map["TeamB"] = members
+
+        if "TeamA" in generic_map or "TeamB" in generic_map:
+            remapped = {}
+            if "TeamA" in generic_map:
+                remapped[team1_name] = generic_map["TeamA"]
+            if "TeamB" in generic_map:
+                remapped[team2_name] = generic_map["TeamB"]
+
+            for label, members in team_groups.items():
+                norm = str(label or "").strip().lower()
+                if norm in {"teama", "teamb"}:
+                    continue
+                remapped[label] = members
+
+            team_groups = remapped
+
     ordered_team_names = []
     if team1_name and team2_name:
         if team1_score >= team2_score:

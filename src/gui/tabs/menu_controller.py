@@ -285,7 +285,9 @@ class MenuController:
 
     def handle_event_filter(self, obj, event):
         """Handle submenu reflow and click-outside collapse events."""
-        if obj == self.tabs.tabBar() and event.type() in (QEvent.Resize, QEvent.Show):
+        tab_bar = self.tabs.tabBar() if self.tabs is not None else None
+
+        if tab_bar is not None and obj == tab_bar and event.type() in (QEvent.Resize, QEvent.Show):
             if self.category_submenu is not None and self.category_submenu.isVisible():
                 self.reposition_submenu()
 
@@ -299,7 +301,7 @@ class MenuController:
 
                 if global_pos is not None:
                     submenu_hit = self._global_pos_in_widget(self.category_submenu, global_pos)
-                    tabbar_hit = self._global_pos_in_widget(self.tabs.tabBar(), global_pos)
+                    tabbar_hit = self._global_pos_in_widget(tab_bar, global_pos)
                     if not submenu_hit and not tabbar_hit:
                         if self.open_menu_category:
                             self.category_collapsed.add(self.open_menu_category)

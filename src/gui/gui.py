@@ -161,10 +161,13 @@ class InternomatWindow(QMainWindow):
             if callable(refresh_maps):
                 refresh_maps()
 
+        team_update_trigger = {}
+
         refresh_players = build_team_tab(
             self.team_page,
             on_data_updated=on_data_updated,
             on_players_data_updated=on_players_data_updated,
+            update_trigger=team_update_trigger,
         )
         logger.log("[GUI] Team Builder ready", level="INFO")
 
@@ -183,6 +186,8 @@ class InternomatWindow(QMainWindow):
         build_settings_tab(
             self.settings_page,
             on_players_updated=refresh_players,
+            on_update_players=team_update_trigger.get("run"),
+            on_update_players_only=team_update_trigger.get("run_players_only"),
             on_data_updated=on_data_updated,
             on_players_data_updated=on_players_data_updated,
         )
@@ -201,7 +206,16 @@ class InternomatWindow(QMainWindow):
 
     def eventFilter(self, obj, event):
         """Delegate menu-related filter events to the menu controller."""
-        self.menu.handle_event_filter(obj, event)
+        # Guard against re-entrant global event-filter callbacks.
+        if getattr(self, "_menu_eventfilter_busy", False):
+            return super().eventFilter(obj, event)
+
+        self._menu_eventfilter_busy = True
+        try:
+            self.menu.handle_event_filter(obj, event)
+        finally:
+            self._menu_eventfilter_busy = False
+
         return super().eventFilter(obj, event)
 
     def resizeEvent(self, event):

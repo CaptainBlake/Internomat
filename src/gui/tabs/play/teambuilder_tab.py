@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, Signal, QObject
+from PySide6.QtCore import Qt, Signal, QObject, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QVBoxLayout,
@@ -17,10 +17,14 @@ from PySide6.QtWidgets import (
 
 import core.teams.service as team_service
 import core.players.service as player_service
+from core.settings.settings import settings
 
 from services import executor
 import services.logger as logger
 import services.executor as executor
+from services.demo_scrapper import DemoScrapperIntegration
+from services.matchzy import sync
+from gui.widgets.pipeline_progress_dialog import PipelineProgressDialog
 from threading import Lock
 
 update_lock = Lock()
@@ -32,6 +36,7 @@ class UiDispatcher(QObject):
     update_player_ready = Signal(object)
     update_finished = Signal()
     update_error = Signal(object)
+    update_pipeline_progress = Signal(object)
     balance_finished = Signal(object, object, int)
     balance_error = Signal(object)
 
@@ -249,8 +254,9 @@ def _fill_team_table(table, team):
     return total
 
 
-def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None):
+def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, update_trigger=None):
     dispatcher = UiDispatcher(parent)
+    update_progress_dialog = {"dialog": None}
 
     layout = QVBoxLayout(parent)
     layout.setContentsMargins(20, 20, 20, 20)
@@ -465,6 +471,21 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None):
         update_running = False
         update_button.setEnabled(True)
         update_button.setText("Update")
+
+        dialog = update_progress_dialog.get("dialog")
+        if dialog is not None:
+            dialog.set_running(False)
+            dialog.update_status({"percent": 100, "stage": "pipeline", "message": "Update completed."})
+
+            def _close_dialog_later():
+                current = update_progress_dialog.get("dialog")
+                if current is not None:
+                    current.allow_close_once()
+                    current.close()
+                    update_progress_dialog["dialog"] = None
+
+            QTimer.singleShot(700, _close_dialog_later)
+
         refresh_players()
         if callable(on_players_data_updated):
             on_players_data_updated()
@@ -474,8 +495,23 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None):
 
     def on_error(e):
         logger.log_error(f"Update failed: {e}", exc=e)
+
+        dialog = update_progress_dialog.get("dialog")
+        if dialog is not None:
+            dialog.set_running(False)
+            dialog.update_status({"stage": "pipeline", "message": f"Failed: {e}"})
+            dialog.allow_close_once()
+            dialog.close()
+            update_progress_dialog["dialog"] = None
+
         show_error_popup(parent, "Error", str(e))
         finish()
+
+    def on_pipeline_progress(payload):
+        dialog = update_progress_dialog.get("dialog")
+        if dialog is None:
+            return
+        dialog.update_status(payload)
 
     def refresh_pool_display():
         for i in range(pool_tree.rowCount()):
@@ -598,21 +634,72 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None):
         refresh_players()
         refresh_pool_display()
 
-    def update_players():
+    def _start_update_pipeline(include_demo_pull):
+        def _emit_demo_progress(payload):
+            source_percent = payload.get("percent") if isinstance(payload, dict) else None
+            base_percent = int(source_percent) if isinstance(source_percent, (int, float)) else 0
+            mapped_percent = 20 + max(0, min(50, int(base_percent * 0.5)))
+            dispatcher.update_pipeline_progress.emit({
+                "percent": mapped_percent,
+                "stage": "demos",
+                "message": str((payload or {}).get("message") or "Pulling demos..."),
+                "file_percent": (payload or {}).get("file_percent"),
+            })
 
-        steam_ids = player_service.get_players_to_update() or []
-        total = len(steam_ids)
-
-        update_button.setText(f"Updating 0/{total}")
+        def _emit_players_progress(i, t):
+            dispatcher.update_progress.emit(i, t)
+            if t and t > 0:
+                mapped_percent = 70 + int((i / t) * 30)
+            else:
+                mapped_percent = 100
+            dispatcher.update_pipeline_progress.emit({
+                "percent": max(70, min(100, mapped_percent)),
+                "stage": "players",
+                "message": f"Fetching player stats {i}/{t}",
+            })
 
         def worker():
-            player_service.update_players(
-                steam_ids,
-                on_progress=lambda i, t: dispatcher.update_progress.emit(i, t),
-                on_player=lambda p: dispatcher.update_player_ready.emit(p),
-                on_error=lambda e: dispatcher.update_error.emit(e),
-                on_finish=lambda: dispatcher.update_finished.emit()
-            )
+            try:
+                if include_demo_pull:
+                    dispatcher.update_pipeline_progress.emit(
+                        {"percent": 0, "stage": "matchzy", "message": "Syncing MatchZy database..."}
+                    )
+                    sync()
+                    dispatcher.update_pipeline_progress.emit(
+                        {"percent": 20, "stage": "matchzy", "message": "MatchZy sync completed."}
+                    )
+
+                    logger.log("[UPDATE] Pull demos before player update", level="INFO")
+                    dispatcher.update_pipeline_progress.emit(
+                        {"percent": 20, "stage": "demos", "message": "Pulling demos..."}
+                    )
+                    integration = DemoScrapperIntegration(
+                        ftp_host=settings.demo_ftp_host,
+                        ftp_port=settings.demo_ftp_port,
+                        ftp_user=settings.demo_ftp_user,
+                        ftp_password=settings.demo_ftp_password,
+                        remote_dir=settings.demo_remote_path,
+                        progress_callback=_emit_demo_progress,
+                    )
+                    integration.run_sync()
+                else:
+                    dispatcher.update_pipeline_progress.emit(
+                        {"percent": 70, "stage": "pipeline", "message": "MatchZy/demo sync skipped (already synced)."}
+                    )
+
+                steam_ids = player_service.get_players_to_update() or []
+                total = len(steam_ids)
+                _emit_players_progress(0, total)
+
+                player_service.update_players(
+                    steam_ids,
+                    on_progress=_emit_players_progress,
+                    on_player=lambda p: dispatcher.update_player_ready.emit(p),
+                    on_error=lambda e: dispatcher.update_error.emit(e),
+                    on_finish=lambda: dispatcher.update_finished.emit()
+                )
+            except Exception as e:
+                dispatcher.update_error.emit(e)
 
         started = executor.run_async(worker, lock=update_lock)
 
@@ -620,7 +707,29 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None):
             show_info("Update", "Update already running")
             return
 
+        dialog = PipelineProgressDialog("Update Progress", "Updating pipeline ({stage})", parent)
+        dialog.update_status({"percent": 0, "stage": "pipeline", "message": "Starting update pipeline..."})
+        dialog.set_running(True)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        update_progress_dialog["dialog"] = dialog
+
         update_button.setEnabled(False)
+        if include_demo_pull:
+            update_button.setText("Syncing MatchZy...")
+        else:
+            update_button.setText("Preparing player fetch...")
+
+    def update_players():
+        _start_update_pipeline(include_demo_pull=True)
+
+    def update_players_only():
+        _start_update_pipeline(include_demo_pull=False)
+
+    if isinstance(update_trigger, dict):
+        update_trigger["run"] = update_players
+        update_trigger["run_players_only"] = update_players_only
 
     def run_balancer():
         players = _extract_pool_players(pool_tree)
@@ -673,6 +782,7 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None):
     dispatcher.balance_finished.connect(on_balance_finished)
     dispatcher.balance_error.connect(on_balance_error)
     dispatcher.update_progress.connect(on_progress)
+    dispatcher.update_pipeline_progress.connect(on_pipeline_progress)
     dispatcher.update_player_ready.connect(on_player)
     dispatcher.update_error.connect(on_error)
     dispatcher.update_finished.connect(finish)

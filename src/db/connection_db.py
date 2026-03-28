@@ -18,6 +18,27 @@ class ManagedConnection(sqlite3.Connection):
         finally:
             self.close()
 
+def _enable_wal_mode(conn):
+    """Enable WAL mode for concurrent read/write from multiple threads.
+    
+    WAL (Write-Ahead Logging) allows readers and writers to coexist:
+    - Multiple readers can run in parallel
+    - One writer can run while readers work
+    - Reduces lock contention significantly
+    
+    synchronous=NORMAL is safe with WAL:
+    - Full ACID guarantees remain (same as FULL, different mechanism)
+    - Faster writes than FULL or EXTRA
+    """
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA cache_size=-64000")  # 64MB page cache
+        conn.execute("PRAGMA temp_store=MEMORY")
+    except Exception as e:
+        import services.logger as logger
+        logger.log_warning(f"[DB] WAL mode setup failed; proceeding with defaults: {e}")
+
 def get_conn(db_file=None):
     db_path = db_file or DB_FILE
     conn = sqlite3.connect(
@@ -27,6 +48,7 @@ def get_conn(db_file=None):
     )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout = 5000")
+    _enable_wal_mode(conn)
     return conn
 
 
@@ -52,7 +74,13 @@ def executemany_write(conn, query, seq_of_params):
 
 @contextmanager
 def write_transaction(conn=None, begin_mode="IMMEDIATE"):
-    """Open an explicit write transaction with process-local write serialization."""
+    """Open an explicit write transaction with process-local write serialization.
+    
+    Even with WAL mode, we maintain the process-level write lock to:
+    - Ensure sequential commit ordering for deterministic state
+    - Prevent concurrent multi-statement transactions that could deadlock
+    - Keep restore/insertion logic predictable and debuggable
+    """
     own_conn = conn is None
     conn = conn or get_conn()
 

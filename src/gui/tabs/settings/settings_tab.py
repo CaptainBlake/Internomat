@@ -17,21 +17,23 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QGridLayout,
     QSpinBox,
-    QDialog,
-    QProgressBar,
     QMessageBox,
 )
 from core.settings.settings import settings
 from core.settings import service as settings_service
 from services import executor
 import services.logger as logger
-from db.IO_db import export_players as db_export_players
-from db.IO_db import import_players as db_import_players
+from db.IO_db import get_players_payload
+from db.IO_db import import_players_payload
+from db.IO_db import get_maps_payload
+from db.IO_db import import_maps_payload
 from services.matchzy import sync
 from services.demo_scrapper import DemoScrapperIntegration, DemoSyncCancelled
 from services import demo_cache
 from PySide6.QtCore import QObject, Signal
 from gui.tabs.settings.log_window import open_log_window
+from gui.widgets.pipeline_progress_dialog import PipelineProgressDialog
+import json
 
 class SettingsDispatcher(QObject):
     sync_finished = Signal()
@@ -42,110 +44,8 @@ class SettingsDispatcher(QObject):
     demos_sync_cancelled = Signal(str)
     demos_sync_progress = Signal(object)
 
-class DemoSyncProgressDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Demo Sync Progress")
-        self.setModal(False)
-        self.resize(540, 190)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(10)
-
-        self.title_label = QLabel("Syncing demos...")
-        self.title_label.setStyleSheet("font-size: 13px; font-weight: 700; color: #22384D;")
-
-        self.message_label = QLabel("Starting pipeline...")
-        self.message_label.setWordWrap(True)
-        self.message_label.setStyleSheet("font-size: 12px; color: #5A6B7C;")
-
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 100)
-        self.progress.setValue(0)
-        self.progress.setFormat("%p%")
-
-        self.file_label = QLabel("Current file: -")
-        self.file_label.setStyleSheet("font-size: 11px; color: #5A6B7C;")
-
-        self.file_progress = QProgressBar()
-        self.file_progress.setRange(0, 100)
-        self.file_progress.setValue(0)
-        self.file_progress.setFormat("%p%")
-
-        layout.addWidget(self.title_label)
-        layout.addWidget(self.message_label)
-        layout.addWidget(self.progress)
-        layout.addWidget(self.file_label)
-        layout.addWidget(self.file_progress)
-
-        self._running = False
-        self._allow_close = False
-        self._cancel_handler = None
-
-    def update_status(self, payload):
-        if not isinstance(payload, dict):
-            return
-
-        percent = payload.get("percent")
-        file_percent = payload.get("file_percent")
-        message = str(payload.get("message") or "")
-        stage = str(payload.get("stage") or "pipeline")
-
-        if isinstance(percent, (int, float)):
-            self.progress.setValue(max(0, min(100, int(percent))))
-
-        if stage:
-            self.title_label.setText(f"Syncing demos ({stage})")
-
-        if message:
-            self.message_label.setText(message)
-
-        if isinstance(file_percent, (int, float)):
-            value = max(0, min(100, int(file_percent)))
-            self.file_progress.setValue(value)
-            self.file_label.setText(f"Current file: {value}%")
-        elif stage != "ftp":
-            self.file_progress.setValue(0)
-            self.file_label.setText("Current file: -")
-
-    def set_running(self, running):
-        self._running = bool(running)
-
-    def set_cancel_handler(self, handler):
-        self._cancel_handler = handler
-
-    def allow_close_once(self):
-        self._allow_close = True
-
-    def closeEvent(self, event):
-        if self._allow_close:
-            super().closeEvent(event)
-            return
-
-        if self._running:
-            confirm = QMessageBox.question(
-                self,
-                "Cancel Demo Sync",
-                "You sure you want to cancel?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-
-            if confirm != QMessageBox.Yes:
-                event.ignore()
-                return
-
-            if callable(self._cancel_handler):
-                try:
-                    self._cancel_handler()
-                except Exception:
-                    pass
-
-        super().closeEvent(event)
-
 # SETTINGS TAB
-def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on_players_data_updated=None):
+def build_settings_tab(parent, on_players_updated=None, on_update_players=None, on_update_players_only=None, on_data_updated=None, on_players_data_updated=None):
 
     section_order = ["Debug", "Settings", "Database", "MatchZy", "Demos"]
 
@@ -397,8 +297,8 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
 
     open_logs_button = small_button("Open Logs")
 
-    import_players_button = small_button("Import Playerlist")
-    export_players_button = small_button("Export Playerlist")
+    import_backup_button = small_button("Import Backup")
+    export_backup_button = small_button("Export Backup")
     import_settings_button = small_button("Import Settings")
     export_settings_button = small_button("Export Settings")
     save_settings_button = small_button("Save Settings")
@@ -409,8 +309,8 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
     clear_cache_button = danger_button("Clear Cache")
 
     for btn in [
-        import_players_button,
-        export_players_button,
+        import_backup_button,
+        export_backup_button,
         import_settings_button,
         export_settings_button,
         save_settings_button,
@@ -433,9 +333,8 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
 
     # DATABASE
     database_frame = create_grid_section("Database", [
-        [import_players_button, import_settings_button],
-        [export_players_button, export_settings_button],
-        [sync_all_button, clear_cache_button],
+        [import_backup_button, export_backup_button, None],
+        [sync_all_button, clear_cache_button, None],
     ])
 
     # SETTINGS
@@ -508,6 +407,8 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
 
     settings_button_row = QHBoxLayout()
     settings_button_row.setSpacing(10)
+    settings_button_row.addWidget(import_settings_button)
+    settings_button_row.addWidget(export_settings_button)
     settings_button_row.addWidget(save_settings_button)
     settings_button_row.addStretch()
     settings_layout.addLayout(settings_button_row)
@@ -679,17 +580,78 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
     def open_logs():
         open_log_window(parent)
 
-    def import_players():
-        path, _ = QFileDialog.getOpenFileName(parent, "Import Players", "", "JSON Files (*.json)")
-        if path:
-            db_import_players(path)
-            if on_players_updated:
-                on_players_updated()
+    def export_backup_action():
+        path, _ = QFileDialog.getSaveFileName(parent, "Export Backup", "internomat_backup.json", "JSON Files (*.json)")
+        if not path:
+            return
 
-    def export_players():
-        path, _ = QFileDialog.getSaveFileName(parent, "Export Players", "players.json", "JSON Files (*.json)")
-        if path:
-            db_export_players(path)
+        payload = {
+            "players": get_players_payload(),
+            "maps": get_maps_payload(),
+        }
+
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+            logger.log_info(f"[BACKUP] Exported to {path}")
+        except Exception as e:
+            logger.log_error(f"[BACKUP] Export failed: {e}")
+
+    def import_backup_action():
+        path, _ = QFileDialog.getOpenFileName(parent, "Import Backup", "", "JSON Files (*.json)")
+        if not path:
+            return
+
+        confirm = QMessageBox.question(
+            parent,
+            "Confirm Backup Import",
+            "Importing backup will merge players/maps from the file. Continue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+
+            if not isinstance(payload, dict):
+                raise ValueError("Invalid backup format")
+
+            players_count = import_players_payload(payload.get("players", []))
+            maps_count = import_maps_payload(payload.get("maps", []))
+            logger.log_info(f"[BACKUP] Imported from {path} (players={players_count}, maps={maps_count})")
+
+            if callable(on_players_updated):
+                on_players_updated()
+            if callable(on_players_data_updated):
+                on_players_data_updated()
+            if callable(on_data_updated):
+                on_data_updated()
+
+        except Exception as e:
+            logger.log_error(f"[BACKUP] Import failed: {e}")
+
+    def apply_settings_payload_to_form(payload):
+        for attr_name, widget in setting_bindings:
+            if attr_name not in payload:
+                continue
+
+            value = payload[attr_name]
+            if isinstance(widget, QCheckBox):
+                widget.setChecked(bool(value))
+            elif isinstance(widget, QLineEdit):
+                widget.setText("" if value is None else str(value))
+            elif isinstance(widget, QComboBox):
+                text_value = "" if value is None else str(value)
+                idx = widget.findText(text_value)
+                if idx >= 0:
+                    widget.setCurrentIndex(idx)
+            elif isinstance(widget, QSpinBox):
+                widget.setValue(int(value))
+            elif isinstance(widget, QDoubleSpinBox):
+                widget.setValue(float(value))
 
     def export_settings_action():
         path, _ = QFileDialog.getSaveFileName(
@@ -735,24 +697,7 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
             if not isinstance(payload, dict):
                 raise ValueError("Invalid settings file format")
 
-            for attr_name, widget in setting_bindings:
-                if attr_name not in payload:
-                    continue
-
-                value = payload[attr_name]
-                if isinstance(widget, QCheckBox):
-                    widget.setChecked(bool(value))
-                elif isinstance(widget, QLineEdit):
-                    widget.setText("" if value is None else str(value))
-                elif isinstance(widget, QComboBox):
-                    text_value = "" if value is None else str(value)
-                    idx = widget.findText(text_value)
-                    if idx >= 0:
-                        widget.setCurrentIndex(idx)
-                elif isinstance(widget, QSpinBox):
-                    widget.setValue(int(value))
-                elif isinstance(widget, QDoubleSpinBox):
-                    widget.setValue(float(value))
+            apply_settings_payload_to_form(payload)
 
             apply_form_to_settings(save=True)
             settings_dirty["value"] = False
@@ -812,7 +757,7 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
         sync_matchzy_button.setEnabled(False)
         sync_demos_button.setEnabled(False)
 
-        dialog = DemoSyncProgressDialog(parent)
+        dialog = PipelineProgressDialog("Demo Sync Progress", "Syncing demos ({stage})", parent)
         dialog.update_status({"percent": 0, "stage": "matchzy", "message": "Starting MatchZy sync..."})
         cancel_state = {"requested": False}
 
@@ -889,7 +834,7 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
         sync_demos_button.clearFocus()
         sync_demos_button.setEnabled(False)
 
-        dialog = DemoSyncProgressDialog(parent)
+        dialog = PipelineProgressDialog("Demo Sync Progress", "Syncing demos ({stage})", parent)
         dialog.update_status({"percent": 0, "stage": "pipeline", "message": "Starting pipeline..."})
         cancel_state = {"requested": False}
 
@@ -927,6 +872,11 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
     def on_sync_finished():
         sync_matchzy_button.setEnabled(True)
         logger.log("[MATCHZY] Sync completed", level="INFO")
+
+        if callable(on_update_players):
+            logger.log("[UI] Trigger Team Builder update after MatchZy sync", level="DEBUG")
+            on_update_players()
+
         if callable(on_data_updated):
             on_data_updated()
 
@@ -987,7 +937,13 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
         if callable(on_data_updated):
             on_data_updated()
 
-        if settings.auto_import_match_players and callable(on_players_updated):
+        if callable(on_update_players_only):
+            logger.log("[UI] Trigger Team Builder player update after unified sync", level="DEBUG")
+            on_update_players_only()
+        elif callable(on_update_players):
+            logger.log("[UI] Trigger Team Builder full update after unified sync", level="DEBUG")
+            on_update_players()
+        elif settings.auto_import_match_players and callable(on_players_updated):
             logger.log("[UI] Refresh Team Builder player pool after sync import", level="DEBUG")
             on_players_updated()
             if callable(on_players_data_updated):
@@ -1037,8 +993,8 @@ def build_settings_tab(parent, on_players_updated=None, on_data_updated=None, on
     # SIGNALS
 
     open_logs_button.clicked.connect(open_logs)
-    import_players_button.clicked.connect(import_players)
-    export_players_button.clicked.connect(export_players)
+    import_backup_button.clicked.connect(import_backup_action)
+    export_backup_button.clicked.connect(export_backup_action)
     import_settings_button.clicked.connect(import_settings_action)
     export_settings_button.clicked.connect(export_settings_action)
     save_settings_button.clicked.connect(save_settings_action)
