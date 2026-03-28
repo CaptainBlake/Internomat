@@ -20,6 +20,7 @@ def _fmt_pct(value):
 
 def _build_table(headers, rows):
     table = QTableWidget()
+    table.setSortingEnabled(False)
     table.setColumnCount(len(headers))
     table.setHorizontalHeaderLabels(headers)
     table.setRowCount(len(rows))
@@ -36,6 +37,8 @@ def _build_table(headers, rows):
             item = QTableWidgetItem(str(value))
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             table.setItem(row_index, col_index, item)
+
+    table.setSortingEnabled(True)
 
     return table
 
@@ -196,7 +199,7 @@ def refresh_stattracker(parent):
 
     dashboard = stattracker.get_player_dashboard(
         selected_sid,
-        min_weapon_shots=5,
+        min_weapon_shots=1,
         weapon_category=selected_category,
     )
     kpis = dashboard.get("kpis") or {}

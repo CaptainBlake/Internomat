@@ -77,7 +77,7 @@ def get_player_weapon_categories(steamid64):
     return categories
 
 
-def get_player_dashboard(steamid64, min_weapon_shots=5, weapon_category="all"):
+def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
     sid = str(steamid64 or "").strip()
     if not sid:
         return {
@@ -172,6 +172,42 @@ def get_player_dashboard(steamid64, min_weapon_shots=5, weapon_category="all"):
                 "rounds_with_weapon": int(row["rounds_with_weapon"] or 0),
             }
         )
+
+    weapon_kills_total = sum(int(r.get("kills") or 0) for r in weapon_rows)
+    unattributed_kills = int(max(0, total_kills - weapon_kills_total))
+    effective_total_kills = int(total_kills - unattributed_kills)
+
+    if unattributed_kills > 0:
+        deltas = stattracker_repo.fetch_player_weapon_kill_attribution_deltas(sid)
+        logger.log(
+            "[STATTRACKER] "
+            f"kill attribution filtered steamid={sid[:8]} total={total_kills} "
+            f"weapon={weapon_kills_total} filtered={unattributed_kills}",
+            level="DEBUG",
+        )
+        for row in deltas:
+            logger.log(
+                "[STATTRACKER][ATTR] "
+                f"match={row['match_id']} map={row['map_number']} name={row['map_name']} "
+                f"total={int(row['total_kills'] or 0)} weapon={int(row['weapon_kills'] or 0)} "
+                f"delta={int(row['delta'] or 0)}",
+                level="DEBUG",
+            )
+
+    # Filter unattributed kill events from KPI kill-derived metrics so values
+    # align with the visible per-weapon table.
+    kdr = (float(effective_total_kills) / float(max(1, total_deaths))) if maps_played > 0 else 0.0
+    avg_kills = (float(effective_total_kills) / float(max(1, maps_played))) if maps_played > 0 else 0.0
+    hs_pct = (
+        100.0 * float(min(total_headshot_kills, effective_total_kills)) / float(max(1, effective_total_kills))
+        if effective_total_kills > 0
+        else 0.0
+    )
+    performance_index = (
+        (effective_total_kills + 0.5 * total_assists) / float(max(1, total_deaths))
+        if maps_played > 0
+        else 0.0
+    )
 
     result = {
         "kpis": {

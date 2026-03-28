@@ -191,8 +191,10 @@ def fetch_player_weapon_categories(steamid64):
                 COALESCE(NULLIF(wd.category, ''), 'unknown') AS category,
                 COUNT(*) AS rows_count
             FROM player_map_weapon_stats pmws
+                        LEFT JOIN weapon_alias wa
+                            ON wa.raw_weapon = pmws.weapon
             LEFT JOIN weapon_dim wd
-              ON wd.weapon = pmws.weapon
+                            ON wd.weapon = COALESCE(wa.canonical_weapon, pmws.weapon)
             WHERE pmws.steamid64 = ?
             GROUP BY COALESCE(NULLIF(wd.category, ''), 'unknown')
             ORDER BY category COLLATE NOCASE ASC
@@ -214,7 +216,7 @@ def fetch_player_weapon_stats(steamid64, min_shots=1, weapon_category=None):
         return conn.execute(
             f"""
             SELECT
-                pmws.weapon,
+                                COALESCE(wa.canonical_weapon, pmws.weapon) AS weapon,
                 COALESCE(NULLIF(wd.category, ''), 'unknown') AS category,
                 SUM(COALESCE(shots_fired, 0)) AS shots_fired,
                 SUM(COALESCE(shots_hit, 0)) AS shots_hit,
@@ -223,13 +225,50 @@ def fetch_player_weapon_stats(steamid64, min_shots=1, weapon_category=None):
                 SUM(COALESCE(damage, 0)) AS damage,
                 SUM(COALESCE(rounds_with_weapon, 0)) AS rounds_with_weapon
             FROM player_map_weapon_stats pmws
+                        LEFT JOIN weapon_alias wa
+                            ON wa.raw_weapon = pmws.weapon
             LEFT JOIN weapon_dim wd
-              ON wd.weapon = pmws.weapon
+                            ON wd.weapon = COALESCE(wa.canonical_weapon, pmws.weapon)
             WHERE pmws.steamid64 = ?
               {category_sql}
-            GROUP BY pmws.weapon, COALESCE(NULLIF(wd.category, ''), 'unknown')
+                        GROUP BY COALESCE(wa.canonical_weapon, pmws.weapon), COALESCE(NULLIF(wd.category, ''), 'unknown')
             HAVING SUM(COALESCE(shots_fired, 0)) >= ?
-            ORDER BY shots_fired DESC, pmws.weapon COLLATE NOCASE ASC
+                        ORDER BY shots_fired DESC, weapon COLLATE NOCASE ASC
             """,
             tuple(params),
+        ).fetchall()
+
+
+def fetch_player_weapon_kill_attribution_deltas(steamid64):
+    with get_conn() as conn:
+        return conn.execute(
+            """
+            SELECT
+                mps.match_id,
+                mps.map_number,
+                COALESCE(mm.map_name, 'unknown') AS map_name,
+                COALESCE(mps.kills, 0) AS total_kills,
+                COALESCE(w.weapon_kills, 0) AS weapon_kills,
+                (COALESCE(mps.kills, 0) - COALESCE(w.weapon_kills, 0)) AS delta
+            FROM match_player_stats mps
+            LEFT JOIN match_maps mm
+              ON mm.match_id = mps.match_id
+             AND mm.map_number = mps.map_number
+            LEFT JOIN (
+                SELECT
+                    pmws.steamid64,
+                    pmws.match_id,
+                    pmws.map_number,
+                    SUM(COALESCE(pmws.kills, 0)) AS weapon_kills
+                FROM player_map_weapon_stats pmws
+                GROUP BY pmws.steamid64, pmws.match_id, pmws.map_number
+            ) w
+              ON w.steamid64 = mps.steamid64
+             AND w.match_id = mps.match_id
+             AND w.map_number = mps.map_number
+            WHERE mps.steamid64 = ?
+              AND (COALESCE(mps.kills, 0) - COALESCE(w.weapon_kills, 0)) > 0
+            ORDER BY mps.match_id DESC, mps.map_number ASC
+            """,
+            (str(steamid64),),
         ).fetchall()

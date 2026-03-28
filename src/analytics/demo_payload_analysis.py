@@ -4,6 +4,7 @@ from bisect import bisect_right
 import pandas as pd
 import polars as pl
 from db.weapon_catalog import normalize_weapon_name
+import services.logger as logger
 
 
 KILL_REWARD_BY_WEAPON_TOKEN = {
@@ -619,6 +620,7 @@ def build_derived_weapon_stats(parsed_payload):
     """Build per-player per-weapon stats for one match-map payload."""
     payload = parsed_payload or {}
     stats = {}
+    kill_drop_events = []
 
     def ensure_entry(steamid64, weapon):
         if not steamid64 or not weapon:
@@ -686,6 +688,7 @@ def build_derived_weapon_stats(parsed_payload):
             pick_value(
                 row,
                 [
+                    "dmg_health_real",
                     "health_damage",
                     "health_damage_taken",
                     "hp_damage",
@@ -706,10 +709,33 @@ def build_derived_weapon_stats(parsed_payload):
         sid = to_steamid64_string(
             pick_value(row, ["attacker_steamid", "attacker_steamid64", "attacker"])
         )
+        weapon_raw = pick_value(row, ["weapon", "weapon_name", "weapon_class", "weapon_type", "weapon_item"])
         weapon = normalize_weapon_name(
-            pick_value(row, ["weapon", "weapon_name", "weapon_class", "weapon_type", "weapon_item"])
+            weapon_raw
         )
-        if not sid or not weapon:
+        round_num = to_int(pick_value(row, ["round_num", "round", "round_number"]), default=0)
+        tick = to_int(pick_value(row, ["tick", "event_tick", "game_tick"]), default=0)
+
+        if not sid:
+            kill_drop_events.append(
+                {
+                    "reason": "missing_attacker_steamid",
+                    "round_num": round_num,
+                    "tick": tick,
+                    "weapon_raw": str(weapon_raw or ""),
+                }
+            )
+            continue
+
+        if not weapon:
+            kill_drop_events.append(
+                {
+                    "reason": "missing_or_unmapped_weapon",
+                    "round_num": round_num,
+                    "tick": tick,
+                    "weapon_raw": str(weapon_raw or ""),
+                }
+            )
             continue
 
         attacker_side = normalize_side_label(
@@ -719,6 +745,15 @@ def build_derived_weapon_stats(parsed_payload):
             pick_value(row, ["victim_side", "victim_team", "victim_team_name"])
         )
         if attacker_side and victim_side and attacker_side == victim_side:
+            kill_drop_events.append(
+                {
+                    "reason": "teamkill_ignored",
+                    "round_num": round_num,
+                    "tick": tick,
+                    "weapon_raw": str(weapon_raw or ""),
+                    "attacker_side": str(attacker_side),
+                }
+            )
             continue
 
         item = ensure_entry(sid, weapon)
@@ -730,9 +765,28 @@ def build_derived_weapon_stats(parsed_payload):
         if is_hs in {True, 1, "1", "true", "True"}:
             item["headshot_kills"] += 1
 
-        round_num = to_int(pick_value(row, ["round_num", "round", "round_number"]), default=0)
         if round_num > 0:
             item["_round_set"].add(round_num)
+
+    if kill_drop_events:
+        by_reason = {}
+        for ev in kill_drop_events:
+            reason = str(ev.get("reason") or "unknown")
+            by_reason[reason] = by_reason.get(reason, 0) + 1
+
+        logger.log(
+            "[WEAPON_PARSE] "
+            f"kill events filtered total={len(kill_drop_events)} reasons={by_reason}",
+            level="DEBUG",
+        )
+
+        for ev in kill_drop_events[:8]:
+            logger.log(
+                "[WEAPON_PARSE][DROP] "
+                f"reason={ev.get('reason')} round={ev.get('round_num')} tick={ev.get('tick')} "
+                f"weapon_raw={ev.get('weapon_raw')} attacker_side={ev.get('attacker_side')}",
+                level="DEBUG",
+            )
 
     # Finalize rounds_with_weapon and strip internal fields.
     for sid, weapons in list(stats.items()):
