@@ -165,7 +165,7 @@ def refresh_stattracker(parent):
     selected_sid = str(getattr(parent, "_stattracker_selected_player", "") or "")
     for option in player_options:
         sid = str(option.get("steamid64") or "")
-        label = f"{option.get('player_name', sid)} ({sid[-6:]})"
+        label = option.get("player_name") or sid
         picker.addItem(label, sid)
 
     if picker.count() > 0:

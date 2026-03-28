@@ -7,7 +7,6 @@ class Settings:
     def __init__(self):
         # defaults
         self.update_cooldown_minutes = 0
-        self.max_ram_mb = 0
         self.max_demos_per_update = 0
         self.log_level = "INFO"
         self.dist_weight = 0.25
@@ -31,7 +30,6 @@ class Settings:
     def load(self):
         # load settings from DB, fallback to defaults if not set
         self.update_cooldown_minutes = int(settings_db.get("update_cooldown_minutes", 0))
-        self.max_ram_mb = int(settings_db.get("max_ram_mb", 0))
         self.max_demos_per_update = int(settings_db.get("max_demos_per_update", 0))
         self.log_level = settings_db.get("log_level", "INFO")
         self.dist_weight = float(settings_db.get("dist_weight", 0.25))
@@ -55,7 +53,6 @@ class Settings:
     def save(self):
         # save current settings to DB
         settings_db.set("update_cooldown_minutes", self.update_cooldown_minutes)
-        settings_db.set("max_ram_mb", self.max_ram_mb)
         settings_db.set("max_demos_per_update", self.max_demos_per_update)
         settings_db.set("log_level", self.log_level)
         settings_db.set("dist_weight", self.dist_weight)

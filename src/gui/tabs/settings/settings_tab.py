@@ -355,21 +355,6 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         "Minimum time between updates\nRecommended: 10"
     ))
 
-    # global RAM ceiling for heavy pipelines (0 disables the limit)
-    spin_max_ram = QSpinBox()
-    spin_max_ram.setRange(0, 262144)
-    spin_max_ram.setValue(int(getattr(settings, "max_ram_mb", 0) or 0))
-    spin_max_ram.setSuffix(" MB")
-    spin_max_ram.setFixedWidth(140)
-    spin_max_ram.setButtonSymbols(QSpinBox.NoButtons)
-
-    settings_layout.addLayout(create_setting_row(
-        "Max RAM ceiling (MB):",
-        spin_max_ram,
-        "max_ram_mb",
-        "Soft process memory cap for demo parsing/restore. 0 disables the cap."
-    ))
-
     spin_max_demos = QSpinBox()
     spin_max_demos.setRange(0, 10000)
     spin_max_demos.setValue(int(getattr(settings, "max_demos_per_update", 0) or 0))
