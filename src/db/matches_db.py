@@ -15,9 +15,10 @@ _UPSERT_PLAYER_STATS_SQL = """
             v1_count, v1_wins, v2_count, v2_wins,
             entry_count, entry_wins,
             equipment_value, money_saved, kill_reward, live_time,
-            head_shot_kills, cash_earned, enemies_flashed
+            head_shot_kills, cash_earned, enemies_flashed,
+            kast, impact, rating
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(steamid64, match_id, map_number) DO UPDATE SET
             name=excluded.name,
             team=excluded.team,
@@ -51,7 +52,10 @@ _UPSERT_PLAYER_STATS_SQL = """
             live_time=excluded.live_time,
             head_shot_kills=excluded.head_shot_kills,
             cash_earned=excluded.cash_earned,
-            enemies_flashed=excluded.enemies_flashed
+            enemies_flashed=excluded.enemies_flashed,
+            kast=excluded.kast,
+            impact=excluded.impact,
+            rating=excluded.rating
         """
 
 
@@ -69,6 +73,7 @@ def _player_stats_params(data):
         data["entry_count"], data["entry_wins"],
         data["equipment_value"], data["money_saved"], data["kill_reward"], data["live_time"],
         data["head_shot_kills"], data["cash_earned"], data["enemies_flashed"],
+        data.get("kast"), data.get("impact"), data.get("rating"),
     )
 
 

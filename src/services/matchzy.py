@@ -214,7 +214,7 @@ class MatchZy:
 
                         match_db.insert_match_player_stats(player_payload, conn=local_conn)
 
-                        if settings.auto_import_match_players:
+                        if settings.auto_import_players_from_history:
                             players_for_pool_import.append(
                                 {
                                     "steam64_id": player_payload["steamid64"],
@@ -224,13 +224,13 @@ class MatchZy:
 
                         total_players += 1
 
-                if settings.auto_import_match_players and players_for_pool_import:
+                if settings.auto_import_players_from_history and players_for_pool_import:
                     imported_players = players_db.upsert_players_from_match_stats(
                         players_for_pool_import,
                         conn=local_conn,
                     )
 
-                if settings.auto_import_match_players:
+                if settings.auto_import_maps_from_history:
                     imported_maps = maps_db.import_maps_from_match_history(conn=local_conn)
 
             logger.log(

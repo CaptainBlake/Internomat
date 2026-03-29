@@ -13,6 +13,7 @@ def _to_bool(value):
 
 SETTINGS_SCHEMA = {
     "update_cooldown_minutes": int,
+    "max_demos_per_update": int,
     "log_level": str,
     "dist_weight": float,
     "default_rating": int,
@@ -23,7 +24,8 @@ SETTINGS_SCHEMA = {
     "matchzy_user": str,
     "matchzy_password": str,
     "matchzy_database": str,
-    "auto_import_match_players": _to_bool,
+    "auto_import_players_from_history": _to_bool,
+    "auto_import_maps_from_history": _to_bool,
     "demo_ftp_host": str,
     "demo_ftp_port": int,
     "demo_ftp_user": str,
@@ -35,6 +37,12 @@ SETTINGS_SCHEMA = {
 def normalize_settings_payload(payload):
     if not isinstance(payload, dict):
         raise ValueError("Invalid settings payload format")
+
+    # Backward compatibility: map legacy single toggle to both granular toggles.
+    if "auto_import_match_players" in payload:
+        legacy_value = _to_bool(payload.get("auto_import_match_players"))
+        payload.setdefault("auto_import_players_from_history", legacy_value)
+        payload.setdefault("auto_import_maps_from_history", legacy_value)
 
     normalized = {}
     for key, caster in SETTINGS_SCHEMA.items():

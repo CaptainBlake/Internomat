@@ -328,13 +328,13 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
 
     # DEBUG
     debug_frame = create_grid_section("Debug", [
-        [open_logs_button, sync_matchzy_button, sync_demos_button]
+        [open_logs_button, sync_all_button, None]
     ], columns=3)
 
     # DATABASE
     database_frame = create_grid_section("Database", [
         [import_backup_button, export_backup_button, None],
-        [sync_all_button, clear_cache_button, None],
+        [clear_cache_button, None, None],
     ])
 
     # SETTINGS
@@ -353,6 +353,19 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         spin_cooldown,
         "update_cooldown_minutes",
         "Minimum time between updates\nRecommended: 10"
+    ))
+
+    spin_max_demos = QSpinBox()
+    spin_max_demos.setRange(0, 10000)
+    spin_max_demos.setValue(int(getattr(settings, "max_demos_per_update", 0) or 0))
+    spin_max_demos.setFixedWidth(140)
+    spin_max_demos.setButtonSymbols(QSpinBox.NoButtons)
+
+    settings_layout.addLayout(create_setting_row(
+        "Max demos per update:",
+        spin_max_demos,
+        "max_demos_per_update",
+        "Hard cap per sync run. 0 disables the cap."
     ))
 
     # dist weight
@@ -495,13 +508,22 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         "matchzy_database"
     ))
 
-    checkbox_auto_import_match_players = QCheckBox()
-    checkbox_auto_import_match_players.setChecked(settings.auto_import_match_players)
+    checkbox_auto_import_players_from_history = QCheckBox()
+    checkbox_auto_import_players_from_history.setChecked(settings.auto_import_players_from_history)
     matchzy_layout.addLayout(create_setting_row(
-        "Import match players/maps:",
-        checkbox_auto_import_match_players,
-        "auto_import_match_players",
-        "When enabled, MatchZy sync imports players into the team pool and map names from match history into the map pool."
+        "Import players from history:",
+        checkbox_auto_import_players_from_history,
+        "auto_import_players_from_history",
+        "When enabled, MatchZy + demo sync imports players from match history into the team pool."
+    ))
+
+    checkbox_auto_import_maps_from_history = QCheckBox()
+    checkbox_auto_import_maps_from_history.setChecked(settings.auto_import_maps_from_history)
+    matchzy_layout.addLayout(create_setting_row(
+        "Import maps from history:",
+        checkbox_auto_import_maps_from_history,
+        "auto_import_maps_from_history",
+        "When enabled, MatchZy sync imports map names from match history into the map pool."
     ))
 
     # DEMOS SETTINGS
@@ -943,7 +965,7 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         elif callable(on_update_players):
             logger.log("[UI] Trigger Team Builder full update after unified sync", level="DEBUG")
             on_update_players()
-        elif settings.auto_import_match_players and callable(on_players_updated):
+        elif settings.auto_import_players_from_history and callable(on_players_updated):
             logger.log("[UI] Refresh Team Builder player pool after sync import", level="DEBUG")
             on_players_updated()
             if callable(on_players_data_updated):
