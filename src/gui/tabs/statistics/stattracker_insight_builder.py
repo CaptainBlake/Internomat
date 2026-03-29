@@ -52,6 +52,9 @@ def _on_weapon_selected_changed(parent, combo):
 
 def _on_timeline_toggled(parent, checked):
     parent._stattracker_timeline = checked
+    # Clear stored multi-select so timeline always re-initialises from current
+    # single-select state, preventing desync when switching between modes.
+    parent._stattracker_selected_timeline_items = []
     from .stattracker_tab import refresh_stattracker
     refresh_stattracker(parent)
 
@@ -219,14 +222,8 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
                     checked = True if selected_weapon == "all" else (name == selected_weapon)
                 item_multi.add_checkable_item(name, data=name, checked=checked)
         item_multi._update_display_text()
-        # Wire press → immediate plot refresh
-        item_multi.view().pressed.disconnect(item_multi._on_item_pressed)
-
-        def _on_item_pressed_and_refresh(index):
-            item_multi._on_item_pressed(index)
-            _on_timeline_selection_changed(parent)
-
-        item_multi.view().pressed.connect(_on_item_pressed_and_refresh)
+        # Use dataChanged (fires after state is committed) for reliable live update.
+        item_multi._model.dataChanged.connect(lambda *_: _on_timeline_selection_changed(parent))
         parent._stattracker_timeline_combo = item_multi
         insight_row.addWidget(item_multi)
     else:
@@ -273,13 +270,8 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
             checked = (opt["key"] in stored_metrics) if stored_metrics else (opt["key"] == current_metric)
             metric_multi.add_checkable_item(opt["label"], data=opt["key"], checked=checked)
         metric_multi._update_display_text()
-        metric_multi.view().pressed.disconnect(metric_multi._on_item_pressed)
-
-        def _on_metric_pressed_and_refresh(index):
-            metric_multi._on_item_pressed(index)
-            _on_timeline_selection_changed(parent)
-
-        metric_multi.view().pressed.connect(_on_metric_pressed_and_refresh)
+        # Use dataChanged for reliable live update (same pattern as item_multi).
+        metric_multi._model.dataChanged.connect(lambda *_: _on_timeline_selection_changed(parent))
         parent._stattracker_metric_combo = metric_multi
         insight_row.addWidget(QLabel("Metric:"))
         insight_row.addWidget(metric_multi)
@@ -299,8 +291,8 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
         insight_row.addWidget(chart_mode_combo)
 
         compare_combo = QComboBox()
-        compare_combo.setMinimumWidth(220)
-        compare_combo.addItem("Compare to player: none", "")
+        compare_combo.setMinimumWidth(160)
+        compare_combo.addItem("none", "")
         player_options = getattr(parent, "_stattracker_player_options", []) or []
         for opt in player_options:
             sid_opt = str(opt.get("steamid64") or "")
@@ -314,6 +306,7 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
             parent._stattracker_compare_player = ""
         compare_combo.setCurrentIndex(compare_idx)
         compare_combo.currentIndexChanged.connect(lambda _i: _on_compare_player_changed(parent, compare_combo))
+        insight_row.addWidget(QLabel("Compare to player:"))
         insight_row.addWidget(compare_combo)
     else:
         parent._stattracker_metric_combo = None

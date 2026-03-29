@@ -289,6 +289,10 @@ def fetch_player_weapon_match_series(steamid64, weapons=None, map_name=None):
     if not sid:
         return []
 
+    # Explicit empty selection should yield no rows (not "all weapons").
+    if weapons is not None and len(weapons) == 0:
+        return []
+
     conditions = ["pmws.steamid64 = ?"]
     params: list = [sid]
 
@@ -346,6 +350,10 @@ def fetch_player_map_match_series(steamid64, maps=None):
     """
     sid = str(steamid64 or "").strip()
     if not sid:
+        return []
+
+    # Explicit empty selection should yield no rows (not "all maps").
+    if maps is not None and len(maps) == 0:
         return []
 
     conditions = ["mps.steamid64 = ?"]

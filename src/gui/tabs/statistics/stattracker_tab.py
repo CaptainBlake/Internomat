@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import math
+
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
@@ -154,6 +156,9 @@ def _build_plot_widget(plot_data, height=300, display_mode="line"):
     ax = fig.add_subplot(111)
     ax.set_facecolor("#FAFCFE")
 
+    _hover_bars: list = []   # (rect, x_label, series_label, value)
+    _hover_lines: dict = {}  # x_idx -> {"x_label": str, "series": [(label, value)]}
+    _hover_pie: list = []    # (wedge, label)
     legend_entries: list[tuple[str, str]] = []  # (color, label)
     color_idx = 0
 
@@ -187,12 +192,13 @@ def _build_plot_widget(plot_data, height=300, display_mode="line"):
                     legend_entries.append((color, label))
 
             if pie_values:
-                ax.pie(
+                pie_patches, *_ = ax.pie(
                     pie_values,
                     colors=pie_colors,
                     startangle=90,
                     wedgeprops={"linewidth": 0.7, "edgecolor": "white"},
                 )
+                _hover_pie.extend(zip(pie_patches, pie_labels))
                 ax.set_aspect("equal")
             else:
                 ax.text(0.5, 0.5, "No positive values for pie view",
@@ -208,13 +214,21 @@ def _build_plot_widget(plot_data, height=300, display_mode="line"):
             for idx, (label, values, color) in enumerate(plotted_series):
                 xs = []
                 ys = []
+                x_idxs = []
                 for i, v in enumerate(values):
                     if v is None:
                         continue
                     xs.append(i + start + idx * width)
                     ys.append(v)
+                    x_idxs.append(i)
                 if ys:
-                    ax.bar(xs, ys, width=width, color=color)
+                    bc = ax.bar(xs, ys, width=width, color=color)
+                    for rect, xi, yv in zip(bc, x_idxs, ys):
+                        _hover_bars.append((
+                            rect,
+                            x_labels[xi] if 0 <= xi < len(x_labels) else "",
+                            label, yv,
+                        ))
                 legend_entries.append((color, label))
 
             ax.set_xticks(x)
@@ -230,6 +244,11 @@ def _build_plot_widget(plot_data, height=300, display_mode="line"):
                 if xs:
                     ax.plot(xs, ys, marker="o", markersize=4, linewidth=1.8,
                             color=color, label=label)
+                    for xi, yv in zip(xs, ys):
+                        entry = _hover_lines.setdefault(
+                            xi, {"x_label": x_labels[xi] if 0 <= xi < len(x_labels) else "", "series": []}
+                        )
+                        entry["series"].append((label, yv))
                 legend_entries.append((color, label))
 
             ax.set_xticks(x)
@@ -245,6 +264,81 @@ def _build_plot_widget(plot_data, height=300, display_mode="line"):
     canvas.setMinimumHeight(height)
     canvas.setMaximumHeight(height + 80)
     canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    # Hover tooltip
+    if _hover_bars or _hover_lines or _hover_pie:
+        _annot = ax.annotate(
+            "", xy=(0, 0), xytext=(8, 8),
+            textcoords="offset points",
+            bbox=dict(boxstyle="round,pad=0.35", facecolor="#FFFDE7",
+                      edgecolor="#BDBDBD", alpha=0.95),
+            fontsize=8, zorder=10, visible=False,
+        )
+        if _hover_bars:
+            def _on_motion(event, _a=_annot, _ax=ax, _c=canvas, _d=_hover_bars):
+                if event.inaxes != _ax:
+                    if _a.get_visible():
+                        _a.set_visible(False)
+                        _c.draw_idle()
+                    return
+                for rect, x_lbl, s_lbl, val in _d:
+                    if rect.contains(event)[0]:
+                        _a.xy = (rect.get_x() + rect.get_width() / 2, rect.get_height())
+                        _a.set_text(f"{s_lbl}\n{x_lbl}:  {val:.4g}")
+                        if not _a.get_visible():
+                            _a.set_visible(True)
+                        _c.draw_idle()
+                        return
+                if _a.get_visible():
+                    _a.set_visible(False)
+                    _c.draw_idle()
+            canvas.mpl_connect("motion_notify_event", _on_motion)
+        elif _hover_lines:
+            def _on_motion(event, _a=_annot, _ax=ax, _c=canvas, _d=_hover_lines):
+                if event.inaxes != _ax or event.xdata is None:
+                    if _a.get_visible():
+                        _a.set_visible(False)
+                        _c.draw_idle()
+                    return
+                xi = int(round(event.xdata))
+                if xi in _d:
+                    entry = _d[xi]
+                    tip = f"[{entry['x_label']}]\n" + "\n".join(
+                        f"{sl}: {v:.4g}" for sl, v in entry["series"]
+                    )
+                    _a.set_text(tip)
+                    _a.xy = (xi, event.ydata)
+                    if not _a.get_visible():
+                        _a.set_visible(True)
+                    _c.draw_idle()
+                else:
+                    if _a.get_visible():
+                        _a.set_visible(False)
+                        _c.draw_idle()
+            canvas.mpl_connect("motion_notify_event", _on_motion)
+        elif _hover_pie:
+            def _on_motion(event, _a=_annot, _ax=ax, _c=canvas, _d=_hover_pie):
+                if event.inaxes != _ax:
+                    if _a.get_visible():
+                        _a.set_visible(False)
+                        _c.draw_idle()
+                    return
+                for wedge, lbl in _d:
+                    if wedge.contains(event)[0]:
+                        theta = (wedge.theta1 + wedge.theta2) / 2.0
+                        _a.xy = (
+                            0.5 * math.cos(math.radians(theta)),
+                            0.5 * math.sin(math.radians(theta)),
+                        )
+                        _a.set_text(lbl)
+                        if not _a.get_visible():
+                            _a.set_visible(True)
+                        _c.draw_idle()
+                        return
+                if _a.get_visible():
+                    _a.set_visible(False)
+                    _c.draw_idle()
+            canvas.mpl_connect("motion_notify_event", _on_motion)
 
     if not legend_entries:
         return canvas
@@ -454,7 +548,10 @@ def _refresh_plot_only(parent):
     if item_combo:
         parent._stattracker_selected_timeline_items = list(checked_items or [])
     else:
-        checked_items = list(getattr(parent, "_stattracker_selected_timeline_items", []) or []) or None
+        checked_items = list(getattr(parent, "_stattracker_selected_timeline_items", []) or [])
+
+    # Important: keep [] as "show none". Only None means "no filter / all".
+    selected_items_filter = checked_items if checked_items is not None else None
 
     def _player_label(target_sid):
         for opt in (getattr(parent, "_stattracker_player_options", []) or []):
@@ -466,12 +563,12 @@ def _refresh_plot_only(parent):
         if main_view == "maps":
             if len(metrics) == 1:
                 return stattracker.get_map_match_series(
-                    target_sid, maps=checked_items or None, metric=metrics[0],
+                    target_sid, maps=selected_items_filter, metric=metrics[0],
                 )
-            first = stattracker.get_map_match_series(target_sid, maps=checked_items or None, metric=metrics[0])
+            first = stattracker.get_map_match_series(target_sid, maps=selected_items_filter, metric=metrics[0])
             multi = [{"metric_label": first["metric_label"], "series": first["series"]}]
             for m in metrics[1:]:
-                r = stattracker.get_map_match_series(target_sid, maps=checked_items or None, metric=m)
+                r = stattracker.get_map_match_series(target_sid, maps=selected_items_filter, metric=m)
                 multi.append({"metric_label": r["metric_label"], "series": r["series"]})
             return {"x_labels": first["x_labels"], "multi_series": multi}
 
@@ -479,12 +576,12 @@ def _refresh_plot_only(parent):
         map_name = selected_map if selected_map != "all" else None
         if len(metrics) == 1:
             return stattracker.get_weapon_match_series(
-                target_sid, weapons=checked_items or None, metric=metrics[0], map_name=map_name,
+                target_sid, weapons=selected_items_filter, metric=metrics[0], map_name=map_name,
             )
-        first = stattracker.get_weapon_match_series(target_sid, weapons=checked_items or None, metric=metrics[0], map_name=map_name)
+        first = stattracker.get_weapon_match_series(target_sid, weapons=selected_items_filter, metric=metrics[0], map_name=map_name)
         multi = [{"metric_label": first["metric_label"], "series": first["series"]}]
         for m in metrics[1:]:
-            r = stattracker.get_weapon_match_series(target_sid, weapons=checked_items or None, metric=m, map_name=map_name)
+            r = stattracker.get_weapon_match_series(target_sid, weapons=selected_items_filter, metric=m, map_name=map_name)
             multi.append({"metric_label": r["metric_label"], "series": r["series"]})
         return {"x_labels": first["x_labels"], "multi_series": multi}
 
