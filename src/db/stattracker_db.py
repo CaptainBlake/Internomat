@@ -272,3 +272,114 @@ def fetch_player_weapon_kill_attribution_deltas(steamid64):
             """,
             (str(steamid64),),
         ).fetchall()
+
+
+def fetch_player_weapon_match_series(steamid64, weapons=None, map_name=None):
+    """Return per-match, per-weapon rows for a player ordered chronologically.
+
+    Each row contains: match_id, map_number, map_name, start_time,
+    weapon, category, shots_fired, shots_hit, kills, headshot_kills,
+    damage, rounds_with_weapon, total_rounds.
+
+    Optional filters:
+        weapons  – list of canonical weapon names to include (None = all)
+        map_name – restrict to a specific map (None = all maps)
+    """
+    sid = str(steamid64 or "").strip()
+    if not sid:
+        return []
+
+    conditions = ["pmws.steamid64 = ?"]
+    params: list = [sid]
+
+    if map_name and str(map_name).strip().lower() != "all":
+        conditions.append("COALESCE(mm.map_name, 'unknown') = ?")
+        params.append(str(map_name).strip())
+
+    if weapons:
+        placeholders = ",".join("?" for _ in weapons)
+        conditions.append(f"COALESCE(wa.canonical_weapon, pmws.weapon) IN ({placeholders})")
+        params.extend([str(w) for w in weapons])
+
+    where = " AND ".join(conditions)
+
+    with get_conn() as conn:
+        return conn.execute(
+            f"""
+            SELECT
+                pmws.match_id,
+                pmws.map_number,
+                COALESCE(mm.map_name, 'unknown') AS map_name,
+                COALESCE(mm.start_time, m.start_time, '') AS start_time,
+                COALESCE(wa.canonical_weapon, pmws.weapon) AS weapon,
+                COALESCE(NULLIF(wd.category, ''), 'unknown') AS category,
+                COALESCE(pmws.shots_fired, 0) AS shots_fired,
+                COALESCE(pmws.shots_hit, 0) AS shots_hit,
+                COALESCE(pmws.kills, 0) AS kills,
+                COALESCE(pmws.headshot_kills, 0) AS headshot_kills,
+                COALESCE(pmws.damage, 0) AS damage,
+                COALESCE(pmws.rounds_with_weapon, 0) AS rounds_with_weapon,
+                COALESCE(mm.team1_score, 0) + COALESCE(mm.team2_score, 0) AS total_rounds
+            FROM player_map_weapon_stats pmws
+            LEFT JOIN weapon_alias wa ON wa.raw_weapon = pmws.weapon
+            LEFT JOIN weapon_dim wd ON wd.weapon = COALESCE(wa.canonical_weapon, pmws.weapon)
+            LEFT JOIN match_maps mm
+              ON mm.match_id = pmws.match_id AND mm.map_number = pmws.map_number
+            LEFT JOIN matches m ON m.match_id = pmws.match_id
+            WHERE {where}
+            ORDER BY COALESCE(mm.start_time, m.start_time, pmws.match_id) ASC,
+                     pmws.map_number ASC,
+                     weapon ASC
+            """,
+            tuple(params),
+        ).fetchall()
+
+
+def fetch_player_map_match_series(steamid64, maps=None):
+    """Return per-match rows for a player's map performances, ordered chronologically.
+
+    Each row: match_id, map_number, map_name, start_time, kills, deaths,
+    assists, damage, head_shot_kills, total_rounds, won.
+
+    Optional filter:
+        maps – list of map names to include (None = all)
+    """
+    sid = str(steamid64 or "").strip()
+    if not sid:
+        return []
+
+    conditions = ["mps.steamid64 = ?"]
+    params: list = [sid]
+
+    if maps:
+        placeholders = ",".join("?" for _ in maps)
+        conditions.append(f"COALESCE(mm.map_name, 'unknown') IN ({placeholders})")
+        params.extend([str(m) for m in maps])
+
+    where = " AND ".join(conditions)
+
+    with get_conn() as conn:
+        return conn.execute(
+            f"""
+            SELECT
+                mps.match_id,
+                mps.map_number,
+                COALESCE(mm.map_name, 'unknown') AS map_name,
+                COALESCE(mm.start_time, m.start_time, '') AS start_time,
+                COALESCE(mps.kills, 0) AS kills,
+                COALESCE(mps.deaths, 0) AS deaths,
+                COALESCE(mps.assists, 0) AS assists,
+                COALESCE(mps.damage, 0) AS damage,
+                COALESCE(mps.head_shot_kills, 0) AS head_shot_kills,
+                COALESCE(mm.team1_score, 0) + COALESCE(mm.team2_score, 0) AS total_rounds,
+                CASE WHEN COALESCE(mm.winner, '') = COALESCE(mps.team, '') THEN 1 ELSE 0 END AS won
+            FROM match_player_stats mps
+            LEFT JOIN match_maps mm
+              ON mm.match_id = mps.match_id AND mm.map_number = mps.map_number
+            LEFT JOIN matches m ON m.match_id = mps.match_id
+            WHERE {where}
+            ORDER BY COALESCE(mm.start_time, m.start_time, mps.match_id) ASC,
+                     mps.map_number ASC
+            """,
+            tuple(params),
+        ).fetchall()

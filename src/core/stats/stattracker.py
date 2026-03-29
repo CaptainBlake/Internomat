@@ -236,3 +236,173 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
         level="DEBUG",
     )
     return result
+
+
+# ---------------------------------------------------------------------------
+# Plot series: per-match metric trends for selected weapons
+# ---------------------------------------------------------------------------
+
+PLOT_METRICS = {
+    "accuracy": {"label": "Accuracy %", "fn": lambda r: (100.0 * r["shots_hit"] / r["shots_fired"]) if r["shots_fired"] > 0 else None},
+    "hs_pct": {"label": "Headshot %", "fn": lambda r: (100.0 * r["headshot_kills"] / r["kills"]) if r["kills"] > 0 else None},
+    "kills": {"label": "Kills", "fn": lambda r: r["kills"]},
+    "damage": {"label": "Damage", "fn": lambda r: r["damage"]},
+    "shots_fired": {"label": "Shots Fired", "fn": lambda r: r["shots_fired"]},
+    "shots_hit": {"label": "Shots Hit", "fn": lambda r: r["shots_hit"]},
+}
+
+
+def get_plot_metric_options():
+    return [{"key": k, "label": v["label"]} for k, v in PLOT_METRICS.items()]
+
+
+def get_weapon_match_series(steamid64, weapons=None, metric="accuracy", map_name=None):
+    """Build plot-ready series: one line per weapon, x = match index, y = metric value.
+
+    Returns:
+        {
+            "metric_label": str,
+            "x_labels": ["map_name (match_id)", ...],   # shared x-axis labels
+            "series": {
+                "ak-47": [value_or_None, ...],
+                "m4a1-s": [value_or_None, ...],
+            }
+        }
+    """
+    sid = str(steamid64 or "").strip()
+    if not sid:
+        return {"metric_label": "", "x_labels": [], "series": {}}
+
+    metric_def = PLOT_METRICS.get(metric, PLOT_METRICS["accuracy"])
+    metric_fn = metric_def["fn"]
+
+    rows = stattracker_repo.fetch_player_weapon_match_series(
+        sid, weapons=weapons, map_name=map_name,
+    )
+
+    # Build ordered list of unique match points (match_id, map_number)
+    match_keys = []
+    match_key_set = set()
+    x_labels = []
+    for r in rows:
+        key = (str(r["match_id"]), int(r["map_number"]))
+        if key not in match_key_set:
+            match_key_set.add(key)
+            match_keys.append(key)
+            map_label = str(r["map_name"] or "?")
+            x_labels.append(map_label)
+
+    match_index = {k: i for i, k in enumerate(match_keys)}
+
+    # Build per-weapon series
+    series: dict[str, list] = {}
+    for r in rows:
+        weapon = str(r["weapon"])
+        key = (str(r["match_id"]), int(r["map_number"]))
+        idx = match_index.get(key)
+        if idx is None:
+            continue
+
+        if weapon not in series:
+            series[weapon] = [None] * len(match_keys)
+
+        val = metric_fn(r)
+        series[weapon][idx] = val
+
+    logger.log(
+        f"[STATTRACKER] plot series steamid={sid[:8]} metric={metric} "
+        f"matches={len(match_keys)} weapons={len(series)}",
+        level="DEBUG",
+    )
+
+    return {
+        "metric_label": metric_def["label"],
+        "x_labels": x_labels,
+        "series": series,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Map-level per-match series (K/D, ADR, Kills, etc. per map played)
+# ---------------------------------------------------------------------------
+
+MAP_PLOT_METRICS = {
+    "kd_ratio": {
+        "label": "K/D Ratio",
+        "fn": lambda r: (float(r["kills"]) / max(1, r["deaths"])),
+    },
+    "kills": {"label": "Kills", "fn": lambda r: r["kills"]},
+    "deaths": {"label": "Deaths", "fn": lambda r: r["deaths"]},
+    "adr": {
+        "label": "ADR",
+        "fn": lambda r: (float(r["damage"]) / max(1, r["total_rounds"])) if r["total_rounds"] > 0 else None,
+    },
+    "damage": {"label": "Damage", "fn": lambda r: r["damage"]},
+    "hs_kills": {"label": "HS Kills", "fn": lambda r: r["head_shot_kills"]},
+}
+
+
+def get_map_plot_metric_options():
+    return [{"key": k, "label": v["label"]} for k, v in MAP_PLOT_METRICS.items()]
+
+
+def get_map_match_series(steamid64, maps=None, metric="kd_ratio"):
+    """Build plot-ready series for map performance: one line per map, x = match index.
+
+    Returns:
+        {
+            "metric_label": str,
+            "x_labels": ["match #1", ...],
+            "series": {
+                "de_dust2": [value_or_None, ...],
+                ...
+            }
+        }
+    """
+    sid = str(steamid64 or "").strip()
+    if not sid:
+        return {"metric_label": "", "x_labels": [], "series": {}}
+
+    metric_def = MAP_PLOT_METRICS.get(metric, MAP_PLOT_METRICS["kd_ratio"])
+    metric_fn = metric_def["fn"]
+
+    rows = stattracker_repo.fetch_player_map_match_series(sid, maps=maps)
+
+    # Build ordered list of unique match points
+    match_keys = []
+    match_key_set = set()
+    x_labels = []
+    for r in rows:
+        key = (str(r["match_id"]), int(r["map_number"]))
+        if key not in match_key_set:
+            match_key_set.add(key)
+            match_keys.append(key)
+            x_labels.append(str(r["map_name"] or "?"))
+
+    match_index = {k: i for i, k in enumerate(match_keys)}
+
+    # Build per-map series
+    series: dict[str, list] = {}
+    for r in rows:
+        map_name = str(r["map_name"] or "unknown")
+        key = (str(r["match_id"]), int(r["map_number"]))
+        idx = match_index.get(key)
+        if idx is None:
+            continue
+
+        if map_name not in series:
+            series[map_name] = [None] * len(match_keys)
+
+        series[map_name][idx] = metric_fn(r)
+
+    logger.log(
+        f"[STATTRACKER] map plot series steamid={sid[:8]} metric={metric} "
+        f"matches={len(match_keys)} maps={len(series)}",
+        level="DEBUG",
+    )
+
+    return {
+        "metric_label": metric_def["label"],
+        "x_labels": x_labels,
+        "series": series,
+    }

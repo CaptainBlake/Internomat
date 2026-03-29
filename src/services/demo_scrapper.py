@@ -469,7 +469,7 @@ class DemoScrapperIntegration(
         set_demo_flags_by_match_ids(cached_matches)
 
         imported_players = 0
-        if settings.auto_import_match_players:
+        if settings.auto_import_players_from_history:
             canonical_entries = restore_stats.get("canonical_match_maps") or []
             if canonical_entries:
                 self._emit_progress(99, "Importing players from parsed cache", stage="pipeline")

@@ -753,6 +753,15 @@ def build_map_tab(parent):
         selected_map_table.setRowCount(0)
         _sync_slot_machine_items()
 
+    def on_available_map_double_clicked(index):
+        """Handle double-click on available map pool to add map."""
+        row = index.row()
+        item = available_map_table.item(row, 0)
+        if item is None:
+            return
+        _append_selected_map(str(item.data(Qt.ItemDataRole.UserRole)))
+        _sync_slot_machine_items()
+
     def finish_spin(winner):
         nonlocal spinning
         result_label.setText(f"Selected Map: {winner}")
@@ -780,6 +789,7 @@ def build_map_tab(parent):
     add_to_pool_button.clicked.connect(add_to_pool)
     remove_from_pool_button.clicked.connect(remove_from_pool)
     clear_pool_button.clicked.connect(clear_pool)
+    available_map_table.doubleClicked.connect(on_available_map_double_clicked)
     spin_button.clicked.connect(spin)
 
     refresh_available_maps()
