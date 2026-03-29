@@ -163,7 +163,7 @@ def _build_plot_widget(plot_data, height=300, display_mode="line"):
     color_idx = 0
 
     if all_empty:
-        ax.text(0.5, 0.5, "No data for selected filters",
+        ax.text(0.5, 0.5, "No items selected",
                 ha="center", va="center", fontsize=11, color="#7A9099",
                 transform=ax.transAxes)
         ax.set_xticks([])

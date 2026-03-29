@@ -453,18 +453,27 @@ class DemoScrapperIntegration(
 
         self._ensure_not_cancelled(stage="pipeline")
 
-        cached_matches = {
-            str(mid)
-            for mid in (restore_stats.get("canonical_match_ids") or [])
-            if mid is not None
-        }
+        from db.demo_db import get_all_restore_canonical_match_ids
+        from db.matches_db import set_demo_flags_by_match_ids
+
+        # Reconcile against full canonical cache state, not only rows touched in this run.
+        # This prevents demo flag drops when updates are capped or mostly skipped.
+        cached_matches = set(get_all_restore_canonical_match_ids())
+
+        cached_matches.update(
+            {
+                str(mid)
+                for mid in (restore_stats.get("canonical_match_ids") or [])
+                if mid is not None and str(mid).strip()
+            }
+        )
+
         if not cached_matches:
             cached_matches = {
                 str(row.get("match_id"))
                 for row in demo_cache.list_existing_cached_demos(self.parsed_demo_dir)
                 if isinstance(row, dict) and row.get("match_id") is not None
             }
-        from db.matches_db import set_demo_flags_by_match_ids
 
         set_demo_flags_by_match_ids(cached_matches)
 

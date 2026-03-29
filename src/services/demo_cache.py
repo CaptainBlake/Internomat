@@ -341,4 +341,20 @@ def compute_payload_sha256(cache_dir, match_id, map_number, filename=None):
         map_number=map_number,
         filename=filename,
     )
+
+    if IOManager.file_exists(str(payload_path)):
+        return compute_payload_sha256_from_path(payload_path)
+
+    # Fallback to manifest filename for entries whose payload file name comes
+    # from source demo stem rather than default match/map cache key.
+    manifest = get_cached_manifest(cache_dir, match_id, map_number) or {}
+    manifest_filename = manifest.get("filename")
+    if manifest_filename:
+        payload_path = _resolve_payload_path(
+            cache_dir=cache_dir,
+            match_id=match_id,
+            map_number=map_number,
+            filename=manifest_filename,
+        )
+
     return compute_payload_sha256_from_path(payload_path)

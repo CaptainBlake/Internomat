@@ -316,3 +316,27 @@ def upsert_restore_signature(
     finally:
         if own_conn:
             conn.close()
+
+
+def get_all_restore_canonical_match_ids(conn=None):
+    own_conn = conn is None
+    conn = conn or get_conn()
+
+    try:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT canonical_match_id
+            FROM cache_restore_state
+            WHERE canonical_match_id IS NOT NULL
+              AND TRIM(CAST(canonical_match_id AS TEXT)) != ''
+            """
+        ).fetchall()
+    finally:
+        if own_conn:
+            conn.close()
+
+    return {
+        str(row["canonical_match_id"]).strip()
+        for row in rows
+        if row is not None and str(row["canonical_match_id"] or "").strip()
+    }
