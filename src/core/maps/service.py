@@ -1,30 +1,47 @@
 import services.logger as logger
 import db.matches_db as matches_db
+import db.maps_db as maps_db
 
-from .slot_mashine import choose_random_map as _choose_random_map
-from .slot_mashine import choose_weighted_map as _choose_weighted_map
+from .slot_machine import choose_random_map as _choose_random_map
+from .slot_machine import choose_weighted_map as _choose_weighted_map
+
+
+# ---------------------------------------------------------------------------
+# Map pool CRUD — facades for GUI layer
+# ---------------------------------------------------------------------------
+
+def get_maps():
+    return maps_db.get_maps()
+
+
+def add_map(name):
+    maps_db.add_map(name)
+
+
+def delete_map(name):
+    maps_db.delete_map(name)
 
 
 def _build_history_weights(maps):
     total_matches = matches_db.get_total_matches_count()
     if total_matches <= 0:
-        return {}
+        return {}, 0, {}
 
     map_play_counts = matches_db.get_map_play_counts()
     min_weight = 0.01
 
-    return {
-        # More frequently played maps get lower chance: weight = 1 - played_ratio.
+    weights = {
         m: max(min_weight, 1.0 - (map_play_counts.get(m, 0) / total_matches))
         for m in maps
     }
+    return weights, total_matches, map_play_counts
 
 
 def _pct(value):
     return f"{(float(value) * 100.0):6.2f}%"
 
 
-def _log_chance_table(maps, choice, use_history, history_weights):
+def _log_chance_table(maps, choice, use_history, history_weights, total_matches=0, map_play_counts=None):
     if not use_history:
         chance = 1.0 / len(maps)
         name_w = max(12, max(len(str(m)) for m in maps))
@@ -46,8 +63,8 @@ def _log_chance_table(maps, choice, use_history, history_weights):
             "pick_chance": chance,
         }
 
-    total_matches = matches_db.get_total_matches_count()
-    map_play_counts = matches_db.get_map_play_counts()
+    if map_play_counts is None:
+        map_play_counts = {}
 
     total_weight = sum(float(history_weights.get(m, 0.0)) for m in maps)
     if total_weight <= 0:
@@ -116,12 +133,14 @@ def choose_map(maps, use_history=False):
         raise ValueError("No maps in pool")
 
     history_weights = {}
+    total_matches = 0
+    map_play_counts = {}
     if use_history:
-        history_weights = _build_history_weights(maps)
+        history_weights, total_matches, map_play_counts = _build_history_weights(maps)
 
     choice = _choose_weighted_map(maps, history_weights) if use_history else _choose_random_map(maps)
 
-    selected_entry = _log_chance_table(maps, choice, use_history, history_weights)
+    selected_entry = _log_chance_table(maps, choice, use_history, history_weights, total_matches, map_play_counts)
 
     if selected_entry:
         logger.log(

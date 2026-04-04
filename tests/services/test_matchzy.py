@@ -79,7 +79,8 @@ def matchzy_settings(monkeypatch):
     monkeypatch.setattr(settings, "matchzy_user", "testuser")
     monkeypatch.setattr(settings, "matchzy_password", "testpass")
     monkeypatch.setattr(settings, "matchzy_database", "matchzy_db")
-    monkeypatch.setattr(settings, "auto_import_match_players", False)
+    monkeypatch.setattr(settings, "auto_import_players_from_history", False)
+    monkeypatch.setattr(settings, "auto_import_maps_from_history", False)
 
 
 # ---------------------------------------------------------------------------
@@ -294,10 +295,11 @@ class TestSyncToLocal:
     def test_sync_auto_import_players(
         self, monkeypatch_db, db_conn, matchzy_settings, monkeypatch
     ):
-        """When auto_import_match_players is True, players should be
+        """When auto_import_players_from_history is True, players should be
         upserted into the pool and maps imported."""
         from core.settings.settings import settings
-        monkeypatch.setattr(settings, "auto_import_match_players", True)
+        monkeypatch.setattr(settings, "auto_import_players_from_history", True)
+        monkeypatch.setattr(settings, "auto_import_maps_from_history", True)
 
         mock_conn = MagicMock()
         mock_conn.is_connected.return_value = True

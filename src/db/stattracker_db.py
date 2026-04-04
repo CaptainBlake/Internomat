@@ -1,4 +1,10 @@
-from .connection_db import executemany_write, get_conn
+from .connection_db import executemany_write, get_conn, optional_conn
+
+_WEAPON_FROM = """
+    FROM player_map_weapon_stats pmws
+    LEFT JOIN weapon_alias wa ON wa.raw_weapon = pmws.weapon
+    LEFT JOIN weapon_dim wd ON wd.weapon = COALESCE(wa.canonical_weapon, pmws.weapon)
+"""
 
 
 def fetch_player_overview():
@@ -40,9 +46,6 @@ def fetch_top_player_samples(limit):
 def upsert_player_map_weapon_stats_many(rows, conn=None):
     if not rows:
         return
-
-    own_conn = conn is None
-    conn = conn or get_conn()
 
     query = """
         INSERT INTO player_map_weapon_stats (
@@ -95,11 +98,11 @@ def upsert_player_map_weapon_stats_many(rows, conn=None):
     if not params:
         return
 
-    try:
+    with optional_conn(conn, commit=True) as c:
         discovered_weapons = sorted({p[3] for p in params if str(p[3]).strip()})
         if discovered_weapons:
             executemany_write(
-                conn,
+                c,
                 """
                 INSERT INTO weapon_dim (weapon, display_name, category, source, is_active, first_seen_at, updated_at)
                 VALUES (?, ?, 'unknown', 'observed', 1, datetime('now'), datetime('now'))
@@ -110,12 +113,223 @@ def upsert_player_map_weapon_stats_many(rows, conn=None):
                 [(w, w) for w in discovered_weapons],
             )
 
-        executemany_write(conn, query, params)
-        if own_conn:
-            conn.commit()
-    finally:
-        if own_conn:
-            conn.close()
+        executemany_write(c, query, params)
+
+
+def upsert_player_map_movement_stats_many(rows, conn=None):
+    if not rows:
+        return
+
+    query = """
+        INSERT INTO player_map_movement_stats (
+            steamid64,
+            match_id,
+            map_number,
+            total_distance_units,
+            total_distance_m,
+            avg_speed_units_s,
+            avg_speed_m_s,
+            max_speed_units_s,
+            ticks_alive,
+            alive_seconds,
+            distance_per_round_units,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(steamid64, match_id, map_number) DO UPDATE SET
+            total_distance_units = excluded.total_distance_units,
+            total_distance_m = excluded.total_distance_m,
+            avg_speed_units_s = excluded.avg_speed_units_s,
+            avg_speed_m_s = excluded.avg_speed_m_s,
+            max_speed_units_s = excluded.max_speed_units_s,
+            ticks_alive = excluded.ticks_alive,
+            alive_seconds = excluded.alive_seconds,
+            distance_per_round_units = excluded.distance_per_round_units,
+            updated_at = excluded.updated_at
+    """
+
+    params = [
+        (
+            str(row.get("steamid64") or ""),
+            str(row.get("match_id") or ""),
+            int(row.get("map_number") or 0),
+            float(row.get("total_distance_units") or 0.0),
+            float(row.get("total_distance_m") or 0.0),
+            float(row.get("avg_speed_units_s") or 0.0),
+            float(row.get("avg_speed_m_s") or 0.0),
+            float(row.get("max_speed_units_s") or 0.0),
+            int(row.get("ticks_alive") or 0),
+            float(row.get("alive_seconds") or 0.0),
+            float(row.get("distance_per_round_units") or 0.0),
+            str(row.get("updated_at") or ""),
+        )
+        for row in rows
+        if isinstance(row, dict)
+        and str(row.get("steamid64") or "").strip()
+        and str(row.get("match_id") or "").strip()
+    ]
+
+    if not params:
+        return
+
+    with optional_conn(conn, commit=True) as c:
+        executemany_write(c, query, params)
+
+
+def upsert_player_round_movement_stats_many(rows, conn=None):
+    if not rows:
+        return
+
+    query = """
+        INSERT INTO player_round_movement_stats (
+            steamid64,
+            match_id,
+            map_number,
+            round_num,
+            side,
+            distance_units,
+            avg_speed_units_s,
+            max_speed_units_s,
+            ticks_alive,
+            alive_seconds,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(steamid64, match_id, map_number, round_num) DO UPDATE SET
+            side = excluded.side,
+            distance_units = excluded.distance_units,
+            avg_speed_units_s = excluded.avg_speed_units_s,
+            max_speed_units_s = excluded.max_speed_units_s,
+            ticks_alive = excluded.ticks_alive,
+            alive_seconds = excluded.alive_seconds,
+            updated_at = excluded.updated_at
+    """
+
+    params = [
+        (
+            str(row.get("steamid64") or ""),
+            str(row.get("match_id") or ""),
+            int(row.get("map_number") or 0),
+            int(row.get("round_num") or 0),
+            str(row.get("side") or ""),
+            float(row.get("distance_units") or 0.0),
+            float(row.get("avg_speed_units_s") or 0.0),
+            float(row.get("max_speed_units_s") or 0.0),
+            int(row.get("ticks_alive") or 0),
+            float(row.get("alive_seconds") or 0.0),
+            str(row.get("updated_at") or ""),
+        )
+        for row in rows
+        if isinstance(row, dict)
+        and str(row.get("steamid64") or "").strip()
+        and str(row.get("match_id") or "").strip()
+        and int(row.get("round_num") or 0) > 0
+    ]
+
+    if not params:
+        return
+
+    with optional_conn(conn, commit=True) as c:
+        executemany_write(c, query, params)
+
+
+def upsert_player_round_timeline_bins_many(rows, conn=None):
+    if not rows:
+        return
+
+    query = """
+        INSERT INTO player_round_timeline_bins (
+            steamid64,
+            match_id,
+            map_number,
+            round_num,
+            bin_index,
+            bin_start_sec,
+            median_speed_m_s,
+            samples,
+            side,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(steamid64, match_id, map_number, round_num, bin_index) DO UPDATE SET
+            bin_start_sec = excluded.bin_start_sec,
+            median_speed_m_s = excluded.median_speed_m_s,
+            samples = excluded.samples,
+            side = excluded.side,
+            updated_at = excluded.updated_at
+    """
+
+    params = [
+        (
+            str(row.get("steamid64") or ""),
+            str(row.get("match_id") or ""),
+            int(row.get("map_number") or 0),
+            int(row.get("round_num") or 0),
+            int(row.get("bin_index") or 0),
+            float(row.get("bin_start_sec") or 0.0),
+            float(row.get("median_speed_m_s") or 0.0),
+            int(row.get("samples") or 0),
+            str(row.get("side") or ""),
+            str(row.get("updated_at") or ""),
+        )
+        for row in rows
+        if isinstance(row, dict)
+        and str(row.get("steamid64") or "").strip()
+        and str(row.get("match_id") or "").strip()
+        and int(row.get("round_num") or 0) > 0
+    ]
+
+    if not params:
+        return
+
+    with optional_conn(conn, commit=True) as c:
+        executemany_write(c, query, params)
+
+
+def fetch_player_movement_match_series(steamid64, maps=None):
+    sid = str(steamid64 or "").strip()
+    if not sid:
+        return []
+
+    if maps is not None and len(maps) == 0:
+        return []
+
+    conditions = ["pmms.steamid64 = ?"]
+    params = [sid]
+
+    if maps:
+        placeholders = ",".join("?" for _ in maps)
+        conditions.append(f"COALESCE(mm.map_name, 'unknown') IN ({placeholders})")
+        params.extend([str(m) for m in maps])
+
+    where = " AND ".join(conditions)
+
+    with get_conn() as conn:
+        return conn.execute(
+            f"""
+            SELECT
+                pmms.match_id,
+                pmms.map_number,
+                COALESCE(mm.map_name, 'unknown') AS map_name,
+                COALESCE(mm.start_time, m.start_time, '') AS start_time,
+                COALESCE(pmms.total_distance_units, 0) AS total_distance_units,
+                COALESCE(pmms.total_distance_m, 0) AS total_distance_m,
+                COALESCE(pmms.avg_speed_units_s, 0) AS avg_speed_units_s,
+                COALESCE(pmms.avg_speed_m_s, 0) AS avg_speed_m_s,
+                COALESCE(pmms.max_speed_units_s, 0) AS max_speed_units_s,
+                COALESCE(pmms.ticks_alive, 0) AS ticks_alive,
+                COALESCE(pmms.alive_seconds, 0) AS alive_seconds,
+                COALESCE(pmms.distance_per_round_units, 0) AS distance_per_round_units
+            FROM player_map_movement_stats pmms
+            LEFT JOIN match_maps mm
+              ON mm.match_id = pmms.match_id AND mm.map_number = pmms.map_number
+            LEFT JOIN matches m ON m.match_id = pmms.match_id
+            WHERE {where}
+            ORDER BY COALESCE(mm.start_time, m.start_time, pmms.match_id) ASC,
+                     pmms.map_number ASC
+            """,
+            tuple(params),
+        ).fetchall()
 
 
 def fetch_player_filter_options():
@@ -186,15 +400,11 @@ def fetch_player_map_stats(steamid64):
 def fetch_player_weapon_categories(steamid64):
     with get_conn() as conn:
         return conn.execute(
-            """
+            f"""
             SELECT
                 COALESCE(NULLIF(wd.category, ''), 'unknown') AS category,
                 COUNT(*) AS rows_count
-            FROM player_map_weapon_stats pmws
-                        LEFT JOIN weapon_alias wa
-                            ON wa.raw_weapon = pmws.weapon
-            LEFT JOIN weapon_dim wd
-                            ON wd.weapon = COALESCE(wa.canonical_weapon, pmws.weapon)
+            {_WEAPON_FROM}
             WHERE pmws.steamid64 = ?
             GROUP BY COALESCE(NULLIF(wd.category, ''), 'unknown')
             ORDER BY category COLLATE NOCASE ASC
@@ -216,7 +426,7 @@ def fetch_player_weapon_stats(steamid64, min_shots=1, weapon_category=None):
         return conn.execute(
             f"""
             SELECT
-                                COALESCE(wa.canonical_weapon, pmws.weapon) AS weapon,
+                COALESCE(wa.canonical_weapon, pmws.weapon) AS weapon,
                 COALESCE(NULLIF(wd.category, ''), 'unknown') AS category,
                 SUM(COALESCE(shots_fired, 0)) AS shots_fired,
                 SUM(COALESCE(shots_hit, 0)) AS shots_hit,
@@ -224,16 +434,12 @@ def fetch_player_weapon_stats(steamid64, min_shots=1, weapon_category=None):
                 SUM(COALESCE(headshot_kills, 0)) AS headshot_kills,
                 SUM(COALESCE(damage, 0)) AS damage,
                 SUM(COALESCE(rounds_with_weapon, 0)) AS rounds_with_weapon
-            FROM player_map_weapon_stats pmws
-                        LEFT JOIN weapon_alias wa
-                            ON wa.raw_weapon = pmws.weapon
-            LEFT JOIN weapon_dim wd
-                            ON wd.weapon = COALESCE(wa.canonical_weapon, pmws.weapon)
+            {_WEAPON_FROM}
             WHERE pmws.steamid64 = ?
               {category_sql}
-                        GROUP BY COALESCE(wa.canonical_weapon, pmws.weapon), COALESCE(NULLIF(wd.category, ''), 'unknown')
+            GROUP BY COALESCE(wa.canonical_weapon, pmws.weapon), COALESCE(NULLIF(wd.category, ''), 'unknown')
             HAVING SUM(COALESCE(shots_fired, 0)) >= ?
-                        ORDER BY shots_fired DESC, weapon COLLATE NOCASE ASC
+            ORDER BY shots_fired DESC, weapon COLLATE NOCASE ASC
             """,
             tuple(params),
         ).fetchall()
@@ -324,9 +530,7 @@ def fetch_player_weapon_match_series(steamid64, weapons=None, map_name=None):
                 COALESCE(pmws.damage, 0) AS damage,
                 COALESCE(pmws.rounds_with_weapon, 0) AS rounds_with_weapon,
                 COALESCE(mm.team1_score, 0) + COALESCE(mm.team2_score, 0) AS total_rounds
-            FROM player_map_weapon_stats pmws
-            LEFT JOIN weapon_alias wa ON wa.raw_weapon = pmws.weapon
-            LEFT JOIN weapon_dim wd ON wd.weapon = COALESCE(wa.canonical_weapon, pmws.weapon)
+            {_WEAPON_FROM}
             LEFT JOIN match_maps mm
               ON mm.match_id = pmws.match_id AND mm.map_number = pmws.map_number
             LEFT JOIN matches m ON m.match_id = pmws.match_id

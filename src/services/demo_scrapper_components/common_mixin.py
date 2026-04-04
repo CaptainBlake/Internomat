@@ -403,16 +403,21 @@ class DemoScrapperCommonMixin:
 
         # Store lightweight derived artifacts in cache so downstream stats/timeline
         # can work without recomputing fragile heuristics from raw tables.
-        try:
-            data["derived_player_stats"] = demo_payload_analysis.build_derived_player_stats(data)
-            data["derived_round_timeline"] = demo_payload_analysis.build_derived_round_timeline(data)
-            data["derived_restore_stats"] = demo_payload_analysis.build_derived_restore_stats(data)
-            data["derived_weapon_stats"] = demo_payload_analysis.build_derived_weapon_stats(data)
-        except Exception:
-            data["derived_player_stats"] = {}
-            data["derived_round_timeline"] = []
-            data["derived_restore_stats"] = {}
-            data["derived_weapon_stats"] = {}
+        def _derive_safe(key, builder, default):
+            try:
+                data[key] = builder(data)
+            except Exception as e:
+                data[key] = default
+                logger.log(
+                    f"[PARSER] Derived artifact failed key={key}: {e}",
+                    level="WARNING",
+                )
+
+        _derive_safe("derived_player_stats", demo_payload_analysis.build_derived_player_stats, {})
+        _derive_safe("derived_round_timeline", demo_payload_analysis.build_derived_round_timeline, [])
+        _derive_safe("derived_restore_stats", demo_payload_analysis.build_derived_restore_stats, {})
+        _derive_safe("derived_weapon_stats", demo_payload_analysis.build_derived_weapon_stats, {})
+        _derive_safe("derived_movement_stats", demo_payload_analysis.build_derived_movement_stats, {})
 
         # Compute advanced awpy stats functions if available
         # These provide precomputed aggregates (ADR, KAST, Impact, Rating, etc.)

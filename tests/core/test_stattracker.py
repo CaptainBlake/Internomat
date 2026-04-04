@@ -3,6 +3,8 @@
 import pytest
 
 from core.stats.stattracker import (
+    get_movement_match_series,
+    get_movement_plot_metric_options,
     get_overview,
     get_player_dashboard,
     get_player_options,
@@ -189,3 +191,41 @@ class TestGetPlayerDashboard:
         # Bob has at least m4a4 in weapon rows
         weapons = {r["weapon"] for r in result["weapon_rows"]}
         assert "m4a4" in weapons
+
+
+class TestMovementSeries:
+    def test_metric_options_include_avg_speed(self):
+        opts = get_movement_plot_metric_options()
+        keys = {o["key"] for o in opts}
+        assert "avg_speed_m_s" in keys
+        assert "max_speed_units_s" in keys
+
+    def test_get_movement_match_series(self, db_conn, monkeypatch_db):
+        from db.stattracker_db import upsert_player_map_movement_stats_many
+
+        upsert_player_map_movement_stats_many(
+            [
+                {
+                    "steamid64": "76561198000000001",
+                    "match_id": "100",
+                    "map_number": 0,
+                    "total_distance_units": 1000,
+                    "total_distance_m": 25.4,
+                    "avg_speed_units_s": 200,
+                    "avg_speed_m_s": 5.08,
+                    "max_speed_units_s": 300,
+                    "ticks_alive": 1000,
+                    "alive_seconds": 7.8,
+                    "distance_per_round_units": 250,
+                    "updated_at": "2026-04-05T00:00:00",
+                },
+            ],
+            conn=db_conn,
+        )
+        db_conn.commit()
+
+        series = get_movement_match_series("76561198000000001", metric="avg_speed_m_s")
+
+        assert series["metric_label"] == "Avg Speed (m/s)"
+        assert len(series["x_labels"]) >= 1
+        assert "Movement" in (series["series"] or {})

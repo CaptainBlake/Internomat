@@ -338,6 +338,148 @@ class TestUpsertWeaponStatsMany:
         # Should not raise
         upsert_player_map_weapon_stats_many([], conn=db_conn)
 
+
+class TestMovementStatsPhase4:
+
+    def test_upsert_map_round_and_bins(self, db_conn):
+        from db.stattracker_db import (
+            upsert_player_map_movement_stats_many,
+            upsert_player_round_movement_stats_many,
+            upsert_player_round_timeline_bins_many,
+        )
+
+        upsert_player_map_movement_stats_many(
+            [
+                {
+                    "steamid64": "76561198000000001",
+                    "match_id": "700",
+                    "map_number": 0,
+                    "total_distance_units": 12345.0,
+                    "total_distance_m": 313.563,
+                    "avg_speed_units_s": 214.2,
+                    "avg_speed_m_s": 5.44,
+                    "max_speed_units_s": 312.0,
+                    "ticks_alive": 4000,
+                    "alive_seconds": 31.25,
+                    "distance_per_round_units": 617.25,
+                    "updated_at": "2026-04-05T00:00:00",
+                }
+            ],
+            conn=db_conn,
+        )
+
+        upsert_player_round_movement_stats_many(
+            [
+                {
+                    "steamid64": "76561198000000001",
+                    "match_id": "700",
+                    "map_number": 0,
+                    "round_num": 1,
+                    "side": "CT",
+                    "distance_units": 710.5,
+                    "avg_speed_units_s": 198.2,
+                    "max_speed_units_s": 301.0,
+                    "ticks_alive": 500,
+                    "alive_seconds": 3.9,
+                    "updated_at": "2026-04-05T00:00:00",
+                }
+            ],
+            conn=db_conn,
+        )
+
+        upsert_player_round_timeline_bins_many(
+            [
+                {
+                    "steamid64": "76561198000000001",
+                    "match_id": "700",
+                    "map_number": 0,
+                    "round_num": 1,
+                    "bin_index": 0,
+                    "bin_start_sec": 0.0,
+                    "median_speed_m_s": 5.2,
+                    "samples": 32,
+                    "side": "CT",
+                    "updated_at": "2026-04-05T00:00:00",
+                }
+            ],
+            conn=db_conn,
+        )
+
+        map_count = db_conn.execute(
+            "SELECT COUNT(*) AS c FROM player_map_movement_stats WHERE steamid64 = ?",
+            ("76561198000000001",),
+        ).fetchone()["c"]
+        round_count = db_conn.execute(
+            "SELECT COUNT(*) AS c FROM player_round_movement_stats WHERE steamid64 = ?",
+            ("76561198000000001",),
+        ).fetchone()["c"]
+        bin_count = db_conn.execute(
+            "SELECT COUNT(*) AS c FROM player_round_timeline_bins WHERE steamid64 = ?",
+            ("76561198000000001",),
+        ).fetchone()["c"]
+
+        assert map_count == 1
+        assert round_count == 1
+        assert bin_count == 1
+
+    def test_fetch_player_movement_match_series(self, db_conn, db_file, seed_match):
+        from db.stattracker_db import (
+            fetch_player_movement_match_series,
+            upsert_player_map_movement_stats_many,
+        )
+
+        seed_match(
+            match_kwargs={"match_id": "701"},
+            map_kwargs={"map_number": 0, "map_name": "de_dust2"},
+        )
+        seed_match(
+            match_kwargs={"match_id": "702"},
+            map_kwargs={"map_number": 0, "map_name": "de_inferno"},
+        )
+
+        upsert_player_map_movement_stats_many(
+            [
+                {
+                    "steamid64": "76561198000000001",
+                    "match_id": "701",
+                    "map_number": 0,
+                    "total_distance_units": 1000,
+                    "total_distance_m": 25.4,
+                    "avg_speed_units_s": 200,
+                    "avg_speed_m_s": 5.08,
+                    "max_speed_units_s": 300,
+                    "ticks_alive": 1000,
+                    "alive_seconds": 7.8,
+                    "distance_per_round_units": 250,
+                    "updated_at": "2026-04-05T00:00:00",
+                },
+                {
+                    "steamid64": "76561198000000001",
+                    "match_id": "702",
+                    "map_number": 0,
+                    "total_distance_units": 2000,
+                    "total_distance_m": 50.8,
+                    "avg_speed_units_s": 210,
+                    "avg_speed_m_s": 5.33,
+                    "max_speed_units_s": 310,
+                    "ticks_alive": 1200,
+                    "alive_seconds": 9.3,
+                    "distance_per_round_units": 300,
+                    "updated_at": "2026-04-05T00:00:00",
+                },
+            ],
+            conn=db_conn,
+        )
+        db_conn.commit()
+
+        with _patch_conn("db.stattracker_db.get_conn", db_file):
+            rows_all = fetch_player_movement_match_series("76561198000000001")
+            rows_filtered = fetch_player_movement_match_series("76561198000000001", maps=["de_dust2"])
+
+        assert len(rows_all) == 2
+        assert len(rows_filtered) == 1
+        assert str(rows_filtered[0]["map_name"]) == "de_dust2"
+
     def test_bulk_insert_discovers_weapons_in_weapon_dim(self, db_conn):
         from db.stattracker_db import upsert_player_map_weapon_stats_many
 

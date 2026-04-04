@@ -1,16 +1,13 @@
 from datetime import datetime, timedelta
-from .connection_db import execute_write, get_conn
+from .connection_db import execute_write, get_conn, optional_conn
 import services.logger as logger
 
 
 def insert_player(player, conn=None):
-    own = conn is None
-    conn = conn or get_conn()
-
     now = datetime.utcnow().isoformat()
 
-    try:
-        execute_write(conn, """
+    with optional_conn(conn, commit=True) as c:
+        execute_write(c, """
             INSERT INTO players VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             player["steam64_id"],
@@ -24,22 +21,13 @@ def insert_player(player, conn=None):
             now
         ))
 
-        if own:
-            conn.commit()
-    finally:
-        if own:
-            conn.close()
-
     logger.log(f"[DB] Insert player {logger.redact(player['steam64_id'])}", level="INFO")
 
 def update_player(player, conn=None):
-    own = conn is None
-    conn = conn or get_conn()
-
     now = datetime.utcnow().isoformat()
 
-    try:
-        execute_write(conn, """
+    with optional_conn(conn, commit=True) as c:
+        execute_write(c, """
             UPDATE players SET
                 leetify_id = ?,
                 name = ?,
@@ -60,11 +48,6 @@ def update_player(player, conn=None):
             player["steam64_id"]
         ))
 
-        if own:
-            conn.commit()
-    finally:
-        if own:
-            conn.close()
     logger.log(f"[DB] Update player {logger.redact(player['steam64_id'])}", level="INFO")
 
 def delete_player(steam_id):
@@ -74,14 +57,11 @@ def delete_player(steam_id):
     logger.log(f"[DB] Delete player {logger.redact(steam_id)}", level="INFO")
 
 def upsert_player(player, mode="full", conn=None):
-    own = conn is None
-    conn = conn or get_conn()
-
     now = datetime.utcnow().isoformat()
 
-    try:
+    with optional_conn(conn, commit=True) as c:
         if mode == "import":
-            execute_write(conn, """
+            execute_write(c, """
                 INSERT INTO players (steam64_id, name, added_at, last_updated)
                 VALUES (?, ?, ?, ?)
                 ON CONFLICT(steam64_id) DO UPDATE SET
@@ -94,7 +74,7 @@ def upsert_player(player, mode="full", conn=None):
                 now
             ))
         else:
-            execute_write(conn, """
+            execute_write(c, """
                 INSERT INTO players VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(steam64_id) DO UPDATE SET
                     leetify_id=excluded.leetify_id,
@@ -116,22 +96,14 @@ def upsert_player(player, mode="full", conn=None):
                 now
             ))
 
-        if own:
-            conn.commit()
-    finally:
-        if own:
-            conn.close()
     logger.log(f"[DB] Upsert player {logger.redact(player['steam64_id'])}", level="DEBUG")
 
 
 def upsert_players_from_match_stats(rows, conn=None):
-    own = conn is None
-    conn = conn or get_conn()
-
     imported = 0
     seen = set()
 
-    try:
+    with optional_conn(conn, commit=True) as c:
         for row in rows or []:
             steam64_id = str(
                 (row or {}).get("steam64_id")
@@ -150,15 +122,9 @@ def upsert_players_from_match_stats(rows, conn=None):
                     "name": name,
                 },
                 mode="import",
-                conn=conn,
+                conn=c,
             )
             imported += 1
-
-        if own:
-            conn.commit()
-    finally:
-        if own:
-            conn.close()
 
     logger.log(f"[DB] Imported/updated players from match stats count={imported}", level="INFO")
     return imported

@@ -1,9 +1,12 @@
 from db import statistics_db as statistics_repo
 from services import demo_cache
 import services.logger as logger
+import threading
 
 
 _PARSED_PAYLOAD_CACHE = {}
+_CACHE_LOCK = threading.Lock()
+_CACHE_MAX_SIZE = 200
 
 
 def _safe_row_count(value):
@@ -35,24 +38,30 @@ def _manifest_fingerprint(manifest):
 
 
 def _prune_payload_cache(valid_keys):
-    stale = [k for k in _PARSED_PAYLOAD_CACHE.keys() if k not in valid_keys]
-    for key in stale:
-        _PARSED_PAYLOAD_CACHE.pop(key, None)
+    with _CACHE_LOCK:
+        stale = [k for k in _PARSED_PAYLOAD_CACHE.keys() if k not in valid_keys]
+        for key in stale:
+            _PARSED_PAYLOAD_CACHE.pop(key, None)
 
 
 def _get_cached_payload(match_id, map_number, manifest):
     key = (str(match_id), int(map_number))
     fingerprint = _manifest_fingerprint(manifest)
 
-    cached = _PARSED_PAYLOAD_CACHE.get(key)
-    if cached and cached.get("fingerprint") == fingerprint:
-        return cached.get("payload"), True
+    with _CACHE_LOCK:
+        cached = _PARSED_PAYLOAD_CACHE.get(key)
+        if cached and cached.get("fingerprint") == fingerprint:
+            return cached.get("payload"), True
 
     payload = demo_cache.load_parsed_demo_default(match_id, map_number)
-    _PARSED_PAYLOAD_CACHE[key] = {
-        "fingerprint": fingerprint,
-        "payload": payload,
-    }
+
+    with _CACHE_LOCK:
+        if len(_PARSED_PAYLOAD_CACHE) >= _CACHE_MAX_SIZE:
+            _PARSED_PAYLOAD_CACHE.pop(next(iter(_PARSED_PAYLOAD_CACHE)), None)
+        _PARSED_PAYLOAD_CACHE[key] = {
+            "fingerprint": fingerprint,
+            "payload": payload,
+        }
     return payload, False
 
 

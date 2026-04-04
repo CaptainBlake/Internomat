@@ -242,6 +242,77 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_player_weapon_match_map ON player_map_weapon_stats(match_id, map_number)"
         )
 
+        # --- PHASE 4: MOVEMENT + TIMELINE ANALYTICS ---
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS player_map_movement_stats (
+                steamid64 TEXT NOT NULL,
+                match_id TEXT NOT NULL,
+                map_number INTEGER NOT NULL,
+                total_distance_units REAL NOT NULL DEFAULT 0,
+                total_distance_m REAL NOT NULL DEFAULT 0,
+                avg_speed_units_s REAL NOT NULL DEFAULT 0,
+                avg_speed_m_s REAL NOT NULL DEFAULT 0,
+                max_speed_units_s REAL NOT NULL DEFAULT 0,
+                ticks_alive INTEGER NOT NULL DEFAULT 0,
+                alive_seconds REAL NOT NULL DEFAULT 0,
+                distance_per_round_units REAL NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (steamid64, match_id, map_number)
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS player_round_movement_stats (
+                steamid64 TEXT NOT NULL,
+                match_id TEXT NOT NULL,
+                map_number INTEGER NOT NULL,
+                round_num INTEGER NOT NULL,
+                side TEXT,
+                distance_units REAL NOT NULL DEFAULT 0,
+                avg_speed_units_s REAL NOT NULL DEFAULT 0,
+                max_speed_units_s REAL NOT NULL DEFAULT 0,
+                ticks_alive INTEGER NOT NULL DEFAULT 0,
+                alive_seconds REAL NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (steamid64, match_id, map_number, round_num)
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS player_round_timeline_bins (
+                steamid64 TEXT NOT NULL,
+                match_id TEXT NOT NULL,
+                map_number INTEGER NOT NULL,
+                round_num INTEGER NOT NULL,
+                bin_index INTEGER NOT NULL,
+                bin_start_sec REAL NOT NULL DEFAULT 0,
+                median_speed_m_s REAL NOT NULL DEFAULT 0,
+                samples INTEGER NOT NULL DEFAULT 0,
+                side TEXT,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (steamid64, match_id, map_number, round_num, bin_index)
+            )
+        """)
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_player_map_move_player ON player_map_movement_stats(steamid64)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_player_map_move_match_map ON player_map_movement_stats(match_id, map_number)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_player_round_move_player ON player_round_movement_stats(steamid64)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_player_round_move_match_map ON player_round_movement_stats(match_id, map_number, round_num)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_player_round_bins_player ON player_round_timeline_bins(steamid64)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_player_round_bins_match_map ON player_round_timeline_bins(match_id, map_number, round_num, bin_index)"
+        )
+
         weapon_seed_rows = list(iter_seed_weapon_rows())
         conn.executemany(
             """

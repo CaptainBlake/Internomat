@@ -16,12 +16,25 @@ from db.matches_db import (
     match_map_has_player_stats,
     set_match_has_demo,
 )
-from db.stattracker_db import upsert_player_map_weapon_stats_many
+from db.stattracker_db import (
+    upsert_player_map_weapon_stats_many,
+    upsert_player_map_movement_stats_many,
+    upsert_player_round_movement_stats_many,
+    upsert_player_round_timeline_bins_many,
+)
+from analytics import demo_payload_analysis
 from services import demo_cache
 import services.logger as logger
 
 
 class DemoScrapperRestoreMixin:
+    def _ensure_not_cancelled(self, stage="pipeline"):
+        """Fallback no-op for tests using lightweight restore stubs.
+
+        DemoScrapperIntegration provides the real cancellation behavior.
+        """
+        return
+
     @staticmethod
     def _parse_cache_row_played_at(row):
         """Best-effort timestamp used to order restores from oldest to newest."""
@@ -688,8 +701,23 @@ class DemoScrapperRestoreMixin:
 
     def _build_weapon_stats_rows(self, *, match_id, map_number, parsed_payload):
         derived = (parsed_payload or {}).get("derived_weapon_stats")
-        if not isinstance(derived, dict):
-            return []
+        if not isinstance(derived, dict) or not derived:
+            try:
+                derived = demo_payload_analysis.build_derived_weapon_stats(parsed_payload or {})
+                if isinstance(parsed_payload, dict):
+                    parsed_payload["derived_weapon_stats"] = derived
+                self._log_stage(
+                    "RESTORE",
+                    f"Rebuilt missing derived_weapon_stats match={match_id} map={map_number}",
+                    level="DEBUG",
+                )
+            except Exception as e:
+                self._log_stage(
+                    "RESTORE",
+                    f"Failed to rebuild derived_weapon_stats match={match_id} map={map_number}: {e}",
+                    level="WARNING",
+                )
+                return []
 
         now = datetime.utcnow().isoformat()
         rows = []
@@ -726,6 +754,95 @@ class DemoScrapperRestoreMixin:
 
         return rows
 
+    def _build_movement_stats_rows(self, *, match_id, map_number, parsed_payload):
+        derived = (parsed_payload or {}).get("derived_movement_stats")
+        if not isinstance(derived, dict) or not derived:
+            try:
+                derived = demo_payload_analysis.build_derived_movement_stats(parsed_payload or {})
+                if isinstance(parsed_payload, dict):
+                    parsed_payload["derived_movement_stats"] = derived
+                self._log_stage(
+                    "RESTORE",
+                    f"Rebuilt missing derived_movement_stats match={match_id} map={map_number}",
+                    level="DEBUG",
+                )
+            except Exception as e:
+                self._log_stage(
+                    "RESTORE",
+                    f"Failed to rebuild derived_movement_stats match={match_id} map={map_number}: {e}",
+                    level="WARNING",
+                )
+                return [], [], []
+
+        now = datetime.utcnow().isoformat()
+        map_rows = []
+        round_rows = []
+        bin_rows = []
+
+        for row in (derived.get("map_rows") or []):
+            sid = self._to_steamid64_string(row.get("steamid"))
+            if sid is None:
+                continue
+            map_rows.append(
+                {
+                    "steamid64": str(sid),
+                    "match_id": str(match_id),
+                    "map_number": int(map_number),
+                    "total_distance_units": float(row.get("total_distance_units") or 0.0),
+                    "total_distance_m": float(row.get("total_distance_m") or 0.0),
+                    "avg_speed_units_s": float(row.get("avg_speed_units_s") or 0.0),
+                    "avg_speed_m_s": float(row.get("avg_speed_m_s") or 0.0),
+                    "max_speed_units_s": float(row.get("max_speed_units_s") or 0.0),
+                    "ticks_alive": int(row.get("ticks_alive") or 0),
+                    "alive_seconds": float(row.get("alive_seconds") or 0.0),
+                    "distance_per_round_units": float(row.get("distance_per_round_units") or 0.0),
+                    "updated_at": now,
+                }
+            )
+
+        for row in (derived.get("round_rows") or []):
+            sid = self._to_steamid64_string(row.get("steamid"))
+            round_num = self._to_int(row.get("round_num"), default=0)
+            if sid is None or round_num <= 0:
+                continue
+            round_rows.append(
+                {
+                    "steamid64": str(sid),
+                    "match_id": str(match_id),
+                    "map_number": int(map_number),
+                    "round_num": int(round_num),
+                    "side": str(row.get("side") or ""),
+                    "distance_units": float(row.get("distance_units") or 0.0),
+                    "avg_speed_units_s": float(row.get("avg_speed_units_s") or 0.0),
+                    "max_speed_units_s": float(row.get("max_speed_units_s") or 0.0),
+                    "ticks_alive": int(row.get("ticks_alive") or 0),
+                    "alive_seconds": float(row.get("alive_seconds") or 0.0),
+                    "updated_at": now,
+                }
+            )
+
+        for row in (derived.get("timeline_bins") or []):
+            sid = self._to_steamid64_string(row.get("steamid"))
+            round_num = self._to_int(row.get("round_num"), default=0)
+            if sid is None or round_num <= 0:
+                continue
+            bin_rows.append(
+                {
+                    "steamid64": str(sid),
+                    "match_id": str(match_id),
+                    "map_number": int(map_number),
+                    "round_num": int(round_num),
+                    "bin_index": int(row.get("bin_index") or 0),
+                    "bin_start_sec": float(row.get("bin_start_sec") or 0.0),
+                    "median_speed_m_s": float(row.get("median_speed_m_s") or 0.0),
+                    "samples": int(row.get("samples") or 0),
+                    "side": str(row.get("side") or ""),
+                    "updated_at": now,
+                }
+            )
+
+        return map_rows, round_rows, bin_rows
+
     def _restore_db_entities_from_payload(
         self,
         match_id,
@@ -737,6 +854,8 @@ class DemoScrapperRestoreMixin:
         source_match_to_canonical,
         next_local_match_id_state,
     ):
+        self._ensure_not_cancelled(stage="restore")
+
         if not isinstance(parsed_payload, dict):
             return False, 0, None, None
 
@@ -788,6 +907,8 @@ class DemoScrapperRestoreMixin:
             conn=conn,
         )
 
+        self._ensure_not_cancelled(stage="restore")
+
         if parsed_match_key not in source_match_to_canonical:
             source_match_to_canonical[parsed_match_key] = str(target_match_id)
 
@@ -816,6 +937,8 @@ class DemoScrapperRestoreMixin:
             conn=conn,
         )
 
+        self._ensure_not_cancelled(stage="restore")
+
         player_rows = self._build_player_stats_rows(
             match_id=target_match_id,
             map_number=target_map_number,
@@ -829,9 +952,17 @@ class DemoScrapperRestoreMixin:
             map_number=target_map_number,
             parsed_payload=parsed_payload,
         )
+        movement_map_rows, movement_round_rows, movement_bin_rows = self._build_movement_stats_rows(
+            match_id=target_match_id,
+            map_number=target_map_number,
+            parsed_payload=parsed_payload,
+        )
+
+        self._ensure_not_cancelled(stage="restore")
 
         # Batch all inserts for this match into a single transaction to reduce lock acquisitions
         with write_transaction(conn):
+            self._ensure_not_cancelled(stage="restore")
             insert_match(
                 {
                     "match_id": str(target_match_id),
@@ -864,8 +995,13 @@ class DemoScrapperRestoreMixin:
 
             insert_match_player_stats_many(player_rows, conn=conn)
             upsert_player_map_weapon_stats_many(weapon_rows, conn=conn)
+            upsert_player_map_movement_stats_many(movement_map_rows, conn=conn)
+            upsert_player_round_movement_stats_many(movement_round_rows, conn=conn)
+            upsert_player_round_timeline_bins_many(movement_bin_rows, conn=conn)
 
             set_match_has_demo(match_id=target_match_id, has_demo=True, conn=conn)
+
+            self._ensure_not_cancelled(stage="restore")
 
         self._ensure_canonical_cache_alias(
             source_match_id=match_id,
@@ -984,6 +1120,7 @@ class DemoScrapperRestoreMixin:
                     )
 
                 try:
+                    self._ensure_not_cancelled(stage="restore")
                     payload_sha256 = demo_cache.compute_payload_sha256(
                         cache_dir=self.parsed_demo_dir,
                         match_id=match_id,
@@ -1013,6 +1150,7 @@ class DemoScrapperRestoreMixin:
                         match_id=match_id,
                         map_number=map_number,
                     )
+                    self._ensure_not_cancelled(stage="restore")
                     restored, inserted, canonical_match_id, canonical_map_number = self._restore_db_entities_from_payload(
                         match_id=match_id,
                         map_number=map_number,
@@ -1053,6 +1191,7 @@ class DemoScrapperRestoreMixin:
                     )
 
                 try:
+                    self._ensure_not_cancelled(stage="restore")
                     payload_sha256 = demo_cache.compute_payload_sha256(
                         cache_dir=self.parsed_demo_dir,
                         match_id=match_id,
@@ -1082,6 +1221,7 @@ class DemoScrapperRestoreMixin:
                         match_id=match_id,
                         map_number=map_number,
                     )
+                    self._ensure_not_cancelled(stage="restore")
                     self._log_stage(
                         "RESTORE",
                         f"Restoring orphaned cache match={match_id} map={map_number} file={filename}",

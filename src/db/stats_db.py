@@ -1,31 +1,34 @@
 from .connection_db import get_conn
 
-def fetch_top_kills(limit):
+
+def _fetch_match_stat_leaderboard(aggregate_expr, limit):
+    """Generic leaderboard query on match_player_stats."""
     with get_conn() as conn:
-        return conn.execute("""
+        return conn.execute(
+            f"""
             SELECT
                 COALESCE(name, steamid64),
                 steamid64,
-                SUM(COALESCE(kills, 0))
+                {aggregate_expr}
             FROM match_player_stats
             GROUP BY steamid64, COALESCE(name, steamid64)
             ORDER BY 3 DESC, 1 ASC
             LIMIT ?
-        """, (limit,)).fetchall()
+            """,
+            (limit,),
+        ).fetchall()
+
+
+def fetch_top_kills(limit):
+    return _fetch_match_stat_leaderboard("SUM(COALESCE(kills, 0))", limit)
 
 
 def fetch_top_deaths(limit):
-    with get_conn() as conn:
-        return conn.execute("""
-            SELECT
-                COALESCE(name, steamid64),
-                steamid64,
-                SUM(COALESCE(deaths, 0))
-            FROM match_player_stats
-            GROUP BY steamid64, COALESCE(name, steamid64)
-            ORDER BY 3 DESC, 1 ASC
-            LIMIT ?
-        """, (limit,)).fetchall()
+    return _fetch_match_stat_leaderboard("SUM(COALESCE(deaths, 0))", limit)
+
+
+def fetch_avg_damage(limit):
+    return _fetch_match_stat_leaderboard("ROUND(AVG(COALESCE(damage, 0)), 1)", limit)
 
 
 def fetch_top_ratings(limit):
@@ -37,20 +40,6 @@ def fetch_top_ratings(limit):
                 COALESCE(premier_rating, CAST(leetify_rating * 10000 AS INTEGER), 0)
             FROM players
             WHERE name IS NOT NULL AND name != ''
-            ORDER BY 3 DESC, 1 ASC
-            LIMIT ?
-        """, (limit,)).fetchall()
-
-
-def fetch_avg_damage(limit):
-    with get_conn() as conn:
-        return conn.execute("""
-            SELECT
-                COALESCE(name, steamid64),
-                steamid64,
-                ROUND(AVG(COALESCE(damage, 0)), 1)
-            FROM match_player_stats
-            GROUP BY steamid64, COALESCE(name, steamid64)
             ORDER BY 3 DESC, 1 ASC
             LIMIT ?
         """, (limit,)).fetchall()

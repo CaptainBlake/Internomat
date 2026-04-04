@@ -32,7 +32,6 @@ class PipelineProgressDialog(QDialog):
 
         self._running = False
         self._allow_close = False
-        self._cancel_handler = None
 
     def update_status(self, payload):
         if not isinstance(payload, dict):
@@ -55,7 +54,8 @@ class PipelineProgressDialog(QDialog):
         self._running = bool(running)
 
     def set_cancel_handler(self, handler):
-        self._cancel_handler = handler
+        # Cancellation is intentionally disabled.
+        return
 
     def allow_close_once(self):
         self._allow_close = True
@@ -68,20 +68,13 @@ class PipelineProgressDialog(QDialog):
         if self._running:
             confirm = QMessageBox.question(
                 self,
-                "Cancel Running Task",
-                "You sure you want to cancel?",
+                "Close Update Window",
+                "The update is still running in the background.\n\nClose this window anyway?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
-
             if confirm != QMessageBox.Yes:
                 event.ignore()
                 return
-
-            if callable(self._cancel_handler):
-                try:
-                    self._cancel_handler()
-                except Exception:
-                    pass
 
         super().closeEvent(event)

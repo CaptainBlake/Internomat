@@ -1,4 +1,5 @@
 from db import stattracker_db as stattracker_repo
+from core.stats import metrics as M
 import services.logger as logger
 
 
@@ -117,15 +118,15 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
     raw_avg_rating = overall["avg_rating"] if overall else None
     avg_rating = float(raw_avg_rating) if raw_avg_rating is not None else None
 
-    win_rate = (100.0 * map_wins / maps_played) if maps_played > 0 else 0.0
-    kdr = (float(total_kills) / float(max(1, total_deaths))) if maps_played > 0 else 0.0
-    adr = (float(total_damage) / float(max(1, total_rounds))) if total_rounds > 0 else 0.0
-    avg_kills = (float(total_kills) / float(max(1, maps_played))) if maps_played > 0 else 0.0
-    avg_deaths = (float(total_deaths) / float(max(1, maps_played))) if maps_played > 0 else 0.0
-    avg_assists = (float(total_assists) / float(max(1, maps_played))) if maps_played > 0 else 0.0
-    hs_pct = (100.0 * float(total_headshot_kills) / float(max(1, total_kills))) if total_kills > 0 else 0.0
+    win_rate = M.win_rate(map_wins, maps_played)
+    kdr = M.kd_ratio(total_kills, max(1, total_deaths)) if maps_played > 0 else 0.0
+    adr = M.adr(total_damage, total_rounds) or 0.0
+    avg_kills = M.safe_avg(total_kills, maps_played)
+    avg_deaths = M.safe_avg(total_deaths, maps_played)
+    avg_assists = M.safe_avg(total_assists, maps_played)
+    hs_pct = M.hs_pct(total_headshot_kills, total_kills)
     # Performance index: lightweight composite until true per-map rating/kast persistence is added.
-    performance_index = ((total_kills + 0.5 * total_assists) / float(max(1, total_deaths))) if maps_played > 0 else 0.0
+    performance_index = M.performance_index(total_kills, total_assists, total_deaths) if maps_played > 0 else 0.0
 
     map_rows = []
     for row in map_rows_raw:
@@ -140,9 +141,9 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
                 "map_name": str(row["map_name"] or "unknown"),
                 "maps_played": played,
                 "wins": wins,
-                "win_rate": (100.0 * wins / played) if played > 0 else 0.0,
-                "kdr": float(kills) / float(max(1, deaths)),
-                "adr": float(damage) / float(max(1, rounds)) if rounds > 0 else 0.0,
+                "win_rate": M.win_rate(wins, played),
+                "kdr": M.kd_ratio(kills, max(1, deaths)),
+                "adr": M.adr(damage, rounds) if rounds > 0 else 0.0,
             }
         )
 
@@ -165,9 +166,9 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
                 "category": str(row["category"] or "unknown"),
                 "shots_fired": shots_fired,
                 "shots_hit": shots_hit,
-                "accuracy": (100.0 * shots_hit / shots_fired) if shots_fired > 0 else 0.0,
+                "accuracy": M.accuracy_pct(shots_hit, shots_fired),
                 "kills": kills,
-                "headshot_pct": (100.0 * hs / kills) if kills > 0 else 0.0,
+                "headshot_pct": M.hs_pct(hs, kills),
                 "damage": int(row["damage"] or 0),
                 "rounds_with_weapon": int(row["rounds_with_weapon"] or 0),
             }
@@ -196,18 +197,10 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
 
     # Filter unattributed kill events from KPI kill-derived metrics so values
     # align with the visible per-weapon table.
-    kdr = (float(effective_total_kills) / float(max(1, total_deaths))) if maps_played > 0 else 0.0
-    avg_kills = (float(effective_total_kills) / float(max(1, maps_played))) if maps_played > 0 else 0.0
-    hs_pct = (
-        100.0 * float(min(total_headshot_kills, effective_total_kills)) / float(max(1, effective_total_kills))
-        if effective_total_kills > 0
-        else 0.0
-    )
-    performance_index = (
-        (effective_total_kills + 0.5 * total_assists) / float(max(1, total_deaths))
-        if maps_played > 0
-        else 0.0
-    )
+    kdr = M.kd_ratio(effective_total_kills, max(1, total_deaths)) if maps_played > 0 else 0.0
+    avg_kills = M.safe_avg(effective_total_kills, maps_played)
+    hs_pct = M.hs_pct(min(total_headshot_kills, effective_total_kills), effective_total_kills)
+    performance_index = M.performance_index(effective_total_kills, total_assists, total_deaths) if maps_played > 0 else 0.0
 
     result = {
         "kpis": {
@@ -239,16 +232,32 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
 
 
 # ---------------------------------------------------------------------------
-# Plot series: per-match metric trends for selected weapons
+# Plot series: generic builder + two public wrappers
 # ---------------------------------------------------------------------------
 
 PLOT_METRICS = {
-    "accuracy": {"label": "Accuracy %", "fn": lambda r: (100.0 * r["shots_hit"] / r["shots_fired"]) if r["shots_fired"] > 0 else None},
-    "hs_pct": {"label": "Headshot %", "fn": lambda r: (100.0 * r["headshot_kills"] / r["kills"]) if r["kills"] > 0 else None},
+    "accuracy": {"label": "Accuracy %", "fn": lambda r: M.accuracy_pct(r["shots_hit"], r["shots_fired"]) if r["shots_fired"] > 0 else None},
+    "hs_pct": {"label": "Headshot %", "fn": lambda r: M.hs_pct(r["headshot_kills"], r["kills"]) if r["kills"] > 0 else None},
     "kills": {"label": "Kills", "fn": lambda r: r["kills"]},
     "damage": {"label": "Damage", "fn": lambda r: r["damage"]},
     "shots_fired": {"label": "Shots Fired", "fn": lambda r: r["shots_fired"]},
     "shots_hit": {"label": "Shots Hit", "fn": lambda r: r["shots_hit"]},
+}
+
+MAP_PLOT_METRICS = {
+    "kd_ratio": {"label": "K/D Ratio", "fn": lambda r: M.kd_ratio(r["kills"], max(1, r["deaths"]))},
+    "kills": {"label": "Kills", "fn": lambda r: r["kills"]},
+    "deaths": {"label": "Deaths", "fn": lambda r: r["deaths"]},
+    "adr": {"label": "ADR", "fn": lambda r: M.adr(r["damage"], r["total_rounds"]) if r["total_rounds"] > 0 else None},
+    "damage": {"label": "Damage", "fn": lambda r: r["damage"]},
+    "hs_kills": {"label": "HS Kills", "fn": lambda r: r["head_shot_kills"]},
+}
+
+MOVEMENT_PLOT_METRICS = {
+    "avg_speed_m_s": {"label": "Avg Speed (m/s)", "fn": lambda r: float(r["avg_speed_m_s"])},
+    "max_speed_units_s": {"label": "Max Speed (units/s)", "fn": lambda r: float(r["max_speed_units_s"])},
+    "total_distance_m": {"label": "Distance (m)", "fn": lambda r: float(r["total_distance_m"])},
+    "alive_seconds": {"label": "Alive Time (s)", "fn": lambda r: float(r["alive_seconds"])},
 }
 
 
@@ -256,119 +265,19 @@ def get_plot_metric_options():
     return [{"key": k, "label": v["label"]} for k, v in PLOT_METRICS.items()]
 
 
-def get_weapon_match_series(steamid64, weapons=None, metric="accuracy", map_name=None):
-    """Build plot-ready series: one line per weapon, x = match index, y = metric value.
-
-    Returns:
-        {
-            "metric_label": str,
-            "x_labels": ["map_name (match_id)", ...],   # shared x-axis labels
-            "series": {
-                "ak-47": [value_or_None, ...],
-                "m4a1-s": [value_or_None, ...],
-            }
-        }
-    """
-    sid = str(steamid64 or "").strip()
-    if not sid:
-        return {"metric_label": "", "x_labels": [], "series": {}}
-
-    metric_def = PLOT_METRICS.get(metric, PLOT_METRICS["accuracy"])
-    metric_fn = metric_def["fn"]
-
-    rows = stattracker_repo.fetch_player_weapon_match_series(
-        sid, weapons=weapons, map_name=map_name,
-    )
-
-    # Build ordered list of unique match points (match_id, map_number)
-    match_keys = []
-    match_key_set = set()
-    x_labels = []
-    for r in rows:
-        key = (str(r["match_id"]), int(r["map_number"]))
-        if key not in match_key_set:
-            match_key_set.add(key)
-            match_keys.append(key)
-            map_label = str(r["map_name"] or "?")
-            x_labels.append(map_label)
-
-    match_index = {k: i for i, k in enumerate(match_keys)}
-
-    # Build per-weapon series
-    series: dict[str, list] = {}
-    for r in rows:
-        weapon = str(r["weapon"])
-        key = (str(r["match_id"]), int(r["map_number"]))
-        idx = match_index.get(key)
-        if idx is None:
-            continue
-
-        if weapon not in series:
-            series[weapon] = [None] * len(match_keys)
-
-        val = metric_fn(r)
-        series[weapon][idx] = val
-
-    logger.log(
-        f"[STATTRACKER] plot series steamid={sid[:8]} metric={metric} "
-        f"matches={len(match_keys)} weapons={len(series)}",
-        level="DEBUG",
-    )
-
-    return {
-        "metric_label": metric_def["label"],
-        "x_labels": x_labels,
-        "series": series,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Map-level per-match series (K/D, ADR, Kills, etc. per map played)
-# ---------------------------------------------------------------------------
-
-MAP_PLOT_METRICS = {
-    "kd_ratio": {
-        "label": "K/D Ratio",
-        "fn": lambda r: (float(r["kills"]) / max(1, r["deaths"])),
-    },
-    "kills": {"label": "Kills", "fn": lambda r: r["kills"]},
-    "deaths": {"label": "Deaths", "fn": lambda r: r["deaths"]},
-    "adr": {
-        "label": "ADR",
-        "fn": lambda r: (float(r["damage"]) / max(1, r["total_rounds"])) if r["total_rounds"] > 0 else None,
-    },
-    "damage": {"label": "Damage", "fn": lambda r: r["damage"]},
-    "hs_kills": {"label": "HS Kills", "fn": lambda r: r["head_shot_kills"]},
-}
-
-
 def get_map_plot_metric_options():
     return [{"key": k, "label": v["label"]} for k, v in MAP_PLOT_METRICS.items()]
 
 
-def get_map_match_series(steamid64, maps=None, metric="kd_ratio"):
-    """Build plot-ready series for map performance: one line per map, x = match index.
+def get_movement_plot_metric_options():
+    return [{"key": k, "label": v["label"]} for k, v in MOVEMENT_PLOT_METRICS.items()]
 
-    Returns:
-        {
-            "metric_label": str,
-            "x_labels": ["match #1", ...],
-            "series": {
-                "de_dust2": [value_or_None, ...],
-                ...
-            }
-        }
+
+def _build_match_series(rows, metric_fn, series_key_fn, log_tag):
+    """Generic helper: build plot-ready {x_labels, series} from DB rows.
+
+    *series_key_fn(row)* returns the series name (weapon name or map name).
     """
-    sid = str(steamid64 or "").strip()
-    if not sid:
-        return {"metric_label": "", "x_labels": [], "series": {}}
-
-    metric_def = MAP_PLOT_METRICS.get(metric, MAP_PLOT_METRICS["kd_ratio"])
-    metric_fn = metric_def["fn"]
-
-    rows = stattracker_repo.fetch_player_map_match_series(sid, maps=maps)
-
-    # Build ordered list of unique match points
     match_keys = []
     match_key_set = set()
     x_labels = []
@@ -381,28 +290,87 @@ def get_map_match_series(steamid64, maps=None, metric="kd_ratio"):
 
     match_index = {k: i for i, k in enumerate(match_keys)}
 
-    # Build per-map series
     series: dict[str, list] = {}
     for r in rows:
-        map_name = str(r["map_name"] or "unknown")
+        s_key = series_key_fn(r)
         key = (str(r["match_id"]), int(r["map_number"]))
         idx = match_index.get(key)
         if idx is None:
             continue
+        if s_key not in series:
+            series[s_key] = [None] * len(match_keys)
+        series[s_key][idx] = metric_fn(r)
 
-        if map_name not in series:
-            series[map_name] = [None] * len(match_keys)
+    return match_keys, x_labels, series
 
-        series[map_name][idx] = metric_fn(r)
+
+def get_weapon_match_series(steamid64, weapons=None, metric="accuracy", map_name=None):
+    sid = str(steamid64 or "").strip()
+    if not sid:
+        return {"metric_label": "", "x_labels": [], "series": {}, "match_keys": []}
+
+    metric_def = PLOT_METRICS.get(metric, PLOT_METRICS["accuracy"])
+    rows = stattracker_repo.fetch_player_weapon_match_series(sid, weapons=weapons, map_name=map_name)
+    match_keys, x_labels, series = _build_match_series(
+        rows, metric_def["fn"], lambda r: str(r["weapon"]), "weapon",
+    )
+
+    logger.log(
+        f"[STATTRACKER] plot series steamid={sid[:8]} metric={metric} "
+        f"matches={len(match_keys)} weapons={len(series)}",
+        level="DEBUG",
+    )
+    return {
+        "metric_label": metric_def["label"],
+        "x_labels": x_labels,
+        "series": series,
+        "match_keys": [f"{mk[0]}:{mk[1]}" for mk in match_keys],
+    }
+
+
+def get_map_match_series(steamid64, maps=None, metric="kd_ratio"):
+    sid = str(steamid64 or "").strip()
+    if not sid:
+        return {"metric_label": "", "x_labels": [], "series": {}, "match_keys": []}
+
+    metric_def = MAP_PLOT_METRICS.get(metric, MAP_PLOT_METRICS["kd_ratio"])
+    rows = stattracker_repo.fetch_player_map_match_series(sid, maps=maps)
+    match_keys, x_labels, series = _build_match_series(
+        rows, metric_def["fn"], lambda r: str(r["map_name"] or "unknown"), "map",
+    )
 
     logger.log(
         f"[STATTRACKER] map plot series steamid={sid[:8]} metric={metric} "
         f"matches={len(match_keys)} maps={len(series)}",
         level="DEBUG",
     )
-
     return {
         "metric_label": metric_def["label"],
         "x_labels": x_labels,
         "series": series,
+        "match_keys": [f"{mk[0]}:{mk[1]}" for mk in match_keys],
+    }
+
+
+def get_movement_match_series(steamid64, maps=None, metric="avg_speed_m_s"):
+    sid = str(steamid64 or "").strip()
+    if not sid:
+        return {"metric_label": "", "x_labels": [], "series": {}, "match_keys": []}
+
+    metric_def = MOVEMENT_PLOT_METRICS.get(metric, MOVEMENT_PLOT_METRICS["avg_speed_m_s"])
+    rows = stattracker_repo.fetch_player_movement_match_series(sid, maps=maps)
+    match_keys, x_labels, series = _build_match_series(
+        rows, metric_def["fn"], lambda r: "Movement", "movement",
+    )
+
+    logger.log(
+        f"[STATTRACKER] movement series steamid={sid[:8]} metric={metric} "
+        f"matches={len(match_keys)}",
+        level="DEBUG",
+    )
+    return {
+        "metric_label": metric_def["label"],
+        "x_labels": x_labels,
+        "series": series,
+        "match_keys": [f"{mk[0]}:{mk[1]}" for mk in match_keys],
     }

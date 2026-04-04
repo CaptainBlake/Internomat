@@ -180,59 +180,42 @@ def iter_seed_alias_rows():
         yield (raw, "knife", "seed-cs2")
 
 
+# Pre-built set of canonical weapons for O(1) membership check.
+_CANONICAL_SET = frozenset(CS2_CANONICAL_WEAPONS)
+
+# Merged lookup table: covers CS2_WEAPON_ALIASES + base-name fallbacks + knife variants.
+_NORMALIZE_MAP: dict[str, str] = {}
+for _raw, _canon in CS2_WEAPON_ALIASES.items():
+    _NORMALIZE_MAP[_raw] = _canon
+    _base = _raw.replace("weapon_", "").replace("item_", "").replace(" ", "_")
+    if _base != _raw:
+        _NORMALIZE_MAP[_base] = _canon
+for _kv in CS2_KNIFE_VARIANT_ALIASES:
+    _NORMALIZE_MAP[_kv] = "knife"
+    _base = _kv.replace("weapon_", "")
+    if _base != _kv:
+        _NORMALIZE_MAP[_base] = "knife"
+# Add canonical names mapping to themselves for direct matches.
+for _w in CS2_CANONICAL_WEAPONS:
+    _NORMALIZE_MAP.setdefault(_w, _w)
+
+
 def normalize_weapon_name(raw_weapon):
     """Normalize parser/raw weapon tokens to canonical weapon ids."""
     raw = str(raw_weapon or "").strip().lower()
     if not raw:
         return ""
 
-    base = raw.replace("weapon_", "")
-    base = base.replace("item_", "")
-    base = base.replace(" ", "_")
+    # Direct hit in the merged lookup.
+    if raw in _NORMALIZE_MAP:
+        return _NORMALIZE_MAP[raw]
 
-    if raw in CS2_WEAPON_ALIASES:
-        return CS2_WEAPON_ALIASES[raw]
-    if base in CS2_WEAPON_ALIASES:
-        return CS2_WEAPON_ALIASES[base]
+    base = raw.replace("weapon_", "").replace("item_", "").replace(" ", "_")
 
-    if raw in CS2_KNIFE_VARIANT_ALIASES or base.startswith("knife_"):
+    if base in _NORMALIZE_MAP:
+        return _NORMALIZE_MAP[base]
+
+    if base.startswith("knife_"):
         return "knife"
-
-    if base in {"ak47", "ak-47"}:
-        return "ak-47"
-    if base in {"m4a1_silencer", "m4a1-s"}:
-        return "m4a1-s"
-    if base in {"usp_silencer", "usp-s"}:
-        return "usp-s"
-    if base in {"sg556", "sg-553"}:
-        return "sg-553"
-    if base in {"ssg08", "ssg-08"}:
-        return "ssg-08"
-    if base in {"scar20", "scar-20"}:
-        return "scar-20"
-    if base in {"galilar", "galil-ar"}:
-        return "galil-ar"
-    if base in {"ump45", "ump-45"}:
-        return "ump-45"
-    if base in {"mac10", "mac-10"}:
-        return "mac-10"
-    if base in {"mp5sd", "mp5-sd"}:
-        return "mp5-sd"
-    if base in {"fiveseven", "five-seven"}:
-        return "five-seven"
-    if base in {"cz75a", "cz75-auto"}:
-        return "cz75-auto"
-    if base in {"deagle", "desert-eagle"}:
-        return "desert-eagle"
-    if base in {"bizon", "pp-bizon"}:
-        return "pp-bizon"
-    if base in {"hegrenade", "he-grenade"}:
-        return "he-grenade"
-    if base in {"smokegrenade", "smoke-grenade"}:
-        return "smoke-grenade"
-    if base in {"incgrenade", "incendiary-grenade"}:
-        return "incendiary-grenade"
-    if base in {"zeus", "zeusx27", "taser", "zeus-x27"}:
-        return "zeus-x27"
 
     return base.replace("_", "-")

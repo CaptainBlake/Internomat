@@ -829,3 +829,277 @@ def build_derived_restore_stats(parsed_payload):
     _calc_equipment_value_and_saved_money(payload, derived)
 
     return derived
+
+
+def _to_polars_df(table):
+    if isinstance(table, pl.DataFrame):
+        return table
+    if isinstance(table, pd.DataFrame):
+        if table.empty:
+            return None
+        return pl.from_pandas(table)
+    if isinstance(table, list):
+        rows = [r for r in table if isinstance(r, dict)]
+        if not rows:
+            return None
+        return pl.from_dicts(rows)
+    return None
+
+
+def build_derived_movement_stats(parsed_payload, bin_ticks=32):
+    """Build movement-derived analytics from tick data.
+
+    Returns dict with three row lists:
+      - map_rows
+      - round_rows
+      - timeline_bins
+    """
+    payload = parsed_payload or {}
+
+    ticks = _to_polars_df(payload.get("ticks"))
+    if ticks is None or ticks.height == 0:
+        return {"map_rows": [], "round_rows": [], "timeline_bins": [], "meta": {"tickrate": 128.0, "bin_ticks": int(bin_ticks)}}
+
+    required = {"round_num", "tick", "steamid", "health", "X", "Y", "Z"}
+    if not required.issubset(set(ticks.columns)):
+        return {"map_rows": [], "round_rows": [], "timeline_bins": [], "meta": {"tickrate": 128.0, "bin_ticks": int(bin_ticks)}}
+
+    windows = _build_round_windows(payload)
+    if not windows:
+        return {"map_rows": [], "round_rows": [], "timeline_bins": [], "meta": {"tickrate": 128.0, "bin_ticks": int(bin_ticks)}}
+
+    header = payload.get("header") if isinstance(payload, dict) else {}
+    tickrate = 128.0
+    try:
+        candidate = float((header or {}).get("tickrate") or 128)
+        if candidate > 0:
+            tickrate = candidate
+    except Exception:
+        tickrate = 128.0
+
+    windows_df = pl.DataFrame(
+        {
+            "round_num": [int(w[0]) for w in windows],
+            "live_start": [int(w[2] if int(w[2] or 0) > 0 else int(w[1] or 0)) for w in windows],
+            "live_end": [int(w[3] if w[3] is not None and int(w[3]) > 0 else int(w[2] if int(w[2] or 0) > 0 else int(w[1] or 0))) for w in windows],
+        }
+    )
+
+    columns = ["round_num", "tick", "steamid", "health", "X", "Y", "Z"]
+    if "side" in ticks.columns:
+        columns.append("side")
+
+    work = (
+        ticks
+        .select(columns)
+        .with_columns(
+            [
+                pl.col("round_num").cast(pl.Int64, strict=False).alias("round_num"),
+                pl.col("tick").cast(pl.Int64, strict=False).alias("tick"),
+                pl.col("steamid").cast(pl.Int64, strict=False).alias("steamid"),
+                pl.col("health").cast(pl.Float64, strict=False).alias("health"),
+                pl.col("X").cast(pl.Float64, strict=False).alias("X"),
+                pl.col("Y").cast(pl.Float64, strict=False).alias("Y"),
+                pl.col("Z").cast(pl.Float64, strict=False).alias("Z"),
+            ]
+        )
+        .drop_nulls(["round_num", "tick", "steamid", "X", "Y", "Z"])
+        .filter(pl.col("steamid") >= 10_000_000_000_000_000)
+        .join(windows_df, on="round_num", how="left")
+        .drop_nulls(["live_start", "live_end"])
+        .sort(["steamid", "round_num", "tick"])
+    )
+
+    if work.height == 0:
+        return {"map_rows": [], "round_rows": [], "timeline_bins": [], "meta": {"tickrate": tickrate, "bin_ticks": int(bin_ticks)}}
+
+    work = work.with_columns(
+        [
+            pl.col("X").diff().over(["steamid", "round_num"]).alias("dx"),
+            pl.col("Y").diff().over(["steamid", "round_num"]).alias("dy"),
+            pl.col("Z").diff().over(["steamid", "round_num"]).alias("dz"),
+            pl.col("tick").diff().over(["steamid", "round_num"]).alias("dt"),
+        ]
+    )
+
+    work = work.with_columns(
+        [
+            ((pl.col("dx") ** 2 + pl.col("dy") ** 2 + pl.col("dz") ** 2).sqrt()).alias("distance"),
+            (pl.col("tick") >= pl.col("live_start")).and_(pl.col("tick") <= pl.col("live_end")).alias("in_live"),
+        ]
+    )
+
+    work = work.with_columns(
+        [
+            pl.when((pl.col("dt") > 0) & (pl.col("dt") <= 2)).then(pl.col("distance") / pl.col("dt")).otherwise(None).alias("units_per_tick"),
+            pl.when((pl.col("health") > 0) & pl.col("in_live") & (pl.col("dt") > 0) & (pl.col("dt") <= 2)).then(pl.col("distance")).otherwise(0.0).alias("distance_alive"),
+            pl.when((pl.col("health") > 0) & pl.col("in_live")).then(1).otherwise(0).alias("alive_tick"),
+        ]
+    )
+
+    work = work.with_columns(
+        [
+            (pl.col("units_per_tick") * pl.lit(tickrate)).alias("speed_units_s"),
+            pl.when(
+                (pl.col("health") > 0)
+                & pl.col("in_live")
+                & pl.col("units_per_tick").is_not_null()
+                & ((pl.col("units_per_tick") * pl.lit(tickrate)) < 400)
+            )
+            .then((pl.col("units_per_tick") * pl.lit(tickrate)) * pl.lit(0.0254))
+            .otherwise(None)
+            .alias("speed_m_s"),
+        ]
+    )
+
+    # Optional stable side per (steamid, round_num)
+    side_lookup = None
+    if "side" in work.columns:
+        try:
+            side_lookup = (
+                work
+                .select(["steamid", "round_num", "side"])
+                .filter(pl.col("side").is_not_null())
+                .group_by(["steamid", "round_num"])
+                .agg(pl.col("side").first().alias("side"))
+            )
+        except Exception:
+            side_lookup = None
+
+    n_rounds = max(1, windows_df.height)
+
+    per_map = (
+        work
+        .group_by("steamid")
+        .agg(
+            [
+                pl.sum("distance_alive").alias("total_distance_units"),
+                pl.max("speed_units_s").fill_null(0.0).alias("max_speed_units_s"),
+                pl.sum("alive_tick").alias("ticks_alive"),
+            ]
+        )
+        .with_columns(
+            [
+                (pl.col("ticks_alive") / pl.lit(tickrate)).alias("alive_seconds"),
+                pl.when(pl.col("ticks_alive") > 0)
+                .then(pl.col("total_distance_units") / (pl.col("ticks_alive") / pl.lit(tickrate)))
+                .otherwise(0.0)
+                .alias("avg_speed_units_s"),
+                (pl.col("total_distance_units") / pl.lit(float(n_rounds))).alias("distance_per_round_units"),
+                (pl.col("total_distance_units") * pl.lit(0.0254)).alias("total_distance_m"),
+                pl.when(pl.col("ticks_alive") > 0)
+                .then((pl.col("total_distance_units") / (pl.col("ticks_alive") / pl.lit(tickrate))) * pl.lit(0.0254))
+                .otherwise(0.0)
+                .alias("avg_speed_m_s"),
+            ]
+        )
+    )
+
+    per_round = (
+        work
+        .group_by(["steamid", "round_num"])
+        .agg(
+            [
+                pl.sum("distance_alive").alias("distance_units"),
+                pl.max("speed_units_s").fill_null(0.0).alias("max_speed_units_s"),
+                pl.sum("alive_tick").alias("ticks_alive"),
+            ]
+        )
+        .with_columns(
+            [
+                (pl.col("ticks_alive") / pl.lit(tickrate)).alias("alive_seconds"),
+                pl.when(pl.col("ticks_alive") > 0)
+                .then(pl.col("distance_units") / (pl.col("ticks_alive") / pl.lit(tickrate)))
+                .otherwise(0.0)
+                .alias("avg_speed_units_s"),
+            ]
+        )
+        # Keep join keys as Int64; DataFrame-wide fill_null(0.0) upcasts them to Float64.
+        .with_columns(
+            [
+                pl.col("steamid").cast(pl.Int64, strict=False).alias("steamid"),
+                pl.col("round_num").cast(pl.Int64, strict=False).alias("round_num"),
+            ]
+        )
+    )
+
+    if side_lookup is not None and side_lookup.height > 0:
+        per_round = per_round.join(side_lookup, on=["steamid", "round_num"], how="left")
+    else:
+        per_round = per_round.with_columns(pl.lit("").alias("side"))
+
+    bin_size_sec = float(bin_ticks) / float(tickrate)
+    bins = (
+        work
+        .filter(pl.col("speed_m_s").is_not_null())
+        .with_columns(
+            [
+                ((pl.col("tick") - pl.col("live_start")) // pl.lit(int(bin_ticks))).cast(pl.Int64).alias("bin_index"),
+            ]
+        )
+        .group_by(["steamid", "round_num", "bin_index"])
+        .agg(
+            [
+                pl.median("speed_m_s").alias("median_speed_m_s"),
+                pl.len().alias("samples"),
+            ]
+        )
+        .with_columns((pl.col("bin_index") * pl.lit(bin_size_sec)).alias("bin_start_sec"))
+    )
+
+    if side_lookup is not None and side_lookup.height > 0 and bins.height > 0:
+        bins = bins.join(side_lookup, on=["steamid", "round_num"], how="left")
+    else:
+        bins = bins.with_columns(pl.lit("").alias("side"))
+
+    def _sid_str(frame, col="steamid"):
+        return frame.with_columns(pl.col(col).cast(pl.Int64).cast(pl.Utf8).alias(col))
+
+    map_rows = _sid_str(per_map).select(
+        [
+            "steamid",
+            "total_distance_units",
+            "total_distance_m",
+            "avg_speed_units_s",
+            "avg_speed_m_s",
+            "max_speed_units_s",
+            "ticks_alive",
+            "alive_seconds",
+            "distance_per_round_units",
+        ]
+    ).to_dicts()
+
+    round_rows = _sid_str(per_round).select(
+        [
+            "steamid",
+            "round_num",
+            "side",
+            "distance_units",
+            "avg_speed_units_s",
+            "max_speed_units_s",
+            "ticks_alive",
+            "alive_seconds",
+        ]
+    ).to_dicts()
+
+    bin_rows = _sid_str(bins).select(
+        [
+            "steamid",
+            "round_num",
+            "bin_index",
+            "bin_start_sec",
+            "median_speed_m_s",
+            "samples",
+            "side",
+        ]
+    ).to_dicts()
+
+    return {
+        "map_rows": map_rows,
+        "round_rows": round_rows,
+        "timeline_bins": bin_rows,
+        "meta": {
+            "tickrate": float(tickrate),
+            "bin_ticks": int(bin_ticks),
+        },
+    }

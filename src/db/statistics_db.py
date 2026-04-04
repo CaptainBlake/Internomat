@@ -5,6 +5,14 @@ def fetch_overview():
     with get_conn() as conn:
         row = conn.execute(
             """
+            WITH top_map AS (
+                SELECT map_name, COUNT(*) AS cnt
+                FROM match_maps
+                WHERE map_name IS NOT NULL AND map_name != ''
+                GROUP BY map_name
+                ORDER BY cnt DESC, map_name ASC
+                LIMIT 1
+            )
             SELECT
                 (SELECT COUNT(*) FROM matches) AS total_matches,
                 (SELECT COUNT(*) FROM match_maps) AS total_maps,
@@ -22,28 +30,8 @@ def fetch_overview():
                         GROUP BY match_id, map_number
                     )
                 ) AS maps_with_stats,
-                (
-                    SELECT map_name
-                    FROM match_maps
-                    WHERE map_name IS NOT NULL
-                      AND map_name != ''
-                    GROUP BY map_name
-                    ORDER BY COUNT(*) DESC, map_name ASC
-                    LIMIT 1
-                ) AS top_map_name,
-                (
-                    SELECT COUNT(*)
-                    FROM match_maps
-                    WHERE map_name = (
-                        SELECT map_name
-                        FROM match_maps
-                        WHERE map_name IS NOT NULL
-                          AND map_name != ''
-                        GROUP BY map_name
-                        ORDER BY COUNT(*) DESC, map_name ASC
-                        LIMIT 1
-                    )
-                ) AS top_map_count
+                (SELECT map_name FROM top_map) AS top_map_name,
+                (SELECT cnt FROM top_map) AS top_map_count
             """
         ).fetchone()
 

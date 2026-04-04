@@ -102,3 +102,25 @@ def write_transaction(conn=None, begin_mode="IMMEDIATE"):
         finally:
             if own_conn:
                 conn.close()
+
+
+@contextmanager
+def optional_conn(conn=None, *, commit=False):
+    """Context manager that creates a connection when *conn* is ``None``.
+
+    On exit the connection is committed (when *commit* is ``True`` and the
+    connection was created here) and closed.  Callers replace the recurring
+    ``own_conn = conn is None; …; try/finally`` boilerplate with::
+
+        with optional_conn(conn, commit=True) as c:
+            execute_write(c, ...)
+    """
+    own = conn is None
+    c = conn or get_conn()
+    try:
+        yield c
+        if own and commit:
+            c.commit()
+    finally:
+        if own:
+            c.close()

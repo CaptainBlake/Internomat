@@ -1,5 +1,5 @@
 from .matches_db import get_all_matches_with_maps, get_match_map_steamids
-from .connection_db import execute_write, get_conn
+from .connection_db import execute_write, get_conn, optional_conn
 import services.logger as logger
 from datetime import datetime
 
@@ -110,9 +110,6 @@ def resolve_equivalent_match_map(
     include_non_positive=True,
     conn=None,
 ):
-    own_conn = conn is None
-    conn = conn or get_conn()
-
     parsed_team_set = {
         n for n in [_norm_team_name(team1_name), _norm_team_name(team2_name)] if n
     }
@@ -122,8 +119,8 @@ def resolve_equivalent_match_map(
 
     best = None
 
-    try:
-        rows = conn.execute(
+    with optional_conn(conn) as c:
+        rows = c.execute(
             """
             SELECT
                 m.match_id,
@@ -141,6 +138,24 @@ def resolve_equivalent_match_map(
             """,
             (str(map_name),),
         ).fetchall()
+
+        # Pre-fetch all steamids in one query to avoid N+1 per-row lookups
+        players_by_key: dict[tuple, set] = {}
+        if parsed_players and rows:
+            match_ids = list({str(r["match_id"]) for r in rows})
+            placeholders = ",".join("?" for _ in match_ids)
+            sid_rows = c.execute(
+                f"""
+                SELECT match_id, map_number, steamid64
+                FROM match_player_stats
+                WHERE match_id IN ({placeholders})
+                  AND steamid64 IS NOT NULL AND steamid64 != ''
+                """,
+                tuple(match_ids),
+            ).fetchall()
+            for sr in sid_rows:
+                key = (str(sr["match_id"]), int(sr["map_number"]))
+                players_by_key.setdefault(key, set()).add(str(sr["steamid64"]))
 
         for row in rows:
             try:
@@ -194,10 +209,8 @@ def resolve_equivalent_match_map(
                     reasons.append("time_6h")
 
             if parsed_players:
-                existing_players = get_match_map_steamids(
-                    match_id=row["match_id"],
-                    map_number=row["map_number"],
-                    conn=conn,
+                existing_players = players_by_key.get(
+                    (str(row["match_id"]), int(row["map_number"])), set()
                 )
                 if existing_players:
                     if existing_players == parsed_players:
@@ -224,10 +237,6 @@ def resolve_equivalent_match_map(
             if best is None or candidate["score"] > best["score"]:
                 best = candidate
 
-    finally:
-        if own_conn:
-            conn.close()
-
     # Require a minimum confidence to avoid accidental remapping.
     if not best or best["score"] < 6:
         return None
@@ -244,11 +253,8 @@ def is_restore_signature_current(source_match_id, source_map_number, payload_sha
     if not str(payload_sha256 or "").strip():
         return False
 
-    own_conn = conn is None
-    conn = conn or get_conn()
-
-    try:
-        row = conn.execute(
+    with optional_conn(conn) as c:
+        row = c.execute(
             """
             SELECT payload_sha256
             FROM cache_restore_state
@@ -258,9 +264,6 @@ def is_restore_signature_current(source_match_id, source_map_number, payload_sha
             """,
             (str(source_match_id), int(source_map_number)),
         ).fetchone()
-    finally:
-        if own_conn:
-            conn.close()
 
     return row is not None and str(row["payload_sha256"] or "") == str(payload_sha256)
 
@@ -277,12 +280,9 @@ def upsert_restore_signature(
     if not str(payload_sha256 or "").strip():
         return
 
-    own_conn = conn is None
-    conn = conn or get_conn()
-
-    try:
+    with optional_conn(conn, commit=True) as c:
         execute_write(
-            conn,
+            c,
             """
             INSERT INTO cache_restore_state (
                 source_match_id,
@@ -311,19 +311,10 @@ def upsert_restore_signature(
             ),
         )
 
-        if own_conn:
-            conn.commit()
-    finally:
-        if own_conn:
-            conn.close()
-
 
 def get_all_restore_canonical_match_ids(conn=None):
-    own_conn = conn is None
-    conn = conn or get_conn()
-
-    try:
-        rows = conn.execute(
+    with optional_conn(conn) as c:
+        rows = c.execute(
             """
             SELECT DISTINCT canonical_match_id
             FROM cache_restore_state
@@ -331,9 +322,6 @@ def get_all_restore_canonical_match_ids(conn=None):
               AND TRIM(CAST(canonical_match_id AS TEXT)) != ''
             """
         ).fetchall()
-    finally:
-        if own_conn:
-            conn.close()
 
     return {
         str(row["canonical_match_id"]).strip()

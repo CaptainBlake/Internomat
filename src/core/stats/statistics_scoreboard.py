@@ -1,5 +1,6 @@
 from db import statistics_scoreboard_db as scoreboard_repo
 from core.stats import statistics_round_timeline
+from core.stats.metrics import kd_ratio as _kdr, adr as _adr, hs_pct as _hs, accuracy_pct as _acc, success_pct as _spct
 import services.logger as logger
 
 
@@ -52,19 +53,15 @@ def get_map_scoreboard(match_id, map_number):
         v2_wins = int(r["v2_wins"] or 0)
         utility_damage = int(r["utility_damage"] or 0)
 
-        kd_ratio = float(kills) if deaths <= 0 else (kills / deaths)
-        adr = (damage / rounds_for_adr) if rounds_for_adr else None
-        hs_pct = ((head_shot_kills * 100.0) / kills) if kills > 0 else 0.0
-        acc_pct = (
-            (shots_on_target_total * 100.0) / shots_fired_total
-            if shots_fired_total > 0
-            else 0.0
-        )
+        kd_ratio = _kdr(kills, deaths)
+        adr = _adr(damage, rounds_for_adr)
+        hs_pct = _hs(head_shot_kills, kills)
+        acc_pct = _acc(shots_on_target_total, shots_fired_total)
 
         clutch_count = v1_count + v2_count
         clutch_wins = v1_wins + v2_wins
-        entry_pct = (entry_wins * 100.0 / entry_count) if entry_count > 0 else 0.0
-        clutch_pct = (clutch_wins * 100.0 / clutch_count) if clutch_count > 0 else 0.0
+        entry_pct = _spct(entry_wins, entry_count)
+        clutch_pct = _spct(clutch_wins, clutch_count)
 
         rows.append(
             {

@@ -172,6 +172,7 @@ class MatchZy:
                     total_maps += 1
 
                     key = (matchid, mapnumber)
+                    map_player_payloads = []
                     for p in players_by_match_map.get(key, []):
                         player_payload = {
                             "steamid64": str(p[2]),
@@ -211,8 +212,7 @@ class MatchZy:
                             "cash_earned": self._to_int(p[34]),
                             "enemies_flashed": self._to_int(p[35]),
                         }
-
-                        match_db.insert_match_player_stats(player_payload, conn=local_conn)
+                        map_player_payloads.append(player_payload)
 
                         if settings.auto_import_players_from_history:
                             players_for_pool_import.append(
@@ -222,7 +222,8 @@ class MatchZy:
                                 }
                             )
 
-                        total_players += 1
+                    match_db.insert_match_player_stats_many(map_player_payloads, conn=local_conn)
+                    total_players += len(map_player_payloads)
 
                 if settings.auto_import_players_from_history and players_for_pool_import:
                     imported_players = players_db.upsert_players_from_match_stats(

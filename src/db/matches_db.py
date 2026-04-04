@@ -1,4 +1,4 @@
-from .connection_db import execute_write, executemany_write, get_conn
+from .connection_db import execute_write, executemany_write, get_conn, optional_conn
 import services.logger as logger
 
 
@@ -78,11 +78,8 @@ def _player_stats_params(data):
 
 
 def insert_match(data, conn=None):
-    own_conn = conn is None
-    conn = conn or get_conn()
-
-    try:
-        execute_write(conn, """
+    with optional_conn(conn, commit=True) as c:
+        execute_write(c, """
         INSERT INTO matches (
             match_id,
             start_time,
@@ -115,21 +112,12 @@ def insert_match(data, conn=None):
             data.get("server_ip"),
         ))
 
-        if own_conn:
-            conn.commit()
-    finally:
-        if own_conn:
-            conn.close()
-
     logger.log(f"[DB] Upsert match {data['match_id']}", level="DEBUG")
 
 
 def insert_match_map(data, conn=None):
-    own_conn = conn is None
-    conn = conn or get_conn()
-
-    try:
-        execute_write(conn, """
+    with optional_conn(conn, commit=True) as c:
+        execute_write(c, """
         INSERT INTO match_maps (
             match_id,
             map_number,
@@ -157,45 +145,21 @@ def insert_match_map(data, conn=None):
             data.get("team2_score"),
         ))
 
-        if own_conn:
-            conn.commit()
-    finally:
-        if own_conn:
-            conn.close()
-
     logger.log(f"[DB] Upsert map match={data['match_id']} map={data['map_number']}", level="DEBUG")
 
 
 def insert_match_player_stats(data, conn=None):
-    own_conn = conn is None
-    conn = conn or get_conn()
-
-    try:
-        execute_write(conn, _UPSERT_PLAYER_STATS_SQL, _player_stats_params(data))
-
-        if own_conn:
-            conn.commit()
-    finally:
-        if own_conn:
-            conn.close()
+    with optional_conn(conn, commit=True) as c:
+        execute_write(c, _UPSERT_PLAYER_STATS_SQL, _player_stats_params(data))
 
 
 def insert_match_player_stats_many(rows, conn=None):
     if not rows:
         return
 
-    own_conn = conn is None
-    conn = conn or get_conn()
-
-    try:
+    with optional_conn(conn, commit=True) as c:
         params = [_player_stats_params(row) for row in rows]
-        executemany_write(conn, _UPSERT_PLAYER_STATS_SQL, params)
-
-        if own_conn:
-            conn.commit()
-    finally:
-        if own_conn:
-            conn.close()
+        executemany_write(c, _UPSERT_PLAYER_STATS_SQL, params)
 
 
 def match_exists(match_id):
@@ -212,45 +176,27 @@ def match_exists(match_id):
 
 
 def set_match_has_demo(match_id, has_demo=True, conn=None):
-    own_conn = conn is None
-    conn = conn or get_conn()
-
-    try:
-        execute_write(conn,
+    with optional_conn(conn, commit=True) as c:
+        execute_write(c,
             "UPDATE matches SET demo = ? WHERE match_id = ?",
             (1 if has_demo else 0, str(match_id)),
         )
-
-        if own_conn:
-            conn.commit()
-    finally:
-        if own_conn:
-            conn.close()
 
     logger.log(f"[DB] Match demo={1 if has_demo else 0} match={match_id}", level="DEBUG")
 
 
 def set_demo_flags_by_match_ids(match_ids, conn=None):
-    own_conn = conn is None
-    conn = conn or get_conn()
-
     ids = [str(mid) for mid in (match_ids or []) if str(mid).strip()]
 
-    try:
-        execute_write(conn, "UPDATE matches SET demo = 0")
+    with optional_conn(conn, commit=True) as c:
+        execute_write(c, "UPDATE matches SET demo = 0")
 
         if ids:
             placeholders = ",".join("?" for _ in ids)
-            execute_write(conn,
+            execute_write(c,
                 f"UPDATE matches SET demo = 1 WHERE match_id IN ({placeholders})",
                 ids,
             )
-
-        if own_conn:
-            conn.commit()
-    finally:
-        if own_conn:
-            conn.close()
 
     logger.log(
         f"[DB] Reconciled match demo flags from cache matches={len(ids)}",
@@ -259,11 +205,8 @@ def set_demo_flags_by_match_ids(match_ids, conn=None):
 
 
 def get_match_map_steamids(match_id, map_number, conn=None):
-    own_conn = conn is None
-    conn = conn or get_conn()
-
-    try:
-        rows = conn.execute(
+    with optional_conn(conn) as c:
+        rows = c.execute(
             """
             SELECT DISTINCT steamid64
             FROM match_player_stats
@@ -274,29 +217,20 @@ def get_match_map_steamids(match_id, map_number, conn=None):
             """,
             (str(match_id), int(map_number)),
         ).fetchall()
-    finally:
-        if own_conn:
-            conn.close()
 
     return {str(row["steamid64"]) for row in rows}
 
 
 def get_next_local_match_id(conn=None, start_from=1):
     """Return the next positive integer match_id reserved for Internomat-local ids."""
-    own_conn = conn is None
-    conn = conn or get_conn()
-
-    try:
-        row = conn.execute(
+    with optional_conn(conn) as c:
+        row = c.execute(
             """
             SELECT MAX(CAST(match_id AS INTEGER)) AS max_id
             FROM matches
             WHERE match_id GLOB '[0-9]*'
             """
         ).fetchone()
-    finally:
-        if own_conn:
-            conn.close()
 
     max_id = 0
     if row is not None and row["max_id"] is not None:
@@ -310,11 +244,8 @@ def get_next_local_match_id(conn=None, start_from=1):
 
 
 def get_next_map_number_for_match(match_id, conn=None, start_from=0):
-    own_conn = conn is None
-    conn = conn or get_conn()
-
-    try:
-        row = conn.execute(
+    with optional_conn(conn) as c:
+        row = c.execute(
             """
             SELECT MAX(map_number) AS max_map
             FROM match_maps
@@ -322,9 +253,6 @@ def get_next_map_number_for_match(match_id, conn=None, start_from=0):
             """,
             (str(match_id),),
         ).fetchone()
-    finally:
-        if own_conn:
-            conn.close()
 
     max_map = None
     if row is not None:
@@ -340,11 +268,8 @@ def get_next_map_number_for_match(match_id, conn=None, start_from=0):
 
 
 def match_map_has_player_stats(match_id, map_number, conn=None):
-    own_conn = conn is None
-    conn = conn or get_conn()
-
-    try:
-        row = conn.execute(
+    with optional_conn(conn) as c:
+        row = c.execute(
             """
             SELECT 1
             FROM match_player_stats
@@ -354,19 +279,13 @@ def match_map_has_player_stats(match_id, map_number, conn=None):
             """,
             (str(match_id), int(map_number)),
         ).fetchone()
-    finally:
-        if own_conn:
-            conn.close()
 
     return row is not None
 
 
 def get_match_map_players(match_id, map_number, conn=None):
-    own_conn = conn is None
-    conn = conn or get_conn()
-
-    try:
-        rows = conn.execute(
+    with optional_conn(conn) as c:
+        rows = c.execute(
             """
             SELECT steamid64, name
             FROM match_player_stats
@@ -377,9 +296,6 @@ def get_match_map_players(match_id, map_number, conn=None):
             """,
             (str(match_id), int(map_number)),
         ).fetchall()
-    finally:
-        if own_conn:
-            conn.close()
 
     players = []
     for row in rows:
@@ -397,11 +313,8 @@ def get_match_map_players(match_id, map_number, conn=None):
 
 
 def get_all_matches_with_maps(conn=None):
-    own_conn = conn is None
-    conn = conn or get_conn()
-
-    try:
-        rows = conn.execute("""
+    with optional_conn(conn) as c:
+        rows = c.execute("""
         SELECT 
             m.match_id,
             m.team1_name,
@@ -413,9 +326,6 @@ def get_all_matches_with_maps(conn=None):
             ON m.match_id = mm.match_id
         ORDER BY m.match_id, mm.map_number
         """).fetchall()
-    finally:
-        if own_conn:
-            conn.close()
 
     matches = {}
 
@@ -444,24 +354,15 @@ def get_all_matches_with_maps(conn=None):
 
 
 def get_total_matches_count(conn=None):
-    own_conn = conn is None
-    conn = conn or get_conn()
-
-    try:
-        row = conn.execute("SELECT COUNT(*) AS total FROM matches").fetchone()
-    finally:
-        if own_conn:
-            conn.close()
+    with optional_conn(conn) as c:
+        row = c.execute("SELECT COUNT(*) AS total FROM matches").fetchone()
 
     return int(row["total"] or 0) if row else 0
 
 
 def get_map_play_counts(conn=None):
-    own_conn = conn is None
-    conn = conn or get_conn()
-
-    try:
-        rows = conn.execute(
+    with optional_conn(conn) as c:
+        rows = c.execute(
             """
             SELECT map_name, COUNT(*) AS played_count
             FROM match_maps
@@ -470,9 +371,6 @@ def get_map_play_counts(conn=None):
             GROUP BY map_name
             """
         ).fetchall()
-    finally:
-        if own_conn:
-            conn.close()
 
     return {
         str(row["map_name"]): int(row["played_count"] or 0)

@@ -563,8 +563,6 @@ class DemoScrapperParserLayer:
             Aggregated counters compatible with the old matcher_stats / parser_stats
             shape so the caller does not need to change.
         """
-        self.host._ensure_not_cancelled(stage="parser")
-
         demo_files = IOManager.list_files(self.host.demo_dir, ".dem")
         parsed_sources = IOManager.list_parsed_demo_sources(self.host.parsed_demo_dir)
 
@@ -610,7 +608,7 @@ class DemoScrapperParserLayer:
             )
             work_items = work_items[:max_demos]
 
-        # -- 2. Chunked parallel processing ----------------------------
+        # -- 2. Processing --------------------------------------------
         cache_manifest = {}
         failed = 0
         rejected = 0
@@ -629,8 +627,6 @@ class DemoScrapperParserLayer:
         ] if work_items else []
 
         for chunk in chunks:
-            self.host._ensure_not_cancelled(stage="parser")
-
             num_workers = min(_MAX_DEMO_WORKERS, len(chunk))
 
             with ThreadPoolExecutor(max_workers=num_workers) as pool:
@@ -642,14 +638,11 @@ class DemoScrapperParserLayer:
                 }
 
                 for future in as_completed(futures):
-                    self.host._ensure_not_cancelled(stage="parser")
-
                     file, mid, mnum = futures[future]
                     completed_total += 1
 
                     if progress_start is not None and progress_end is not None:
                         span = max(0, int(progress_end) - int(progress_start))
-                        pct = int((completed_total / max(1, total_work)) * 100)
                         val = int(progress_start) + int((completed_total / max(1, total_work)) * span)
                         self.host._emit_progress(
                             val,
@@ -677,8 +670,7 @@ class DemoScrapperParserLayer:
                         failed_files.append(file.name)
                         self.host._log_stage("PARSER", f"FAILED {file.name}: {e}", level="ERROR")
 
-            # ThreadPoolExecutor context exits here → worker threads join →
-            # all awpy.Demo references from this chunk are freed.
+            # On normal flow, chunk workers are fully joined and awpy references are freed.
 
         # -- 3. Summary ------------------------------------------------
         self.host._log_stage(

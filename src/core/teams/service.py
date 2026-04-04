@@ -1,4 +1,5 @@
 from core.settings.settings import settings
+import random
 import services.logger as logger
 from .balancer import find_best_teams
 
@@ -27,7 +28,6 @@ def balance_teams(players, tolerance):
         settings.dist_weight
     )
 
-    import random
     chosen = random.choice(acceptable)
 
     score, team_a, team_b, diff, dist = chosen

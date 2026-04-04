@@ -537,21 +537,115 @@ def _refresh_plot_only(parent):
     if metric_combo and isinstance(metric_combo, _CheckableCombo):
         metrics = metric_combo.checked_data()
         parent._stattracker_selected_plot_metrics = list(metrics)
+    elif isinstance(metric_combo, QComboBox):
+        selected_metric = str(metric_combo.currentData() or "").strip()
+        metrics = [selected_metric] if selected_metric else []
+        parent._stattracker_selected_plot_metrics = list(metrics)
     else:
         metrics = list(getattr(parent, "_stattracker_selected_plot_metrics", []) or [])
         if not metrics:
             metrics = [str(getattr(parent, "_stattracker_plot_metric", "accuracy") or "accuracy")]
 
+    if not metrics:
+        if main_view == "maps":
+            fallback_metric = "kd_ratio"
+        elif main_view == "movement":
+            fallback_metric = "avg_speed_m_s"
+        else:
+            fallback_metric = "accuracy"
+        metrics = [fallback_metric]
+        parent._stattracker_selected_plot_metrics = list(metrics)
+        parent._stattracker_plot_metric = fallback_metric
+
     # Gather checked items
     item_combo = getattr(parent, "_stattracker_timeline_combo", None)
-    checked_items = item_combo.checked_data() if item_combo else None
-    if item_combo:
+    checked_items = None
+    if item_combo and isinstance(item_combo, _CheckableCombo):
+        checked_items = item_combo.checked_data()
         parent._stattracker_selected_timeline_items = list(checked_items or [])
+    elif isinstance(item_combo, QComboBox):
+        selected_item = str(item_combo.currentData() or "").strip()
+        if selected_item == "all":
+            checked_items = None
+            parent._stattracker_selected_timeline_items = []
+        elif selected_item:
+            checked_items = [selected_item]
+            parent._stattracker_selected_timeline_items = [selected_item]
+        else:
+            checked_items = None
+            parent._stattracker_selected_timeline_items = []
     else:
         checked_items = list(getattr(parent, "_stattracker_selected_timeline_items", []) or [])
 
     # Important: keep [] as "show none". Only None means "no filter / all".
     selected_items_filter = checked_items if checked_items is not None else None
+
+    def _normalize_category(category):
+        value = str(category or "").strip().lower()
+        if value.endswith("s") and len(value) > 3:
+            value = value[:-1]
+        return value or "unknown"
+
+    def _category_matches(left, right):
+        return _normalize_category(left) == _normalize_category(right)
+
+    def _aggregate_map_series(series_dict, metric_key):
+        """Collapse per-map lines into one logical player line for map view timelines."""
+        if not isinstance(series_dict, dict) or not series_dict:
+            return {}
+
+        first_values = next(iter(series_dict.values())) or []
+        length = len(first_values)
+        aggregated = []
+
+        ratio_metrics = {"kd_ratio", "adr"}
+
+        for i in range(length):
+            vals = []
+            for values in series_dict.values():
+                if i < len(values):
+                    v = values[i]
+                    if v is not None:
+                        vals.append(float(v))
+
+            if not vals:
+                aggregated.append(None)
+                continue
+
+            if metric_key in ratio_metrics:
+                aggregated.append(sum(vals) / len(vals))
+            else:
+                aggregated.append(sum(vals))
+
+        return {"All Maps": aggregated}
+
+    def _resolve_weapon_filter_for_player(target_sid):
+        selected_category = str(getattr(parent, "_stattracker_weapon_category", "all") or "all")
+
+        # Explicit empty selection means show nothing.
+        if selected_items_filter == []:
+            return []
+
+        # Explicit item selection (single or multi) wins.
+        if selected_items_filter is not None:
+            return selected_items_filter
+
+        # No explicit item selection: apply current category filter if not all.
+        if selected_category != "all":
+            dash = stattracker.get_player_dashboard(
+                str(target_sid or ""),
+                min_weapon_shots=1,
+                weapon_category="all",
+            )
+            rows = dash.get("weapon_rows") or []
+            return [
+                str(r.get("weapon") or "")
+                for r in rows
+                if str(r.get("weapon") or "").strip()
+                and _category_matches(r.get("category"), selected_category)
+            ]
+
+        return None
 
     def _player_label(target_sid):
         for opt in (getattr(parent, "_stattracker_player_options", []) or []):
@@ -559,30 +653,120 @@ def _refresh_plot_only(parent):
                 return str(opt.get("player_name") or target_sid)
         return str(target_sid or "Player")
 
+    def _aggregate_weapon_series_by_category(series_dict, target_sid, metric_key):
+        if not isinstance(series_dict, dict) or not series_dict:
+            return {}
+
+        dashboard = stattracker.get_player_dashboard(
+            str(target_sid or ""),
+            min_weapon_shots=1,
+            weapon_category="all",
+        )
+        weapon_rows = dashboard.get("weapon_rows") or []
+        weapon_to_category = {
+            str(r.get("weapon") or ""): str(r.get("category") or "unknown").title()
+            for r in weapon_rows
+            if str(r.get("weapon") or "").strip()
+        }
+
+        ratio_metrics = {"accuracy", "hs_pct"}
+        aggregated = {}
+        counts = {}
+
+        for weapon_name, values in series_dict.items():
+            category = weapon_to_category.get(str(weapon_name or ""), "Unknown")
+            if category not in aggregated:
+                aggregated[category] = [0.0] * len(values)
+                counts[category] = [0] * len(values)
+
+            for idx, value in enumerate(values):
+                if value is None:
+                    continue
+                aggregated[category][idx] += float(value)
+                counts[category][idx] += 1
+
+        if metric_key in ratio_metrics:
+            for category, values in aggregated.items():
+                for idx, val in enumerate(values):
+                    c = counts[category][idx]
+                    values[idx] = (val / c) if c > 0 else None
+
+        for category, values in aggregated.items():
+            for idx, val in enumerate(values):
+                if counts[category][idx] == 0:
+                    values[idx] = None
+
+        return aggregated
+
     def _build_plot_data_for(target_sid):
         if main_view == "maps":
             if len(metrics) == 1:
-                return stattracker.get_map_match_series(
+                data = stattracker.get_map_match_series(
                     target_sid, maps=selected_items_filter, metric=metrics[0],
                 )
+                data["series"] = _aggregate_map_series(data.get("series") or {}, metrics[0])
+                return data
             first = stattracker.get_map_match_series(target_sid, maps=selected_items_filter, metric=metrics[0])
-            multi = [{"metric_label": first["metric_label"], "series": first["series"]}]
+            multi = [{
+                "metric_label": first["metric_label"],
+                "series": _aggregate_map_series(first.get("series") or {}, metrics[0]),
+            }]
             for m in metrics[1:]:
                 r = stattracker.get_map_match_series(target_sid, maps=selected_items_filter, metric=m)
+                multi.append({
+                    "metric_label": r["metric_label"],
+                    "series": _aggregate_map_series(r.get("series") or {}, m),
+                })
+            return {"x_labels": first["x_labels"], "multi_series": multi}
+
+        if main_view == "movement":
+            if len(metrics) == 1:
+                return stattracker.get_movement_match_series(
+                    target_sid,
+                    maps=selected_items_filter,
+                    metric=metrics[0],
+                )
+            first = stattracker.get_movement_match_series(
+                target_sid,
+                maps=selected_items_filter,
+                metric=metrics[0],
+            )
+            multi = [{"metric_label": first["metric_label"], "series": first["series"]}]
+            for m in metrics[1:]:
+                r = stattracker.get_movement_match_series(
+                    target_sid,
+                    maps=selected_items_filter,
+                    metric=m,
+                )
                 multi.append({"metric_label": r["metric_label"], "series": r["series"]})
             return {"x_labels": first["x_labels"], "multi_series": multi}
 
         selected_map = str(getattr(parent, "_stattracker_selected_map", "all") or "all")
         map_name = selected_map if selected_map != "all" else None
+        weapon_filter = _resolve_weapon_filter_for_player(target_sid)
+        group_mode = str(getattr(parent, "_stattracker_group_mode", "weapon") or "weapon")
         if len(metrics) == 1:
-            return stattracker.get_weapon_match_series(
-                target_sid, weapons=selected_items_filter, metric=metrics[0], map_name=map_name,
+            result = stattracker.get_weapon_match_series(
+                target_sid, weapons=weapon_filter, metric=metrics[0], map_name=map_name,
             )
-        first = stattracker.get_weapon_match_series(target_sid, weapons=selected_items_filter, metric=metrics[0], map_name=map_name)
-        multi = [{"metric_label": first["metric_label"], "series": first["series"]}]
+            if group_mode == "category":
+                result["series"] = _aggregate_weapon_series_by_category(
+                    result.get("series") or {},
+                    target_sid,
+                    metrics[0],
+                )
+            return result
+        first = stattracker.get_weapon_match_series(target_sid, weapons=weapon_filter, metric=metrics[0], map_name=map_name)
+        first_series = first["series"]
+        if group_mode == "category":
+            first_series = _aggregate_weapon_series_by_category(first_series, target_sid, metrics[0])
+        multi = [{"metric_label": first["metric_label"], "series": first_series}]
         for m in metrics[1:]:
-            r = stattracker.get_weapon_match_series(target_sid, weapons=selected_items_filter, metric=m, map_name=map_name)
-            multi.append({"metric_label": r["metric_label"], "series": r["series"]})
+            r = stattracker.get_weapon_match_series(target_sid, weapons=weapon_filter, metric=m, map_name=map_name)
+            metric_series = r["series"]
+            if group_mode == "category":
+                metric_series = _aggregate_weapon_series_by_category(metric_series, target_sid, m)
+            multi.append({"metric_label": r["metric_label"], "series": metric_series})
         return {"x_labels": first["x_labels"], "multi_series": multi}
 
     def _prefixed(data, prefix):
@@ -599,11 +783,13 @@ def _refresh_plot_only(parent):
                 })
             return {
                 "x_labels": list(data.get("x_labels") or []),
+                "match_keys": list(data.get("match_keys") or []),
                 "multi_series": merged_groups,
             }
 
         return {
             "x_labels": list(data.get("x_labels") or []),
+            "match_keys": list(data.get("match_keys") or []),
             "metric_label": data.get("metric_label") or "Value",
             "series": {
                 f"{prefix} · {name}": values
@@ -611,10 +797,77 @@ def _refresh_plot_only(parent):
             },
         }
 
+    def _align_plot_data(plot_data_a, plot_data_b):
+        keys_a = list(plot_data_a.get("match_keys") or [])
+        keys_b = list(plot_data_b.get("match_keys") or [])
+        labels_a = list(plot_data_a.get("x_labels") or [])
+        labels_b = list(plot_data_b.get("x_labels") or [])
+
+        if not keys_a and not keys_b:
+            return plot_data_a, plot_data_b
+
+        ordered_keys = []
+        label_by_key = {}
+
+        for i, key in enumerate(keys_a):
+            if key not in label_by_key:
+                label_by_key[key] = labels_a[i] if i < len(labels_a) else "?"
+            if key not in ordered_keys:
+                ordered_keys.append(key)
+
+        for i, key in enumerate(keys_b):
+            if key not in label_by_key:
+                label_by_key[key] = labels_b[i] if i < len(labels_b) else "?"
+            if key not in ordered_keys:
+                ordered_keys.append(key)
+
+        index_map = {k: idx for idx, k in enumerate(ordered_keys)}
+
+        def _pad_values(values, source_keys):
+            aligned = [None] * len(ordered_keys)
+            for i, key in enumerate(source_keys):
+                if i >= len(values):
+                    continue
+                target_idx = index_map.get(key)
+                if target_idx is not None:
+                    aligned[target_idx] = values[i]
+            return aligned
+
+        def _align_single(data):
+            source_keys = list(data.get("match_keys") or [])
+            if data.get("multi_series"):
+                multi = []
+                for group in (data.get("multi_series") or []):
+                    series = {}
+                    for name, values in (group.get("series") or {}).items():
+                        series[name] = _pad_values(list(values or []), source_keys)
+                    multi.append({
+                        "metric_label": group.get("metric_label") or "Value",
+                        "series": series,
+                    })
+                return {
+                    "match_keys": ordered_keys,
+                    "x_labels": [label_by_key.get(k, "?") for k in ordered_keys],
+                    "multi_series": multi,
+                }
+
+            series = {}
+            for name, values in (data.get("series") or {}).items():
+                series[name] = _pad_values(list(values or []), source_keys)
+            return {
+                "match_keys": ordered_keys,
+                "x_labels": [label_by_key.get(k, "?") for k in ordered_keys],
+                "metric_label": data.get("metric_label") or "Value",
+                "series": series,
+            }
+
+        return _align_single(plot_data_a), _align_single(plot_data_b)
+
     plot_data = _prefixed(_build_plot_data_for(sid), _player_label(sid))
 
     if compare_sid:
         compare_data = _prefixed(_build_plot_data_for(compare_sid), _player_label(compare_sid))
+        plot_data, compare_data = _align_plot_data(plot_data, compare_data)
         if plot_data.get("multi_series"):
             merged = {
                 g.get("metric_label") or "Value": dict(g.get("series") or {})
@@ -671,7 +924,9 @@ def build_stattracker_tab(parent):
     parent._stattracker_weapon_category = "all"
     parent._stattracker_selected_map = "all"
     parent._stattracker_selected_weapon = "all"
-    parent._stattracker_timeline = False
+    parent._stattracker_timeline = True
+    parent._stattracker_timeline_multi = False
+    parent._stattracker_group_mode = "weapon"
     parent._stattracker_plot_metric = "accuracy"
     parent._stattracker_chart_mode = "line"
     parent._stattracker_compare_player = ""

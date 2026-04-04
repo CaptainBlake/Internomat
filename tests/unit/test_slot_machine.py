@@ -1,7 +1,7 @@
-"""Tests for core.maps.slot_mashine — random and weighted map selection."""
+"""Tests for core.maps.slot_machine — random and weighted map selection."""
 
 import pytest
-from core.maps.slot_mashine import choose_random_map, choose_weighted_map
+from core.maps.slot_machine import choose_random_map, choose_weighted_map
 
 
 # -- choose_random_map --

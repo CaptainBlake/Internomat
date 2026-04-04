@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QGraphicsBlurEffect,
 )
 
-import db.maps_db as maps_db
+import core.maps.service as maps_service
 from core.maps.service import choose_map
 from core.settings.settings import settings
 
@@ -681,7 +681,7 @@ def build_map_tab(parent):
 
     def refresh_available_maps():
         available_map_table.setRowCount(0)
-        maps = maps_db.get_maps()
+        maps = maps_service.get_maps()
         map_set = set(maps)
 
         for raw_name in maps:
@@ -708,7 +708,7 @@ def build_map_tab(parent):
         if not name.startswith("de_"):
             name = f"de_{name}"
 
-        maps_db.add_map(name)
+        maps_service.add_map(name)
         entry.clear()
         refresh_available_maps()
 
@@ -721,7 +721,7 @@ def build_map_tab(parent):
             item = available_map_table.item(row, 0)
             if item is None:
                 continue
-            maps_db.delete_map(str(item.data(Qt.ItemDataRole.UserRole)))
+            maps_service.delete_map(str(item.data(Qt.ItemDataRole.UserRole)))
 
         refresh_available_maps()
 

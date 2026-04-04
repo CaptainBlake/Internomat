@@ -1,4 +1,4 @@
-from .connection_db import execute_write, get_conn
+from .connection_db import execute_write, get_conn, optional_conn
 import services.logger as logger
 
 def get_maps():
@@ -31,14 +31,11 @@ def map_exists(name):
 
 
 def import_maps_from_match_history(conn=None):
-    own_conn = conn is None
-    conn = conn or get_conn()
-
-    try:
-        before = conn.execute("SELECT COUNT(*) AS total FROM maps").fetchone()["total"]
+    with optional_conn(conn, commit=True) as c:
+        before = c.execute("SELECT COUNT(*) AS total FROM maps").fetchone()["total"]
 
         execute_write(
-            conn,
+            c,
             """
             INSERT OR IGNORE INTO maps(name)
             SELECT DISTINCT TRIM(map_name)
@@ -48,13 +45,7 @@ def import_maps_from_match_history(conn=None):
             """,
         )
 
-        after = conn.execute("SELECT COUNT(*) AS total FROM maps").fetchone()["total"]
-
-        if own_conn:
-            conn.commit()
-    finally:
-        if own_conn:
-            conn.close()
+        after = c.execute("SELECT COUNT(*) AS total FROM maps").fetchone()["total"]
 
     imported = int(after or 0) - int(before or 0)
     logger.log(f"[DB] Imported maps from history count={imported}", level="INFO")

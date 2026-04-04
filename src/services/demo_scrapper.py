@@ -21,10 +21,6 @@ from services.demo_scrapper_components import (
 )
 
 
-class DemoSyncCancelled(Exception):
-    """Raised when the user cancels an in-flight demo sync."""
-
-
 class DemoScrapperIntegration(
     DemoScrapperCommonMixin,
     DemoScrapperMetricsMixin,
@@ -56,7 +52,6 @@ class DemoScrapperIntegration(
         self.remote_dir = remote_dir
         self._run_lock = Lock()
         self.progress_callback = progress_callback
-        self.cancel_requested = cancel_requested
 
         # Store caller-supplied overrides; env fallback resolved lazily in _init_ftp_credentials().
         self._ftp_host_override = ftp_host
@@ -71,12 +66,20 @@ class DemoScrapperIntegration(
 
         self.match_catalog = {}
         self.valid_match_ids = set()
-
         self.demo_dir.mkdir(parents=True, exist_ok=True)
         self.parsed_demo_dir.mkdir(parents=True, exist_ok=True)
 
         # Keep parser concerns in a dedicated layer so awpy usage stays isolated.
         self.parser_layer = DemoScrapperParserLayer(self)
+
+    def _start_rollback_checkpoint(self):
+        return
+
+    def _discard_rollback_checkpoint(self):
+        return
+
+    def _rollback_from_checkpoint(self, reason="cancelled"):
+        return
 
     def _init_ftp_credentials(self):
         """Resolve FTP credentials from caller overrides / .env (lazy, first call only)."""
@@ -110,17 +113,10 @@ class DemoScrapperIntegration(
         logger.log_info(f"Parsed demo cache dir: {self.parsed_demo_dir}")
 
     def _is_cancel_requested(self):
-        try:
-            return bool(self.cancel_requested and self.cancel_requested())
-        except Exception:
-            return False
+        return False
 
     def _ensure_not_cancelled(self, stage="pipeline"):
-        if not self._is_cancel_requested():
-            return
-
-        self._emit_progress(0, "Sync cancelled by user.", stage=stage)
-        raise DemoSyncCancelled("Sync cancelled by user")
+        return
 
     def _emit_progress(self, percent, message, stage="pipeline"):
         if not callable(self.progress_callback):
@@ -140,11 +136,11 @@ class DemoScrapperIntegration(
 
     # --- FTP ---
 
-    def download_demo(self):
+    def download_demo(self, progress_start=3, progress_end=25):
         self._ensure_not_cancelled(stage="ftp")
 
         self._log_stage("FTP", f"Connecting to {self.ftp_host}:{self.ftp_port}...")
-        self._emit_progress(5, "Connecting to server...", stage="ftp")
+        self._emit_progress(progress_start + 1, "Connecting to server...", stage="ftp")
 
         ftp = FTP()
 
@@ -167,7 +163,7 @@ class DemoScrapperIntegration(
 
             self._log_stage("FTP", f"Found {len(files)} remote files")
             self._emit_progress(
-                8,
+                progress_start + 2,
                 f"Found {len(demo_files)} demos on server",
                 stage="ftp",
             )
@@ -180,7 +176,7 @@ class DemoScrapperIntegration(
                     self._ensure_not_cancelled(stage="ftp")
 
                     self._emit_progress(
-                        8 + int((processed_demo_files / total_demo_files) * 62),
+                        progress_start + 2 + int((processed_demo_files / total_demo_files) * max(1, (progress_end - (progress_start + 2)))),
                         f"Scanning {processed_demo_files + 1}/{total_demo_files}",
                         stage="ftp",
                     )
@@ -217,7 +213,7 @@ class DemoScrapperIntegration(
 
                     self._log_stage("FTP", f"DOWNLOAD {file} -> {normalized_name}")
                     self._emit_progress(
-                        8 + int((processed_demo_files / total_demo_files) * 62),
+                        progress_start + 2 + int((processed_demo_files / total_demo_files) * max(1, (progress_end - (progress_start + 2)))),
                         f"Downloading {processed_demo_files + 1}/{total_demo_files}",
                         stage="ftp",
                     )
@@ -225,14 +221,12 @@ class DemoScrapperIntegration(
                     try:
                         filesize = ftp.size(file)
 
-                        ftp_stage_start = 8 + int((processed_demo_files / total_demo_files) * 62)
-                        ftp_stage_end = 8 + int(((processed_demo_files + 1) / total_demo_files) * 62)
+                        ftp_span = max(1, (progress_end - (progress_start + 2)))
+                        ftp_stage_start = progress_start + 2 + int((processed_demo_files / total_demo_files) * ftp_span)
+                        ftp_stage_end = progress_start + 2 + int(((processed_demo_files + 1) / total_demo_files) * ftp_span)
                         last_state = {"absolute": -1, "file_percent": -1}
 
                         def _on_file_progress(bytes_written, total_bytes):
-                            if self._is_cancel_requested():
-                                raise DemoSyncCancelled("Sync cancelled by user")
-
                             if not total_bytes:
                                 return
 
@@ -268,13 +262,6 @@ class DemoScrapperIntegration(
 
                         downloaded += 1
 
-                    except DemoSyncCancelled:
-                        if IOManager.file_exists(temp_local_file):
-                            try:
-                                Path(temp_local_file).unlink()
-                            except Exception:
-                                pass
-                        raise
                     except Exception as e:
                         if IOManager.file_exists(temp_local_file):
                             try:
@@ -285,7 +272,7 @@ class DemoScrapperIntegration(
                 finally:
                     processed_demo_files += 1
                     self._emit_progress(
-                        8 + int((processed_demo_files / total_demo_files) * 62),
+                        progress_start + 2 + int((processed_demo_files / total_demo_files) * max(1, (progress_end - (progress_start + 2)))),
                         f"Syncing {processed_demo_files}/{total_demo_files}",
                         stage="ftp",
                     )
@@ -299,7 +286,7 @@ class DemoScrapperIntegration(
                 ),
             )
             self._emit_progress(
-                70,
+                progress_end,
                 f"Sync done — {downloaded} new, {skipped + skipped_parsed} skipped",
                 stage="ftp",
             )
@@ -374,14 +361,14 @@ class DemoScrapperIntegration(
         self._emit_progress(0, "Starting...", stage="pipeline")
 
         self._emit_progress(3, "Syncing demos...", stage="ftp")
-        ftp_stats = self.download_demo()
+        ftp_stats = self.download_demo(progress_start=3, progress_end=25)
 
         self._ensure_not_cancelled(stage="pipeline")
 
-        self._emit_progress(71, "Parsing demos...", stage="parser")
+        self._emit_progress(26, "Parsing demos...", stage="parser")
         max_demos_per_update = int(getattr(settings, "max_demos_per_update", 0) or 0)
         demo_data, parser_stats = self.process_demos(
-            progress_start=71, progress_end=94, max_demos=max_demos_per_update,
+            progress_start=26, progress_end=78, max_demos=max_demos_per_update,
         )
 
         self._ensure_not_cancelled(stage="pipeline")
@@ -417,10 +404,10 @@ class DemoScrapperIntegration(
             restore_rows = restore_rows[:max_demos_per_update]
 
         if restore_rows:
-            self._emit_progress(95, "Writing to database...", stage="database")
+            self._emit_progress(79, "Writing to database...", stage="database")
             restore_stats = self.restore_db_from_parsed_cache(
-                progress_start=95,
-                progress_end=99,
+                progress_start=79,
+                progress_end=96,
                 rows=restore_rows,
                 include_orphaned=False,
             )
@@ -470,7 +457,7 @@ class DemoScrapperIntegration(
         if settings.auto_import_players_from_history:
             canonical_entries = restore_stats.get("canonical_match_maps") or []
             if canonical_entries:
-                self._emit_progress(99, "Importing players...", stage="players")
+                self._emit_progress(97, "Importing players...", stage="players")
                 imported_players = self.import_players_from_parsed_cache(
                     canonical_entries=canonical_entries
                 )

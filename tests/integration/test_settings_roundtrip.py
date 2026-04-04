@@ -26,7 +26,8 @@ def test_load_matches_seeds(full_db):
     assert s.matchzy_user == SETTINGS_SEED["matchzy_user"]
     assert s.matchzy_password == SETTINGS_SEED["matchzy_password"]
     assert s.matchzy_database == SETTINGS_SEED["matchzy_database"]
-    assert s.auto_import_match_players is False
+    assert s.auto_import_players_from_history is False
+    assert s.auto_import_maps_from_history is False
     # FTP
     assert s.demo_ftp_host == SETTINGS_SEED["demo_ftp_host"]
     assert s.demo_ftp_port == int(SETTINGS_SEED["demo_ftp_port"])

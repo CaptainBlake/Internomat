@@ -21,14 +21,11 @@ from PySide6.QtWidgets import (
 )
 from core.settings.settings import settings
 from core.settings import service as settings_service
+from core import io_service
 from services import executor
 import services.logger as logger
-from db.IO_db import get_players_payload
-from db.IO_db import import_players_payload
-from db.IO_db import get_maps_payload
-from db.IO_db import import_maps_payload
 from services.matchzy import sync
-from services.demo_scrapper import DemoScrapperIntegration, DemoSyncCancelled
+from services.demo_scrapper import DemoScrapperIntegration
 from services import demo_cache
 from PySide6.QtCore import QObject, Signal
 from gui.tabs.settings.log_window import open_log_window
@@ -41,7 +38,6 @@ class SettingsDispatcher(QObject):
     sync_all_error = Signal(object)
     demos_sync_finished = Signal(object)
     demos_sync_error = Signal(object)
-    demos_sync_cancelled = Signal(str)
     demos_sync_progress = Signal(object)
 
 # SETTINGS TAB
@@ -608,8 +604,8 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
             return
 
         payload = {
-            "players": get_players_payload(),
-            "maps": get_maps_payload(),
+            "players": io_service.get_players_payload(),
+            "maps": io_service.get_maps_payload(),
         }
 
         try:
@@ -641,8 +637,8 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
             if not isinstance(payload, dict):
                 raise ValueError("Invalid backup format")
 
-            players_count = import_players_payload(payload.get("players", []))
-            maps_count = import_maps_payload(payload.get("maps", []))
+            players_count = io_service.import_players_payload(payload.get("players", []))
+            maps_count = io_service.import_maps_payload(payload.get("maps", []))
             logger.log_info(f"[BACKUP] Imported from {path} (players={players_count}, maps={maps_count})")
 
             if callable(on_players_updated):
@@ -781,14 +777,8 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
 
         dialog = PipelineProgressDialog("Demo Sync Progress", "Syncing demos ({stage})", parent)
         dialog.update_status({"percent": 0, "stage": "matchzy", "message": "Syncing MatchZy..."})
-        cancel_state = {"requested": False}
-
-        def _request_cancel():
-            cancel_state["requested"] = True
-            dialog.update_status({"stage": "pipeline", "message": "Cancelling..."})
 
         dialog.set_running(True)
-        dialog.set_cancel_handler(_request_cancel)
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
@@ -801,9 +791,6 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
                 )
                 sync()
 
-                if cancel_state["requested"]:
-                    raise DemoSyncCancelled("Sync cancelled by user")
-
                 dispatcher.demos_sync_progress.emit(
                     {"percent": 15, "stage": "matchzy", "message": "MatchZy synced. Starting demos..."}
                 )
@@ -815,12 +802,9 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
                     ftp_password=settings.demo_ftp_password,
                     remote_dir=settings.demo_remote_path,
                     progress_callback=lambda payload: dispatcher.demos_sync_progress.emit(payload),
-                    cancel_requested=lambda: cancel_state["requested"],
                 )
                 demo_data = integration.run_sync()
                 dispatcher.demos_sync_finished.emit(demo_data)
-            except DemoSyncCancelled as e:
-                dispatcher.demos_sync_cancelled.emit(str(e))
             except Exception as e:
                 dispatcher.sync_all_error.emit(e)
 
@@ -840,8 +824,7 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
 
         try:
             deleted = demo_cache.clear_cache_default()
-            from db.matches_db import set_demo_flags_by_match_ids
-            set_demo_flags_by_match_ids(set())  # Clear all demo flags
+            io_service.clear_demo_flags()
             logger.log_info(f"Cleared cache: {deleted} files deleted. Demo flags reset.")
             if on_data_updated:
                 on_data_updated()
@@ -858,14 +841,8 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
 
         dialog = PipelineProgressDialog("Demo Sync Progress", "Syncing demos ({stage})", parent)
         dialog.update_status({"percent": 0, "stage": "pipeline", "message": "Starting..."})
-        cancel_state = {"requested": False}
-
-        def _request_cancel():
-            cancel_state["requested"] = True
-            dialog.update_status({"stage": "pipeline", "message": "Cancelling..."})
 
         dialog.set_running(True)
-        dialog.set_cancel_handler(_request_cancel)
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
@@ -880,12 +857,9 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
                     ftp_password=settings.demo_ftp_password,
                     remote_dir=settings.demo_remote_path,
                     progress_callback=lambda payload: dispatcher.demos_sync_progress.emit(payload),
-                    cancel_requested=lambda: cancel_state["requested"],
                 )
                 demo_data = integration.run_sync()
                 dispatcher.demos_sync_finished.emit(demo_data)
-            except DemoSyncCancelled as e:
-                dispatcher.demos_sync_cancelled.emit(str(e))
             except Exception as e:
                 dispatcher.demos_sync_error.emit(e)
 
@@ -956,20 +930,25 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
 
             QTimer.singleShot(700, _close_dialog_later)
 
-        if callable(on_data_updated):
-            on_data_updated()
+        def _run_post_sync_updates():
+            if callable(on_data_updated):
+                on_data_updated()
 
-        if callable(on_update_players_only):
-            logger.log("[UI] Trigger Team Builder player update after unified sync", level="DEBUG")
-            on_update_players_only()
-        elif callable(on_update_players):
-            logger.log("[UI] Trigger Team Builder full update after unified sync", level="DEBUG")
-            on_update_players()
-        elif settings.auto_import_players_from_history and callable(on_players_updated):
-            logger.log("[UI] Refresh Team Builder player pool after sync import", level="DEBUG")
-            on_players_updated()
-            if callable(on_players_data_updated):
-                on_players_data_updated()
+            if callable(on_update_players_only):
+                logger.log("[UI] Trigger Team Builder player update after unified sync", level="DEBUG")
+                on_update_players_only()
+            elif callable(on_update_players):
+                logger.log("[UI] Trigger Team Builder full update after unified sync", level="DEBUG")
+                on_update_players()
+            elif settings.auto_import_players_from_history and callable(on_players_updated):
+                logger.log("[UI] Refresh Team Builder player pool after sync import", level="DEBUG")
+                on_players_updated()
+                if callable(on_players_data_updated):
+                    on_players_data_updated()
+
+        # Defer heavy refresh callbacks to keep the signal handler short and
+        # allow the event loop to repaint/close progress UI first.
+        QTimer.singleShot(0, _run_post_sync_updates)
 
     def on_demos_sync_error(e):
         sync_demos_button.setEnabled(True)
@@ -991,20 +970,6 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
             str(e),
             logger.get_log_history()
         )
-
-    def on_demos_sync_cancelled(message):
-        sync_demos_button.setEnabled(True)
-        sync_matchzy_button.setEnabled(True)
-        sync_all_button.setEnabled(True)
-        logger.log_info(f"[DEMOS] Sync cancelled: {message}")
-
-        dialog = demo_sync_progress_dialog.get("dialog")
-        if dialog is not None:
-            dialog.set_running(False)
-            dialog.update_status({"stage": "pipeline", "message": "Cancelled"})
-            dialog.allow_close_once()
-            dialog.close()
-            demo_sync_progress_dialog["dialog"] = None
 
     def on_demos_sync_progress(payload):
         dialog = demo_sync_progress_dialog.get("dialog")
@@ -1030,7 +995,6 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
     dispatcher.sync_all_error.connect(on_sync_all_error)
     dispatcher.demos_sync_finished.connect(on_demos_sync_finished)
     dispatcher.demos_sync_error.connect(on_demos_sync_error)
-    dispatcher.demos_sync_cancelled.connect(on_demos_sync_cancelled)
     dispatcher.demos_sync_progress.connect(on_demos_sync_progress)
 
     sidebar.setCurrentRow(0)
