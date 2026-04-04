@@ -6,7 +6,7 @@ class PipelineProgressDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setModal(False)
-        self.resize(540, 190)
+        self.resize(540, 140)
 
         self._title_template = title_template
 
@@ -26,19 +26,9 @@ class PipelineProgressDialog(QDialog):
         self.progress.setValue(0)
         self.progress.setFormat("%p%")
 
-        self.file_label = QLabel("Current file: -")
-        self.file_label.setStyleSheet("font-size: 11px; color: #5A6B7C;")
-
-        self.file_progress = QProgressBar()
-        self.file_progress.setRange(0, 100)
-        self.file_progress.setValue(0)
-        self.file_progress.setFormat("%p%")
-
         layout.addWidget(self.title_label)
         layout.addWidget(self.message_label)
         layout.addWidget(self.progress)
-        layout.addWidget(self.file_label)
-        layout.addWidget(self.file_progress)
 
         self._running = False
         self._allow_close = False
@@ -49,7 +39,6 @@ class PipelineProgressDialog(QDialog):
             return
 
         percent = payload.get("percent")
-        file_percent = payload.get("file_percent")
         message = str(payload.get("message") or "")
         stage = str(payload.get("stage") or "pipeline")
 
@@ -61,14 +50,6 @@ class PipelineProgressDialog(QDialog):
 
         if message:
             self.message_label.setText(message)
-
-        if isinstance(file_percent, (int, float)):
-            value = max(0, min(100, int(file_percent)))
-            self.file_progress.setValue(value)
-            self.file_label.setText(f"Current file: {value}%")
-        elif stage != "ftp":
-            self.file_progress.setValue(0)
-            self.file_label.setText("Current file: -")
 
     def set_running(self, running):
         self._running = bool(running)

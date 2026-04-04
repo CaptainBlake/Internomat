@@ -58,25 +58,48 @@ class DemoScrapperIntegration(
         self.progress_callback = progress_callback
         self.cancel_requested = cancel_requested
 
-        logger.log_info(f"Using DB: {self.db_file}")
+        # Store caller-supplied overrides; env fallback resolved lazily in _init_ftp_credentials().
+        self._ftp_host_override = ftp_host
+        self._ftp_port_override = ftp_port
+        self._ftp_user_override = ftp_user
+        self._ftp_password_override = ftp_password
 
-        env_path = self.base_dir / ".env"
-        load_dotenv(env_path)
+        self.ftp_host = None
+        self.ftp_port = None
+        self.ftp_user = None
+        self.ftp_password = None
 
-        env_ftp_host = os.getenv("SERVER_IP")
-        env_ftp_port = int(os.getenv("FTP_PORT", 21))
-        env_ftp_user = os.getenv("FTP_USER")
-        env_ftp_password = os.getenv("FTP_PASSWORD")
-
-        self.ftp_host = ftp_host or env_ftp_host
-        self.ftp_port = ftp_port or env_ftp_port
-        self.ftp_user = ftp_user or env_ftp_user
-        self.ftp_password = ftp_password or env_ftp_password
+        self.match_catalog = {}
+        self.valid_match_ids = set()
 
         self.demo_dir.mkdir(parents=True, exist_ok=True)
         self.parsed_demo_dir.mkdir(parents=True, exist_ok=True)
 
-        assert self.ftp_host and self.ftp_user and self.ftp_password, "Missing FTP env vars"
+        # Keep parser concerns in a dedicated layer so awpy usage stays isolated.
+        self.parser_layer = DemoScrapperParserLayer(self)
+
+    def _init_ftp_credentials(self):
+        """Resolve FTP credentials from caller overrides / .env (lazy, first call only)."""
+        if self.ftp_host is not None:
+            return  # already resolved
+
+        env_path = self.base_dir / ".env"
+        load_dotenv(env_path)
+
+        self.ftp_host = self._ftp_host_override or os.getenv("SERVER_IP")
+        self.ftp_port = self._ftp_port_override or int(os.getenv("FTP_PORT", 21))
+        self.ftp_user = self._ftp_user_override or os.getenv("FTP_USER")
+        self.ftp_password = self._ftp_password_override or os.getenv("FTP_PASSWORD")
+
+        if not (self.ftp_host and self.ftp_user and self.ftp_password):
+            raise RuntimeError(
+                "Missing FTP credentials. Set SERVER_IP / FTP_USER / FTP_PASSWORD "
+                "in .env or pass them explicitly."
+            )
+
+    def _init_match_catalog(self):
+        """Load the demo match catalog from the DB (lazy, called once per pipeline run)."""
+        logger.log_info(f"Using DB: {self.db_file}")
 
         with get_conn(db_file=self.db_file) as conn:
             self.match_catalog = load_demo_match_catalog(conn=conn)
@@ -85,9 +108,6 @@ class DemoScrapperIntegration(
         logger.log_info(f"Loaded {len(self.match_catalog)} matches")
         logger.log_debug(f"Valid match_ids: {sorted(self.valid_match_ids)}")
         logger.log_info(f"Parsed demo cache dir: {self.parsed_demo_dir}")
-
-        # Keep parser concerns in a dedicated layer so awpy usage stays isolated.
-        self.parser_layer = DemoScrapperParserLayer(self)
 
     def _is_cancel_requested(self):
         try:
@@ -102,7 +122,7 @@ class DemoScrapperIntegration(
         self._emit_progress(0, "Sync cancelled by user.", stage=stage)
         raise DemoSyncCancelled("Sync cancelled by user")
 
-    def _emit_progress(self, percent, message, stage="pipeline", file_percent=None):
+    def _emit_progress(self, percent, message, stage="pipeline"):
         if not callable(self.progress_callback):
             return
 
@@ -113,11 +133,6 @@ class DemoScrapperIntegration(
                     "percent": clamped,
                     "stage": str(stage),
                     "message": str(message),
-                    "file_percent": (
-                        None
-                        if file_percent is None
-                        else max(0, min(100, int(file_percent)))
-                    ),
                 }
             )
         except Exception:
@@ -129,7 +144,7 @@ class DemoScrapperIntegration(
         self._ensure_not_cancelled(stage="ftp")
 
         self._log_stage("FTP", f"Connecting to {self.ftp_host}:{self.ftp_port}...")
-        self._emit_progress(5, "Connecting to FTP server...", stage="ftp")
+        self._emit_progress(5, "Connecting to server...", stage="ftp")
 
         ftp = FTP()
 
@@ -153,7 +168,7 @@ class DemoScrapperIntegration(
             self._log_stage("FTP", f"Found {len(files)} remote files")
             self._emit_progress(
                 8,
-                f"Found {len(demo_files)} demo files on server.",
+                f"Found {len(demo_files)} demos on server",
                 stage="ftp",
             )
 
@@ -166,7 +181,7 @@ class DemoScrapperIntegration(
 
                     self._emit_progress(
                         8 + int((processed_demo_files / total_demo_files) * 62),
-                        f"Scanning {processed_demo_files + 1}/{total_demo_files}: {file}",
+                        f"Scanning {processed_demo_files + 1}/{total_demo_files}",
                         stage="ftp",
                     )
 
@@ -203,7 +218,7 @@ class DemoScrapperIntegration(
                     self._log_stage("FTP", f"DOWNLOAD {file} -> {normalized_name}")
                     self._emit_progress(
                         8 + int((processed_demo_files / total_demo_files) * 62),
-                        f"Downloading {normalized_name}",
+                        f"Downloading {processed_demo_files + 1}/{total_demo_files}",
                         stage="ftp",
                     )
 
@@ -236,9 +251,8 @@ class DemoScrapperIntegration(
 
                             self._emit_progress(
                                 absolute,
-                                f"Downloading {normalized_name} ({file_pct}%)",
+                                f"Downloading {processed_demo_files + 1}/{total_demo_files} ({file_pct}%)",
                                 stage="ftp",
-                                file_percent=file_pct,
                             )
 
                         IOManager.stream_to_file(
@@ -272,10 +286,7 @@ class DemoScrapperIntegration(
                     processed_demo_files += 1
                     self._emit_progress(
                         8 + int((processed_demo_files / total_demo_files) * 62),
-                        (
-                            f"FTP progress {processed_demo_files}/{total_demo_files} "
-                            f"(downloaded={downloaded}, skipped={skipped}, ignored={ignored})"
-                        ),
+                        f"Syncing {processed_demo_files}/{total_demo_files}",
                         stage="ftp",
                     )
 
@@ -289,10 +300,7 @@ class DemoScrapperIntegration(
             )
             self._emit_progress(
                 70,
-                (
-                    f"FTP done: downloaded={downloaded}, skipped={skipped}, "
-                    f"skipped_parsed={skipped_parsed}, ignored={ignored}, recovered={recovered}"
-                ),
+                f"Sync done — {downloaded} new, {skipped + skipped_parsed} skipped",
                 stage="ftp",
             )
 
@@ -311,21 +319,13 @@ class DemoScrapperIntegration(
             except Exception:
                 pass
 
-    # --- DEMO MATCH + LOAD ---
+    # --- DEMO PARSE (unified) ---
 
-    def match_and_load_demos(self, progress_start=None, progress_end=None):
-        return self.parser_layer.match_and_load_demos(
+    def process_demos(self, progress_start=None, progress_end=None, max_demos=0):
+        return self.parser_layer.process_demos(
             progress_start=progress_start,
             progress_end=progress_end,
-        )
-
-    # --- PARSER ---
-
-    def build_demo_data(self, matched, progress_start=None, progress_end=None):
-        return self.parser_layer.build_demo_data(
-            matched=matched,
-            progress_start=progress_start,
-            progress_end=progress_end,
+            max_demos=max_demos,
         )
 
     def import_players_from_parsed_cache(self, canonical_entries=None):
@@ -366,39 +366,28 @@ class DemoScrapperIntegration(
     def _run_pipeline(self):
         self._ensure_not_cancelled(stage="pipeline")
 
-        self._log_stage("PIPELINE", "Start")
-        self._emit_progress(0, "Pipeline started", stage="pipeline")
+        # Lazy init: resolve credentials and DB catalog only when the pipeline actually runs.
+        self._init_ftp_credentials()
+        self._init_match_catalog()
 
-        self._emit_progress(3, "Stage 1/3: FTP sync", stage="pipeline")
+        self._log_stage("PIPELINE", "Start")
+        self._emit_progress(0, "Starting...", stage="pipeline")
+
+        self._emit_progress(3, "Syncing demos...", stage="ftp")
         ftp_stats = self.download_demo()
 
         self._ensure_not_cancelled(stage="pipeline")
 
-        self._emit_progress(71, "Stage 2/3: Parse and match demos", stage="pipeline")
-        matched, matcher_stats = self.match_and_load_demos(progress_start=71, progress_end=88)
-
+        self._emit_progress(71, "Parsing demos...", stage="parser")
         max_demos_per_update = int(getattr(settings, "max_demos_per_update", 0) or 0)
-        if max_demos_per_update > 0 and len(matched) > max_demos_per_update:
-            self._log_stage(
-                "PIPELINE",
-                (
-                    "Apply demo cap "
-                    f"max_demos_per_update={max_demos_per_update} "
-                    f"matched_before={len(matched)} matched_after={max_demos_per_update}"
-                ),
-                level="INFO",
-            )
-            matched = matched[:max_demos_per_update]
-
-        self._ensure_not_cancelled(stage="pipeline")
-
-        self._emit_progress(89, "Stage 3/4: Validate and cache parsed demos", stage="pipeline")
-        demo_data, parser_stats = self.build_demo_data(matched, progress_start=89, progress_end=99)
+        demo_data, parser_stats = self.process_demos(
+            progress_start=71, progress_end=94, max_demos=max_demos_per_update,
+        )
 
         self._ensure_not_cancelled(stage="pipeline")
 
         parsed_entries = list((demo_data or {}).values())
-        skipped_cached_entries = list((matcher_stats or {}).get("skipped_parsed_entries") or [])
+        skipped_cached_entries = list((parser_stats or {}).get("skipped_parsed_entries") or [])
 
         restore_rows = []
         seen_restore_keys = set()
@@ -428,7 +417,7 @@ class DemoScrapperIntegration(
             restore_rows = restore_rows[:max_demos_per_update]
 
         if restore_rows:
-            self._emit_progress(95, "Stage 4/4: Restore database from parsed cache", stage="pipeline")
+            self._emit_progress(95, "Writing to database...", stage="database")
             restore_stats = self.restore_db_from_parsed_cache(
                 progress_start=95,
                 progress_end=99,
@@ -481,7 +470,7 @@ class DemoScrapperIntegration(
         if settings.auto_import_players_from_history:
             canonical_entries = restore_stats.get("canonical_match_maps") or []
             if canonical_entries:
-                self._emit_progress(99, "Importing players from parsed cache", stage="pipeline")
+                self._emit_progress(99, "Importing players...", stage="players")
                 imported_players = self.import_players_from_parsed_cache(
                     canonical_entries=canonical_entries
                 )
@@ -495,15 +484,15 @@ class DemoScrapperIntegration(
         summary = (
             f"Summary ftp(downloaded={ftp_stats['downloaded']} skipped_local={ftp_stats['skipped']} "
             f"skipped_parsed={ftp_stats.get('skipped_parsed', 0)} ignored={ftp_stats['ignored']} recovered={ftp_stats.get('recovered', 0)}) "
-            f"matcher(loaded={matcher_stats['loaded']} failed={matcher_stats['failed']} skipped_parsed={matcher_stats['skipped_parsed']}) "
-            f"parser(parsed_cached={parser_stats['parsed_cached']} rejected={parser_stats['rejected']} failed={parser_stats['failed']}) "
+            f"parser(parsed_cached={parser_stats['parsed_cached']} rejected={parser_stats['rejected']} "
+            f"failed={parser_stats['failed']} skipped_parsed={parser_stats['skipped_parsed']}) "
             f"restore(restored_maps={restore_stats['restored_maps']} restored_players={restore_stats['restored_players']} failed={restore_stats['failed']}) "
             f"players(imported={imported_players})"
         )
         self._log_stage("PIPELINE", summary)
         self.print_compact_demo_headers(demo_data)
         self._log_stage("PIPELINE", "Done")
-        self._emit_progress(100, "Pipeline completed", stage="pipeline")
+        self._emit_progress(100, "Done", stage="pipeline")
         return demo_data
 
     def run(self, on_complete=None, on_error=None):

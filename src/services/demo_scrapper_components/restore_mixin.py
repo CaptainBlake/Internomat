@@ -979,8 +979,8 @@ class DemoScrapperRestoreMixin:
                     percent = int(progress_start) + int((idx - 1) / total * span)
                     self._emit_progress(
                         percent,
-                        f"Restore {idx}/{total}: match={match_id} map={map_number}",
-                        stage="restore",
+                        f"Writing demo {idx}/{total}",
+                        stage="database",
                     )
 
                 try:
@@ -1048,8 +1048,8 @@ class DemoScrapperRestoreMixin:
                     percent = int(progress_start) + int((idx - 1) / total * span)
                     self._emit_progress(
                         percent,
-                        f"Restore (orphaned) {idx}/{total}: match={match_id} map={map_number}",
-                        stage="restore",
+                        f"Writing demo {idx}/{total}",
+                        stage="database",
                     )
 
                 try:
@@ -1130,7 +1130,7 @@ class DemoScrapperRestoreMixin:
                     )
 
         if progress_start is not None and progress_end is not None:
-            self._emit_progress(int(progress_end), "Restore completed", stage="restore")
+            self._emit_progress(int(progress_end), "Database updated", stage="database")
 
         self._log_stage(
             "RESTORE",

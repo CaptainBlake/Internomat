@@ -1,8 +1,5 @@
-from dataclasses import dataclass
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from queue import Queue
-from threading import Lock
 
 from awpy.demo import Demo
 import numpy as np
@@ -19,13 +16,9 @@ try:
 except Exception:
     awpy_stats = None
 
-
-@dataclass
-class LoadedDemoEntry:
-    file: Path
-    match_id: int
-    map_number: int
-    demo: Demo
+# Maximum concurrent demo workers.  Keeps peak RAM bounded (each awpy.Demo
+# object can consume 50-200 MB).
+_MAX_DEMO_WORKERS = 4
 
 
 class DemoScrapperParserLayer:
@@ -491,54 +484,108 @@ class DemoScrapperParserLayer:
         )
         return payload
 
-    def _matcher_worker(self, file, match_id, map_number):
-        """Worker task for parallel awpy demo parsing."""
-        try:
-            demo = self.parse_awpy_demo(file)
-            return {
-                "status": "ok",
-                "file": file,
-                "match_id": match_id,
-                "map_number": map_number,
-                "demo": demo,
-            }
-        except Exception as e:
-            return {
-                "status": "failed",
-                "file": file,
-                "filename": file.name,
-                "error": str(e),
-            }
+    def _unified_worker(self, file, match_id, map_number, conn_factory):
+        """
+        Single worker that handles the full lifecycle of one demo:
+        awpy parse → enrich → validate → save to disk cache.
 
-    def match_and_load_demos(self, progress_start=None, progress_end=None):
-        self.host._ensure_not_cancelled(stage="matcher")
+        The awpy.Demo object is created and released entirely within this
+        worker, so it never accumulates in a shared list.
+        """
+        filename = file.name
+        key = (match_id, map_number)
+        try:
+            # -- awpy parse --
+            demo = self.parse_awpy_demo(file)
+
+            # -- enrich --
+            self.host._log_stage("PARSER", f"PARSE {filename} match={match_id} map={map_number}")
+
+            data = self.host.parse_demo_full(demo)
+            data = self._inject_exact_restore_stats(demo, data)
+            data = self._inject_awpy_parser_outputs(demo, data)
+            data = self._inject_awpy_stats(demo, data)
+            data = self._enrich_with_awpy_extras(demo, data)
+            self._log_compact_payload_summary(filename, match_id, map_number, data)
+
+            # Release the heavy awpy Demo reference before DB / cache I/O.
+            del demo
+
+            # -- validate & cache --
+            with conn_factory() as conn:
+                if not self.host.validate_demo_players(match_id, map_number, data, conn=conn):
+                    logger.log_warning(
+                        f"[REJECTED] {filename} failed player validation for match={match_id}, map={map_number}"
+                    )
+                    return {"status": "rejected", "key": key, "filename": filename}
+
+                manifest = demo_cache.save_parsed_demo(
+                    cache_dir=self.host.parsed_demo_dir,
+                    match_id=match_id,
+                    map_number=map_number,
+                    data=data,
+                    source_file=file,
+                )
+
+                cached_data = demo_cache.load_parsed_demo(
+                    cache_dir=self.host.parsed_demo_dir,
+                    match_id=match_id,
+                    map_number=map_number,
+                )
+                self.host._verify_cached_roundtrip(match_id, map_number, data, cached_data)
+
+                set_match_has_demo(match_id=match_id, has_demo=True, conn=conn)
+
+            return {"status": "ok", "key": key, "value": manifest, "filename": filename}
+
+        except Exception as e:
+            return {"status": "error", "key": key, "filename": filename, "error": str(e)}
+
+    # ------------------------------------------------------------------
+    # Unified chunked pipeline  (replaces match_and_load_demos + build_demo_data)
+    # ------------------------------------------------------------------
+
+    def process_demos(self, progress_start=None, progress_end=None, max_demos=0):
+        """
+        Scan local demo files, filter already-cached entries, then parse +
+        enrich + cache in chunks of ``_MAX_DEMO_WORKERS`` demos at a time.
+
+        Parameters
+        ----------
+        max_demos : int
+            When > 0, cap the number of demos processed in this run.
+
+        Returns
+        -------
+        cache_manifest : dict
+            ``{(match_id, map_number): manifest_entry}`` for newly parsed demos.
+        stats : dict
+            Aggregated counters compatible with the old matcher_stats / parser_stats
+            shape so the caller does not need to change.
+        """
+        self.host._ensure_not_cancelled(stage="parser")
 
         demo_files = IOManager.list_files(self.host.demo_dir, ".dem")
         parsed_sources = IOManager.list_parsed_demo_sources(self.host.parsed_demo_dir)
 
         self.host._log_stage(
-            "MATCHER",
+            "PARSER",
             f"Found normalized_demos={len(demo_files)} cached_entries={len(parsed_sources)}",
         )
 
-        results = []
-        failed = []
+        # -- 1. Classify files into work-items vs already-cached -------
+        work_items = []          # (file, match_id, map_number)
         skipped_parsed = 0
         skipped_parsed_entries = []
-        total_files = max(1, len(demo_files))
 
-        # Separate work items into to-load and to-skip
-        work_items = []  # (idx, file, match_id, map_number) for parsing
-        idx_offset = 0
-
-        for idx, file in enumerate(demo_files, start=1):
+        for file in demo_files:
             match_id, map_number = self.host.extract_ids_from_normalized(file.name)
             if match_id is None or map_number is None:
-                self.host._log_stage("MATCHER", f"Invalid normalized file {file.name}", level="ERROR")
+                self.host._log_stage("PARSER", f"Invalid normalized file {file.name}", level="ERROR")
                 continue
 
             if file.name in parsed_sources:
-                self.host._log_stage("MATCHER", f"SKIP parsed {file.name}", level="DEBUG")
+                self.host._log_stage("PARSER", f"SKIP parsed {file.name}", level="DEBUG")
                 skipped_parsed += 1
                 skipped_parsed_entries.append(
                     {
@@ -550,210 +597,114 @@ class DemoScrapperParserLayer:
                 )
                 continue
 
-            self.host._log_stage("MATCHER", f"LOAD {file.name} match={match_id} map={map_number}")
-            work_items.append((idx, file, match_id, map_number))
+            self.host._log_stage("PARSER", f"QUEUE {file.name} match={match_id} map={map_number}")
+            work_items.append((file, match_id, map_number))
 
-        # Process work items in parallel
-        num_workers = min(8, max(1, len(work_items)))
-        completed_count = [0]  # Mutable counter for progress tracking
-        lock = Lock()
+        # Apply optional demo cap before chunking.
+        max_demos = int(max_demos or 0)
+        if max_demos > 0 and len(work_items) > max_demos:
+            self.host._log_stage(
+                "PARSER",
+                f"Apply demo cap max_demos={max_demos} queued_before={len(work_items)} queued_after={max_demos}",
+                level="INFO",
+            )
+            work_items = work_items[:max_demos]
 
-        with ThreadPoolExecutor(max_workers=num_workers) as executor:
-            futures = {
-                executor.submit(self._matcher_worker, file, match_id, map_number): (idx, file)
-                for idx, file, match_id, map_number in work_items
-            }
+        # -- 2. Chunked parallel processing ----------------------------
+        cache_manifest = {}
+        failed = 0
+        rejected = 0
+        failed_files = []
 
-            for future in as_completed(futures):
-                self.host._ensure_not_cancelled(stage="matcher")
+        total_work = len(work_items)
+        completed_total = 0
 
-                idx, file = futures[future]
-                completed_count[0] += 1
+        def conn_factory():
+            return get_conn(db_file=self.host.db_file)
 
-                if progress_start is not None and progress_end is not None:
-                    span = max(0, int(progress_end) - int(progress_start))
-                    progress_pct = int((completed_count[0] / max(1, len(work_items))) * 100)
-                    progress_val = int(progress_start) + int((completed_count[0] / max(1, len(work_items))) * span)
-                    self.host._emit_progress(
-                        progress_val,
-                        f"Matcher {completed_count[0]}/{len(work_items)}: {file.name} ({progress_pct}%)",
-                        stage="matcher",
-                    )
+        chunk_size = _MAX_DEMO_WORKERS
+        chunks = [
+            work_items[i : i + chunk_size]
+            for i in range(0, max(1, total_work), chunk_size)
+        ] if work_items else []
 
-                try:
-                    result = future.result()
-                    if result["status"] == "ok":
-                        results.append(result)
-                    else:
-                        self.host._log_stage("MATCHER", f"FAILED {result['filename']}: {result['error']}", level="ERROR")
-                        failed.append(result["filename"])
-                except Exception as e:
-                    self.host._log_stage("MATCHER", f"FAILED {file.name}: {e}", level="ERROR")
-                    failed.append(file.name)
+        for chunk in chunks:
+            self.host._ensure_not_cancelled(stage="parser")
 
+            num_workers = min(_MAX_DEMO_WORKERS, len(chunk))
+
+            with ThreadPoolExecutor(max_workers=num_workers) as pool:
+                futures = {
+                    pool.submit(
+                        self._unified_worker, file, mid, mnum, conn_factory,
+                    ): (file, mid, mnum)
+                    for file, mid, mnum in chunk
+                }
+
+                for future in as_completed(futures):
+                    self.host._ensure_not_cancelled(stage="parser")
+
+                    file, mid, mnum = futures[future]
+                    completed_total += 1
+
+                    if progress_start is not None and progress_end is not None:
+                        span = max(0, int(progress_end) - int(progress_start))
+                        pct = int((completed_total / max(1, total_work)) * 100)
+                        val = int(progress_start) + int((completed_total / max(1, total_work)) * span)
+                        self.host._emit_progress(
+                            val,
+                            f"Processing demo {completed_total}/{total_work}",
+                            stage="parser",
+                        )
+
+                    try:
+                        result = future.result()
+                        if result["status"] == "rejected":
+                            rejected += 1
+                            self.host._log_stage("PARSER", f"REJECTED {result['filename']}", level="DEBUG")
+                        elif result["status"] == "ok":
+                            cache_manifest[result["key"]] = result["value"]
+                        else:
+                            failed += 1
+                            failed_files.append(result["filename"])
+                            self.host._log_stage(
+                                "PARSER",
+                                f"FAILED {result['filename']}: {result.get('error', 'unknown')}",
+                                level="ERROR",
+                            )
+                    except Exception as e:
+                        failed += 1
+                        failed_files.append(file.name)
+                        self.host._log_stage("PARSER", f"FAILED {file.name}: {e}", level="ERROR")
+
+            # ThreadPoolExecutor context exits here → worker threads join →
+            # all awpy.Demo references from this chunk are freed.
+
+        # -- 3. Summary ------------------------------------------------
         self.host._log_stage(
-            "MATCHER",
-            f"Summary loaded={len(results)} failed={len(failed)} skipped_parsed={skipped_parsed}",
+            "PARSER",
+            (
+                f"Summary parsed_cached={len(cache_manifest)} rejected={rejected} "
+                f"failed={failed} skipped_parsed={skipped_parsed}"
+            ),
         )
 
-        if failed:
-            self.host._log_stage("MATCHER", "Failed demos list follows", level="ERROR")
-            for failed_demo in failed:
-                self.host._log_stage("MATCHER", failed_demo, level="ERROR")
+        if failed_files:
+            self.host._log_stage("PARSER", "Failed demos list follows", level="ERROR")
+            for name in failed_files:
+                self.host._log_stage("PARSER", name, level="ERROR")
 
         if progress_start is not None and progress_end is not None:
-            self.host._emit_progress(int(progress_end), "Matcher completed", stage="matcher")
+            self.host._emit_progress(int(progress_end), "Demos processed", stage="parser")
 
-        return results, {
-            "loaded": len(results),
-            "failed": len(failed),
-            "failed_files": failed,
+        return cache_manifest, {
+            # Merged matcher + parser stats under one dict.
+            "parsed_cached": len(cache_manifest),
+            "rejected": rejected,
+            "failed": failed,
+            "failed_files": failed_files,
             "skipped_parsed": skipped_parsed,
             "skipped_parsed_entries": skipped_parsed_entries,
             "normalized_files": len(demo_files),
             "cached_entries": len(parsed_sources),
-        }
-
-    def _parse_single_entry(self, entry, conn):
-        match_id = entry["match_id"]
-        map_number = entry["map_number"]
-        demo = entry["demo"]
-        filename = entry["file"].name
-
-        key = (match_id, map_number)
-
-        self.host._log_stage("PARSER", f"PARSE {filename} match={match_id} map={map_number}")
-
-        data = self.host.parse_demo_full(demo)
-        data = self._inject_exact_restore_stats(demo, data)
-        data = self._inject_awpy_parser_outputs(demo, data)
-        data = self._inject_awpy_stats(demo, data)
-        data = self._enrich_with_awpy_extras(demo, data)
-        self._log_compact_payload_summary(filename, match_id, map_number, data)
-
-        if not self.host.validate_demo_players(match_id, map_number, data, conn=conn):
-            logger.log_warning(
-                f"[REJECTED] {filename} failed player validation for match={match_id}, map={map_number}"
-            )
-            return "rejected", key, filename
-
-        manifest = demo_cache.save_parsed_demo(
-            cache_dir=self.host.parsed_demo_dir,
-            match_id=match_id,
-            map_number=map_number,
-            data=data,
-            source_file=entry["file"],
-        )
-
-        cached_data = demo_cache.load_parsed_demo(
-            cache_dir=self.host.parsed_demo_dir,
-            match_id=match_id,
-            map_number=map_number,
-        )
-        self.host._verify_cached_roundtrip(match_id, map_number, data, cached_data)
-
-        set_match_has_demo(match_id=match_id, has_demo=True, conn=conn)
-
-        return "ok", key, manifest
-
-    def _parser_worker(self, entry, conn_factory):
-        """Worker task for parallel payload enrichment."""
-        try:
-            with conn_factory() as conn:
-                status, key, value = self._parse_single_entry(entry, conn)
-                return {
-                    "status": status,
-                    "key": key,
-                    "value": value,
-                    "filename": entry["file"].name,
-                }
-        except Exception as e:
-            return {
-                "status": "error",
-                "filename": entry["file"].name,
-                "error": str(e),
-            }
-
-    def build_demo_data(self, matched, progress_start=None, progress_end=None):
-        """
-        Parse matched awpy demo entries, validate, and cache payloads.
-
-        This is the app-layer parsing stage and is intentionally isolated from
-        the sync/download flow so it can later be reused without demo files.
-        """
-        self.host._ensure_not_cancelled(stage="parser")
-
-        cache_manifest = {}
-        failed = 0
-        rejected = 0
-
-        self.host._log_stage("PARSER", "Building structured datasets")
-
-        total_entries = max(1, len(matched))
-
-        # Factory for per-worker connections (each thread gets its own conn)
-        def conn_factory():
-            return get_conn(db_file=self.host.db_file)
-
-        # Process entries in parallel
-        num_workers = min(8, max(1, len(matched)))
-        completed_count = [0]
-        lock = Lock()
-
-        with ThreadPoolExecutor(max_workers=num_workers) as executor:
-            futures = {
-                executor.submit(self._parser_worker, entry, conn_factory): entry
-                for entry in matched
-            }
-
-            for future in as_completed(futures):
-                self.host._ensure_not_cancelled(stage="parser")
-
-                entry = futures[future]
-                completed_count[0] += 1
-
-                if progress_start is not None and progress_end is not None:
-                    span = max(0, int(progress_end) - int(progress_start))
-                    progress_pct = int((completed_count[0] / max(1, total_entries)) * 100)
-                    progress_val = int(progress_start) + int((completed_count[0] / max(1, total_entries)) * span)
-                    self.host._emit_progress(
-                        progress_val,
-                        f"Parser {completed_count[0]}/{total_entries}: {entry['file'].name} ({progress_pct}%)",
-                        stage="parser",
-                    )
-
-                try:
-                    result = future.result()
-                    if result["status"] == "rejected":
-                        rejected += 1
-                        self.host._log_stage(
-                            "PARSER",
-                            f"REJECTED {result['filename']}",
-                            level="DEBUG",
-                        )
-                    elif result["status"] == "ok":
-                        cache_manifest[result["key"]] = result["value"]
-                    else:  # error
-                        failed += 1
-                        self.host._log_stage(
-                            "PARSER",
-                            f"FAILED {result['filename']}: {result.get('error', 'unknown')}",
-                            level="ERROR",
-                        )
-                except Exception as e:
-                    failed += 1
-                    self.host._log_stage("PARSER", f"FAILED {entry['file'].name}: {e}", level="ERROR")
-
-        self.host._log_stage(
-            "PARSER",
-            f"Summary parsed_cached={len(cache_manifest)} rejected={rejected} failed={failed}",
-        )
-
-        if progress_start is not None and progress_end is not None:
-            self.host._emit_progress(int(progress_end), "Parser completed", stage="parser")
-
-        return cache_manifest, {
-            "parsed_cached": len(cache_manifest),
-            "rejected": rejected,
-            "failed": failed,
         }

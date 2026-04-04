@@ -780,12 +780,12 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         sync_demos_button.setEnabled(False)
 
         dialog = PipelineProgressDialog("Demo Sync Progress", "Syncing demos ({stage})", parent)
-        dialog.update_status({"percent": 0, "stage": "matchzy", "message": "Starting MatchZy sync..."})
+        dialog.update_status({"percent": 0, "stage": "matchzy", "message": "Syncing MatchZy..."})
         cancel_state = {"requested": False}
 
         def _request_cancel():
             cancel_state["requested"] = True
-            dialog.update_status({"stage": "pipeline", "message": "Cancelling sync..."})
+            dialog.update_status({"stage": "pipeline", "message": "Cancelling..."})
 
         dialog.set_running(True)
         dialog.set_cancel_handler(_request_cancel)
@@ -797,7 +797,7 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         def worker():
             try:
                 dispatcher.demos_sync_progress.emit(
-                    {"percent": 5, "stage": "matchzy", "message": "Syncing MatchZy database..."}
+                    {"percent": 5, "stage": "matchzy", "message": "Syncing MatchZy..."}
                 )
                 sync()
 
@@ -805,7 +805,7 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
                     raise DemoSyncCancelled("Sync cancelled by user")
 
                 dispatcher.demos_sync_progress.emit(
-                    {"percent": 15, "stage": "matchzy", "message": "MatchZy sync completed. Starting demos..."}
+                    {"percent": 15, "stage": "matchzy", "message": "MatchZy synced. Starting demos..."}
                 )
 
                 integration = DemoScrapperIntegration(
@@ -857,12 +857,12 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         sync_demos_button.setEnabled(False)
 
         dialog = PipelineProgressDialog("Demo Sync Progress", "Syncing demos ({stage})", parent)
-        dialog.update_status({"percent": 0, "stage": "pipeline", "message": "Starting pipeline..."})
+        dialog.update_status({"percent": 0, "stage": "pipeline", "message": "Starting..."})
         cancel_state = {"requested": False}
 
         def _request_cancel():
             cancel_state["requested"] = True
-            dialog.update_status({"stage": "pipeline", "message": "Cancelling sync..."})
+            dialog.update_status({"stage": "pipeline", "message": "Cancelling..."})
 
         dialog.set_running(True)
         dialog.set_cancel_handler(_request_cancel)
@@ -945,7 +945,7 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         dialog = demo_sync_progress_dialog.get("dialog")
         if dialog is not None:
             dialog.set_running(False)
-            dialog.update_status({"percent": 100, "stage": "pipeline", "message": "Pipeline completed."})
+            dialog.update_status({"percent": 100, "stage": "pipeline", "message": "Done"})
 
             def _close_dialog_later():
                 current = demo_sync_progress_dialog.get("dialog")
@@ -1001,7 +1001,7 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         dialog = demo_sync_progress_dialog.get("dialog")
         if dialog is not None:
             dialog.set_running(False)
-            dialog.update_status({"stage": "pipeline", "message": "Sync cancelled by user."})
+            dialog.update_status({"stage": "pipeline", "message": "Cancelled"})
             dialog.allow_close_once()
             dialog.close()
             demo_sync_progress_dialog["dialog"] = None

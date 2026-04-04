@@ -641,9 +641,8 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
             mapped_percent = 20 + max(0, min(50, int(base_percent * 0.5)))
             dispatcher.update_pipeline_progress.emit({
                 "percent": mapped_percent,
-                "stage": "demos",
-                "message": str((payload or {}).get("message") or "Pulling demos..."),
-                "file_percent": (payload or {}).get("file_percent"),
+                "stage": str((payload or {}).get("stage") or "demos"),
+                "message": str((payload or {}).get("message") or "Syncing demos..."),
             })
 
         def _emit_players_progress(i, t):
@@ -655,23 +654,23 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
             dispatcher.update_pipeline_progress.emit({
                 "percent": max(70, min(100, mapped_percent)),
                 "stage": "players",
-                "message": f"Fetching player stats {i}/{t}",
+                "message": f"Updating player {i}/{t}",
             })
 
         def worker():
             try:
                 if include_demo_pull:
                     dispatcher.update_pipeline_progress.emit(
-                        {"percent": 0, "stage": "matchzy", "message": "Syncing MatchZy database..."}
+                        {"percent": 0, "stage": "matchzy", "message": "Syncing MatchZy..."}
                     )
                     sync()
                     dispatcher.update_pipeline_progress.emit(
-                        {"percent": 20, "stage": "matchzy", "message": "MatchZy sync completed."}
+                        {"percent": 20, "stage": "matchzy", "message": "MatchZy synced"}
                     )
 
                     logger.log("[UPDATE] Pull demos before player update", level="INFO")
                     dispatcher.update_pipeline_progress.emit(
-                        {"percent": 20, "stage": "demos", "message": "Pulling demos..."}
+                        {"percent": 20, "stage": "ftp", "message": "Syncing demos..."}
                     )
                     integration = DemoScrapperIntegration(
                         ftp_host=settings.demo_ftp_host,
@@ -684,7 +683,7 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
                     integration.run_sync()
                 else:
                     dispatcher.update_pipeline_progress.emit(
-                        {"percent": 70, "stage": "pipeline", "message": "MatchZy/demo sync skipped (already synced)."}
+                        {"percent": 70, "stage": "pipeline", "message": "Skipped (already synced)"}
                     )
 
                 steam_ids = player_service.get_players_to_update() or []
@@ -707,8 +706,8 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
             show_info("Update", "Update already running")
             return
 
-        dialog = PipelineProgressDialog("Update Progress", "Updating pipeline ({stage})", parent)
-        dialog.update_status({"percent": 0, "stage": "pipeline", "message": "Starting update pipeline..."})
+        dialog = PipelineProgressDialog("Update Progress", "Updating... hold your quack!", parent)
+        dialog.update_status({"percent": 0, "stage": "pipeline", "message": "Starting..."})
         dialog.set_running(True)
         dialog.show()
         dialog.raise_()
