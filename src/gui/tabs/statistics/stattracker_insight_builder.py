@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QVBoxLayout,
@@ -23,6 +24,17 @@ def _normalize_category(category):
     if value.endswith("s") and len(value) > 3:
         value = value[:-1]
     return value or "unknown"
+
+
+def _category_display_label(category):
+    value = _normalize_category(category)
+    if value == "all":
+        return "All Categories"
+    if value == "smg":
+        return "SMGs"
+    if value in {"rifle", "pistol", "heavy", "utility", "melee"}:
+        return f"{value.title()}s"
+    return value.title()
 
 
 def _category_matches(left, right):
@@ -288,9 +300,42 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
     main_view = str(getattr(parent, "_stattracker_main_view", "weapons") or "weapons")
     is_timeline = bool(getattr(parent, "_stattracker_timeline", False))
 
-    # --- Single unified filter row ---
+    # --- Grouped control rows (inspired by analytics tools like Grafana/Superset) ---
+    controls_card = QFrame()
+    controls_card.setStyleSheet(
+        "QFrame {"
+        "background: rgba(255, 255, 255, 0.78);"
+        "border: 1px solid #D5E0EA;"
+        "border-radius: 10px;"
+        "}"
+        "QFrame QComboBox {"
+        "background: #F2F6FA;"
+        "border: 1px solid #1C1C1C;"
+        "border-radius: 6px;"
+        "padding: 2px 22px 2px 8px;"
+        "color: #21443C;"
+        "min-height: 22px;"
+        "}"
+        "QFrame QComboBox::drop-down {"
+        "border: none;"
+        "width: 18px;"
+        "}"
+        "QFrame QComboBox QAbstractItemView {"
+        "background: #FFFFFF;"
+        "border: 1px solid #1C1C1C;"
+        "selection-background-color: #DBE5EE;"
+        "selection-color: #21443C;"
+        "}"
+    )
+    controls_layout = QVBoxLayout(controls_card)
+    controls_layout.setContentsMargins(10, 8, 10, 8)
+    controls_layout.setSpacing(6)
+
     insight_row = QHBoxLayout()
-    insight_row.setSpacing(8)
+    insight_row.setSpacing(10)
+    advanced_row = QHBoxLayout()
+    advanced_row.setSpacing(10)
+    has_advanced_controls = False
 
     # [1] View toggle: Weapons / Maps
     view_combo = QComboBox()
@@ -304,6 +349,7 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
         parent._stattracker_main_view = main_view
     view_combo.setCurrentIndex(idx)
     view_combo.currentIndexChanged.connect(lambda _i: _on_main_view_changed(parent, view_combo))
+    insight_row.addWidget(QLabel("View:"))
     insight_row.addWidget(view_combo)
 
     # [2] Category filter (weapons only, both modes)
@@ -311,13 +357,14 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
         category_combo = QComboBox()
         categories = stattracker.get_player_weapon_categories(selected_sid) if selected_sid else ["all"]
         for category in categories:
-            label = "All Categories" if category == "all" else category.title()
+            label = _category_display_label(category)
             category_combo.addItem(label, category)
         cidx = category_combo.findData(selected_category)
         if cidx < 0:
             cidx = 0
         category_combo.setCurrentIndex(cidx)
         category_combo.currentIndexChanged.connect(lambda _i: _on_weapon_category_changed(parent, category_combo))
+        insight_row.addWidget(QLabel("Category:"))
         insight_row.addWidget(category_combo)
 
     # [3] Item selector – single-select QComboBox (table) or multi-select _CheckableCombo (timeline)
@@ -351,6 +398,7 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
             item_multi._update_display_text()
             item_multi._model.dataChanged.connect(lambda *_: _on_timeline_selection_changed(parent))
             parent._stattracker_timeline_combo = item_multi
+            insight_row.addWidget(QLabel("Items:"))
             insight_row.addWidget(item_multi)
         else:
             item_single = QComboBox()
@@ -374,6 +422,7 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
             item_single.setCurrentIndex(idx_item)
             item_single.currentIndexChanged.connect(lambda _i: _on_timeline_item_single_changed(parent, item_single))
             parent._stattracker_timeline_combo = item_single
+            insight_row.addWidget(QLabel("Item:"))
             insight_row.addWidget(item_single)
     else:
         parent._stattracker_timeline_combo = None
@@ -388,6 +437,7 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
                 widx = 0
             weapon_combo.setCurrentIndex(widx)
             weapon_combo.currentIndexChanged.connect(lambda _i: _on_weapon_selected_changed(parent, weapon_combo))
+            insight_row.addWidget(QLabel("Weapon:"))
             insight_row.addWidget(weapon_combo)
             parent._stattracker_weapon_combo = weapon_combo
         else:
@@ -400,6 +450,7 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
                 midx = 0
             map_combo.setCurrentIndex(midx)
             map_combo.currentIndexChanged.connect(lambda _i: _on_map_selected_changed(parent, map_combo))
+            insight_row.addWidget(QLabel("Map:"))
             insight_row.addWidget(map_combo)
             parent._stattracker_map_combo = map_combo
 
@@ -451,8 +502,9 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
             parent._stattracker_chart_mode = "line"
         chart_mode_combo.setCurrentIndex(chart_mode_idx)
         chart_mode_combo.currentIndexChanged.connect(lambda _i: _on_chart_mode_changed(parent, chart_mode_combo))
-        insight_row.addWidget(QLabel("Display:"))
-        insight_row.addWidget(chart_mode_combo)
+        advanced_row.addWidget(QLabel("Display:"))
+        advanced_row.addWidget(chart_mode_combo)
+        has_advanced_controls = True
 
         scale_combo = QComboBox()
         scale_combo.setMinimumWidth(130)
@@ -477,13 +529,17 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
             model.item(tick_idx).setEnabled(False)
 
         scale_combo.currentIndexChanged.connect(lambda _i: _on_timeline_scale_changed(parent, scale_combo))
-        insight_row.addWidget(QLabel("Scale:"))
-        insight_row.addWidget(scale_combo)
+        supports_scale = main_view in {"movement", "weapons"}
+        scale_label = QLabel("Scale:")
+        scale_label.setVisible(supports_scale)
+        scale_combo.setVisible(supports_scale)
+        advanced_row.addWidget(scale_label)
+        advanced_row.addWidget(scale_combo)
 
         window_combo = QComboBox()
         window_combo.setMinimumWidth(120)
-        window_combo.addItem("ALL", "all")
-        window_combo.addItem("From -> To", "range")
+        window_combo.addItem("All Data", "all")
+        window_combo.addItem("Custom Span", "range")
         window_mode = str(getattr(parent, "_stattracker_timeline_window_mode", "all") or "all")
         window_idx = window_combo.findData(window_mode)
         if window_idx < 0:
@@ -491,8 +547,9 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
             parent._stattracker_timeline_window_mode = "all"
         window_combo.setCurrentIndex(window_idx)
         window_combo.currentIndexChanged.connect(lambda _i: _on_timeline_window_mode_changed(parent, window_combo))
-        insight_row.addWidget(QLabel("Window:"))
-        insight_row.addWidget(window_combo)
+        range_mode_label = QLabel("Range:")
+        advanced_row.addWidget(range_mode_label)
+        advanced_row.addWidget(window_combo)
 
         labels = list(getattr(parent, "_stattracker_timeline_axis_labels", []) or [])
         combo_from = QComboBox()
@@ -518,16 +575,26 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
 
         combo_from.currentIndexChanged.connect(lambda _i: _on_timeline_range_changed(parent, combo_from, combo_to))
         combo_to.currentIndexChanged.connect(lambda _i: _on_timeline_range_changed(parent, combo_from, combo_to))
-        combo_from.setEnabled(window_mode == "range")
-        combo_to.setEnabled(window_mode == "range")
-        insight_row.addWidget(QLabel("From:"))
-        insight_row.addWidget(combo_from)
-        insight_row.addWidget(QLabel("To:"))
-        insight_row.addWidget(combo_to)
+        show_range_bounds = window_mode == "range"
+        combo_from.setEnabled(show_range_bounds)
+        combo_to.setEnabled(show_range_bounds)
+        from_label = QLabel("From:")
+        to_label = QLabel("To:")
+        from_label.setVisible(show_range_bounds)
+        combo_from.setVisible(show_range_bounds)
+        to_label.setVisible(show_range_bounds)
+        combo_to.setVisible(show_range_bounds)
+        advanced_row.addWidget(from_label)
+        advanced_row.addWidget(combo_from)
+        advanced_row.addWidget(to_label)
+        advanced_row.addWidget(combo_to)
 
         parent._stattracker_range_from_combo = combo_from
         parent._stattracker_range_to_combo = combo_to
         parent._stattracker_range_window_combo = window_combo
+        parent._stattracker_range_from_label = from_label
+        parent._stattracker_range_to_label = to_label
+        parent._stattracker_range_window_label = range_mode_label
 
         if main_view == "weapons":
             group_combo = QComboBox()
@@ -540,17 +607,19 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
                 parent._stattracker_group_mode = "weapon"
             group_combo.setCurrentIndex(group_idx)
             group_combo.currentIndexChanged.connect(lambda _i: _on_group_mode_changed(parent, group_combo))
-            insight_row.addWidget(QLabel("Group by:"))
-            insight_row.addWidget(group_combo)
+            advanced_row.addWidget(QLabel("Group by:"))
+            advanced_row.addWidget(group_combo)
 
         compare_combo = QComboBox()
         compare_combo.setMinimumWidth(160)
         compare_combo.addItem("none", "")
         player_options = getattr(parent, "_stattracker_player_options", []) or []
+        has_compare_candidates = False
         for opt in player_options:
             sid_opt = str(opt.get("steamid64") or "")
             if sid_opt and sid_opt != str(selected_sid or ""):
                 compare_combo.addItem(str(opt.get("player_name") or sid_opt), sid_opt)
+            has_compare_candidates = True
 
         compare_sid = str(getattr(parent, "_stattracker_compare_player", "") or "")
         compare_idx = compare_combo.findData(compare_sid)
@@ -559,8 +628,9 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
             parent._stattracker_compare_player = ""
         compare_combo.setCurrentIndex(compare_idx)
         compare_combo.currentIndexChanged.connect(lambda _i: _on_compare_player_changed(parent, compare_combo))
-        insight_row.addWidget(QLabel("Compare to player:"))
-        insight_row.addWidget(compare_combo)
+        if has_compare_candidates:
+            advanced_row.addWidget(QLabel("Compare:"))
+            advanced_row.addWidget(compare_combo)
     else:
         parent._stattracker_metric_combo = None
 
@@ -581,25 +651,34 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
             "background: rgba(245, 249, 252, 0.4); border: 1px solid #D5E0EA; "
             "border-radius: 6px; padding: 4px 8px;"
         )
-        insight_row.addWidget(best_badge)
-        insight_row.addWidget(worst_badge)
+        advanced_row.addWidget(best_badge)
+        advanced_row.addWidget(worst_badge)
+        has_advanced_controls = True
 
     # [6] Timeline toggle (always visible, right-aligned)
     insight_row.addStretch(1)
+    advanced_row.addStretch(1)
     if is_timeline:
         multi_cb = QCheckBox("Multi-select")
         multi_cb.setChecked(timeline_multi)
         multi_cb.setStyleSheet("font-size: 11px; font-weight: 700;")
         multi_cb.toggled.connect(lambda checked: _on_timeline_multi_toggled(parent, checked))
-        insight_row.addWidget(multi_cb)
+        advanced_row.addWidget(multi_cb)
+        has_advanced_controls = True
 
     table_cb = QCheckBox("Table View")
     table_cb.setChecked(not is_timeline)
     table_cb.setStyleSheet("font-size: 11px; font-weight: 700;")
     table_cb.toggled.connect(lambda checked: _on_timeline_toggled(parent, not checked))
-    insight_row.addWidget(table_cb)
+    if has_advanced_controls:
+        advanced_row.addWidget(table_cb)
+    else:
+        insight_row.addWidget(table_cb)
 
-    layout.addLayout(insight_row)
+    controls_layout.addLayout(insight_row)
+    if has_advanced_controls:
+        controls_layout.addLayout(advanced_row)
+    layout.addWidget(controls_card)
     layout.addSpacing(8)
 
     # --- Content title ---

@@ -209,12 +209,15 @@ def upsert_player_map_movement_stats_many(rows, conn=None):
             strafe_ratio,
             stationary_ticks,
             sprint_ticks,
+            camp_time_s,
+            sprint_time_s,
             stationary_ratio,
             sprint_ratio,
             strafe_ticks,
+            strafe_time_s,
             updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(steamid64, match_id, map_number) DO UPDATE SET
             total_distance_units = excluded.total_distance_units,
             total_distance_m = excluded.total_distance_m,
@@ -229,9 +232,12 @@ def upsert_player_map_movement_stats_many(rows, conn=None):
             strafe_ratio = excluded.strafe_ratio,
             stationary_ticks = excluded.stationary_ticks,
             sprint_ticks = excluded.sprint_ticks,
+            camp_time_s = excluded.camp_time_s,
+            sprint_time_s = excluded.sprint_time_s,
             stationary_ratio = excluded.stationary_ratio,
             sprint_ratio = excluded.sprint_ratio,
             strafe_ticks = excluded.strafe_ticks,
+            strafe_time_s = excluded.strafe_time_s,
             updated_at = excluded.updated_at
     """
 
@@ -253,9 +259,12 @@ def upsert_player_map_movement_stats_many(rows, conn=None):
             float(row.get("strafe_ratio") or 0.0),
             int(row.get("stationary_ticks") or 0),
             int(row.get("sprint_ticks") or 0),
+            float(row.get("camp_time_s") or 0.0),
+            float(row.get("sprint_time_s") or 0.0),
             float(row.get("stationary_ratio") or 0.0),
             float(row.get("sprint_ratio") or 0.0),
             int(row.get("strafe_ticks") or 0),
+            float(row.get("strafe_time_s") or 0.0),
             str(row.get("updated_at") or ""),
         )
         for row in rows
@@ -292,11 +301,14 @@ def upsert_player_round_movement_stats_many(rows, conn=None):
             ticks_alive,
             alive_seconds,
             stationary_ticks,
+            camp_time_s,
             sprint_ticks,
+            sprint_time_s,
             strafe_ticks,
+            strafe_time_s,
             updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(steamid64, match_id, map_number, round_num) DO UPDATE SET
             side = excluded.side,
             distance_units = excluded.distance_units,
@@ -309,8 +321,11 @@ def upsert_player_round_movement_stats_many(rows, conn=None):
             ticks_alive = excluded.ticks_alive,
             alive_seconds = excluded.alive_seconds,
             stationary_ticks = excluded.stationary_ticks,
+            camp_time_s = excluded.camp_time_s,
             sprint_ticks = excluded.sprint_ticks,
+            sprint_time_s = excluded.sprint_time_s,
             strafe_ticks = excluded.strafe_ticks,
+            strafe_time_s = excluded.strafe_time_s,
             updated_at = excluded.updated_at
     """
 
@@ -331,8 +346,11 @@ def upsert_player_round_movement_stats_many(rows, conn=None):
             int(row.get("ticks_alive") or 0),
             float(row.get("alive_seconds") or 0.0),
             int(row.get("stationary_ticks") or 0),
+            float(row.get("camp_time_s") or 0.0),
             int(row.get("sprint_ticks") or 0),
+            float(row.get("sprint_time_s") or 0.0),
             int(row.get("strafe_ticks") or 0),
+            float(row.get("strafe_time_s") or 0.0),
             str(row.get("updated_at") or ""),
         )
         for row in rows
@@ -519,12 +537,57 @@ def fetch_player_movement_match_series(steamid64, maps=None):
                 COALESCE(pmms.distance_per_round_units, 0) AS distance_per_round_units,
                 COALESCE(pmms.freeze_distance_units, 0) AS freeze_distance_units,
                 COALESCE(pmms.strafe_distance_units, 0) AS strafe_distance_units,
-                COALESCE(pmms.strafe_ratio, 0) AS strafe_ratio,
                 COALESCE(pmms.stationary_ticks, 0) AS stationary_ticks,
                 COALESCE(pmms.sprint_ticks, 0) AS sprint_ticks,
-                COALESCE(pmms.stationary_ratio, 0) AS stationary_ratio,
-                COALESCE(pmms.sprint_ratio, 0) AS sprint_ratio,
-                COALESCE(pmms.strafe_ticks, 0) AS strafe_ticks
+                CASE
+                    WHEN COALESCE(pmms.camp_time_s, 0) > 0
+                    THEN pmms.camp_time_s
+                    ELSE COALESCE(pmms.stationary_ratio, 0) * COALESCE(pmms.alive_seconds, 0)
+                END AS camp_time_s,
+                CASE
+                    WHEN COALESCE(pmms.sprint_time_s, 0) > 0
+                    THEN pmms.sprint_time_s
+                    ELSE COALESCE(pmms.sprint_ratio, 0) * COALESCE(pmms.alive_seconds, 0)
+                END AS sprint_time_s,
+                CASE
+                    WHEN COALESCE(pmms.alive_seconds, 0) > 0
+                    THEN (
+                        CASE
+                            WHEN COALESCE(pmms.camp_time_s, 0) > 0
+                            THEN pmms.camp_time_s
+                            ELSE COALESCE(pmms.stationary_ratio, 0) * pmms.alive_seconds
+                        END
+                    ) / pmms.alive_seconds
+                    ELSE COALESCE(pmms.stationary_ratio, 0)
+                END AS stationary_ratio,
+                CASE
+                    WHEN COALESCE(pmms.alive_seconds, 0) > 0
+                    THEN (
+                        CASE
+                            WHEN COALESCE(pmms.sprint_time_s, 0) > 0
+                            THEN pmms.sprint_time_s
+                            ELSE COALESCE(pmms.sprint_ratio, 0) * pmms.alive_seconds
+                        END
+                    ) / pmms.alive_seconds
+                    ELSE COALESCE(pmms.sprint_ratio, 0)
+                END AS sprint_ratio,
+                COALESCE(pmms.strafe_ticks, 0) AS strafe_ticks,
+                CASE
+                    WHEN COALESCE(pmms.strafe_time_s, 0) > 0
+                    THEN pmms.strafe_time_s
+                    ELSE COALESCE(pmms.strafe_ratio, 0) * COALESCE(pmms.alive_seconds, 0)
+                END AS strafe_time_s,
+                CASE
+                    WHEN COALESCE(pmms.alive_seconds, 0) > 0
+                    THEN (
+                        CASE
+                            WHEN COALESCE(pmms.strafe_time_s, 0) > 0
+                            THEN pmms.strafe_time_s
+                            ELSE COALESCE(pmms.strafe_ratio, 0) * pmms.alive_seconds
+                        END
+                    ) / pmms.alive_seconds
+                    ELSE COALESCE(pmms.strafe_ratio, 0)
+                END AS strafe_ratio
             FROM player_map_movement_stats pmms
             LEFT JOIN match_maps mm
               ON mm.match_id = pmms.match_id AND mm.map_number = pmms.map_number
@@ -572,20 +635,69 @@ def fetch_player_movement_round_series(steamid64, maps=None):
                 COALESCE(prms.ticks_alive, 0) AS ticks_alive,
                 COALESCE(prms.alive_seconds, 0) AS alive_seconds,
                 COALESCE(prms.strafe_distance_units, 0) AS strafe_distance_units,
-                COALESCE(prms.strafe_ratio, 0) AS strafe_ratio,
+                CASE
+                    WHEN COALESCE(prms.alive_seconds, 0) > 0
+                    THEN (
+                        CASE
+                            WHEN COALESCE(prms.strafe_time_s, 0) > 0
+                            THEN prms.strafe_time_s
+                            WHEN COALESCE(prms.ticks_alive, 0) > 0
+                            THEN CAST(COALESCE(prms.strafe_ticks, 0) AS REAL) / CAST(prms.ticks_alive AS REAL) * prms.alive_seconds
+                            ELSE COALESCE(prms.strafe_ratio, 0) * prms.alive_seconds
+                        END
+                    ) / prms.alive_seconds
+                    ELSE COALESCE(prms.strafe_ratio, 0)
+                END AS strafe_ratio,
                 COALESCE(prms.stationary_ticks, 0) AS stationary_ticks,
                 COALESCE(prms.sprint_ticks, 0) AS sprint_ticks,
                 COALESCE(prms.strafe_ticks, 0) AS strafe_ticks,
                 CASE
-                    WHEN COALESCE(prms.ticks_alive, 0) > 0
-                    THEN CAST(COALESCE(prms.stationary_ticks, 0) AS REAL) / CAST(prms.ticks_alive AS REAL)
+                    WHEN COALESCE(prms.alive_seconds, 0) > 0
+                    THEN (
+                        CASE
+                            WHEN COALESCE(prms.camp_time_s, 0) > 0
+                            THEN prms.camp_time_s
+                            WHEN COALESCE(prms.ticks_alive, 0) > 0
+                            THEN CAST(COALESCE(prms.stationary_ticks, 0) AS REAL) / CAST(prms.ticks_alive AS REAL) * prms.alive_seconds
+                            ELSE 0
+                        END
+                    ) / prms.alive_seconds
                     ELSE 0
                 END AS stationary_ratio,
                 CASE
-                    WHEN COALESCE(prms.ticks_alive, 0) > 0
-                    THEN CAST(COALESCE(prms.sprint_ticks, 0) AS REAL) / CAST(prms.ticks_alive AS REAL)
+                    WHEN COALESCE(prms.alive_seconds, 0) > 0
+                    THEN (
+                        CASE
+                            WHEN COALESCE(prms.sprint_time_s, 0) > 0
+                            THEN prms.sprint_time_s
+                            WHEN COALESCE(prms.ticks_alive, 0) > 0
+                            THEN CAST(COALESCE(prms.sprint_ticks, 0) AS REAL) / CAST(prms.ticks_alive AS REAL) * prms.alive_seconds
+                            ELSE 0
+                        END
+                    ) / prms.alive_seconds
                     ELSE 0
-                END AS sprint_ratio
+                END AS sprint_ratio,
+                CASE
+                    WHEN COALESCE(prms.camp_time_s, 0) > 0
+                    THEN prms.camp_time_s
+                    WHEN COALESCE(prms.ticks_alive, 0) > 0
+                    THEN CAST(COALESCE(prms.stationary_ticks, 0) AS REAL) / CAST(prms.ticks_alive AS REAL) * COALESCE(prms.alive_seconds, 0)
+                    ELSE 0
+                END AS camp_time_s,
+                CASE
+                    WHEN COALESCE(prms.sprint_time_s, 0) > 0
+                    THEN prms.sprint_time_s
+                    WHEN COALESCE(prms.ticks_alive, 0) > 0
+                    THEN CAST(COALESCE(prms.sprint_ticks, 0) AS REAL) / CAST(prms.ticks_alive AS REAL) * COALESCE(prms.alive_seconds, 0)
+                    ELSE 0
+                END AS sprint_time_s,
+                CASE
+                    WHEN COALESCE(prms.strafe_time_s, 0) > 0
+                    THEN prms.strafe_time_s
+                    WHEN COALESCE(prms.ticks_alive, 0) > 0
+                    THEN CAST(COALESCE(prms.strafe_ticks, 0) AS REAL) / CAST(prms.ticks_alive AS REAL) * COALESCE(prms.alive_seconds, 0)
+                    ELSE 0
+                END AS strafe_time_s
             FROM player_round_movement_stats prms
             LEFT JOIN match_maps mm
               ON mm.match_id = prms.match_id AND mm.map_number = prms.map_number
@@ -694,6 +806,42 @@ def fetch_player_overall_metrics(steamid64):
         ).fetchone()
 
 
+def fetch_player_overall_movement_metrics(steamid64):
+    with get_conn() as conn:
+        return conn.execute(
+            """
+            SELECT
+                SUM(COALESCE(pmms.total_distance_units, 0)) AS total_distance_units,
+                SUM(COALESCE(pmms.strafe_distance_units, 0)) AS strafe_distance_units,
+                SUM(COALESCE(pmms.alive_seconds, 0)) AS alive_seconds,
+                SUM(
+                    CASE
+                        WHEN COALESCE(pmms.strafe_time_s, 0) > 0
+                        THEN pmms.strafe_time_s
+                        ELSE COALESCE(pmms.strafe_ratio, 0) * COALESCE(pmms.alive_seconds, 0)
+                    END
+                ) AS strafe_time_s,
+                SUM(
+                    CASE
+                        WHEN COALESCE(pmms.sprint_time_s, 0) > 0
+                        THEN pmms.sprint_time_s
+                        ELSE COALESCE(pmms.sprint_ratio, 0) * COALESCE(pmms.alive_seconds, 0)
+                    END
+                ) AS sprint_time_s,
+                SUM(
+                    CASE
+                        WHEN COALESCE(pmms.camp_time_s, 0) > 0
+                        THEN pmms.camp_time_s
+                        ELSE COALESCE(pmms.stationary_ratio, 0) * COALESCE(pmms.alive_seconds, 0)
+                    END
+                ) AS camp_time_s
+            FROM player_map_movement_stats pmms
+            WHERE pmms.steamid64 = ?
+            """,
+            (str(steamid64),),
+        ).fetchone()
+
+
 def fetch_player_map_stats(steamid64):
     with get_conn() as conn:
         return conn.execute(
@@ -738,9 +886,12 @@ def fetch_player_weapon_stats(steamid64, min_shots=1, weapon_category=None):
     category_sql = ""
     params = [str(steamid64)]
     selected_category = str(weapon_category or "").strip().lower()
+    if selected_category.endswith("s") and len(selected_category) > 3:
+        selected_category = selected_category[:-1]
     if selected_category and selected_category != "all":
-        category_sql = "AND COALESCE(NULLIF(wd.category, ''), 'unknown') = ?"
-        params.append(selected_category)
+        plural = selected_category if selected_category.endswith("s") else f"{selected_category}s"
+        category_sql = "AND LOWER(COALESCE(NULLIF(wd.category, ''), 'unknown')) IN (?, ?)"
+        params.extend([selected_category, plural])
     params.append(int(min_shots))
 
     with get_conn() as conn:

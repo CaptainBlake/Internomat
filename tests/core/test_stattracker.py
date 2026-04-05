@@ -120,6 +120,7 @@ class TestGetPlayerDashboard:
             "avg_kills", "avg_deaths", "avg_assists",
             "hs_pct", "avg_kast", "avg_impact", "avg_rating",
             "performance_index",
+            "avg_speed_m_s", "strafe_ratio", "camp_time_s",
         }
         assert expected_keys.issubset(set(kpis.keys()))
 

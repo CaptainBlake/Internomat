@@ -1036,6 +1036,7 @@ def build_derived_movement_stats(parsed_payload, bin_ticks=32):
     work = work.with_columns(
         [
             pl.when((pl.col("dt") > 0) & (pl.col("dt") <= 2)).then(pl.col("distance") / pl.col("dt")).otherwise(None).alias("units_per_tick"),
+            pl.when((pl.col("dt") > 0) & (pl.col("dt") <= 2)).then(pl.col("dt") / pl.lit(tickrate)).otherwise(0.0).alias("dt_seconds"),
             pl.when((pl.col("health") > 0) & pl.col("in_live") & (pl.col("dt") > 0) & (pl.col("dt") <= 2)).then(pl.col("distance")).otherwise(0.0).alias("distance_alive"),
             pl.when((pl.col("health") > 0) & (~pl.col("in_live")) & (pl.col("dt") > 0) & (pl.col("dt") <= 2)).then(pl.col("distance")).otherwise(0.0).alias("distance_freeze"),
             pl.when(
@@ -1062,7 +1063,20 @@ def build_derived_movement_stats(parsed_payload, bin_ticks=32):
             .then(1)
             .otherwise(0)
             .alias("strafe_tick"),
+            pl.when(
+                (pl.col("health") > 0)
+                & pl.col("in_live")
+                & (pl.col("dt") > 0)
+                & (pl.col("dt") <= 2)
+                & (pl.col("distance_xy") > 0)
+                & (pl.col("turn_cos").is_not_null())
+                & (pl.col("turn_cos") < 0.92)
+            )
+            .then(pl.col("dt") / pl.lit(tickrate))
+            .otherwise(0.0)
+            .alias("strafe_seconds"),
             pl.when((pl.col("health") > 0) & pl.col("in_live")).then(1).otherwise(0).alias("alive_tick"),
+            pl.when((pl.col("health") > 0) & pl.col("in_live") & (pl.col("dt") > 0) & (pl.col("dt") <= 2)).then(pl.col("dt") / pl.lit(tickrate)).otherwise(0.0).alias("alive_seconds_sample"),
         ]
     )
 
@@ -1089,11 +1103,31 @@ def build_derived_movement_stats(parsed_payload, bin_ticks=32):
             pl.when(
                 (pl.col("health") > 0)
                 & pl.col("in_live")
+                & (pl.col("dt") > 0)
+                & (pl.col("dt") <= 2)
+                & (pl.col("units_per_tick") * pl.lit(tickrate) < 20)
+            )
+            .then(pl.col("dt_seconds"))
+            .otherwise(0.0)
+            .alias("stationary_seconds"),
+            pl.when(
+                (pl.col("health") > 0)
+                & pl.col("in_live")
                 & (pl.col("units_per_tick") * pl.lit(tickrate) >= 220)
             )
             .then(1)
             .otherwise(0)
             .alias("sprint_tick"),
+            pl.when(
+                (pl.col("health") > 0)
+                & pl.col("in_live")
+                & (pl.col("dt") > 0)
+                & (pl.col("dt") <= 2)
+                & (pl.col("units_per_tick") * pl.lit(tickrate) >= 220)
+            )
+            .then(pl.col("dt_seconds"))
+            .otherwise(0.0)
+            .alias("sprint_seconds"),
         ]
     )
 
@@ -1123,34 +1157,37 @@ def build_derived_movement_stats(parsed_payload, bin_ticks=32):
                 pl.sum("distance_strafe").alias("strafe_distance_units"),
                 pl.max("speed_units_s").fill_null(0.0).alias("max_speed_units_s"),
                 pl.sum("alive_tick").alias("ticks_alive"),
+                pl.sum("alive_seconds_sample").alias("alive_seconds"),
                 pl.sum("stationary_tick").alias("stationary_ticks"),
+                pl.sum("stationary_seconds").alias("camp_time_s"),
                 pl.sum("sprint_tick").alias("sprint_ticks"),
+                pl.sum("sprint_seconds").alias("sprint_time_s"),
                 pl.sum("strafe_tick").alias("strafe_ticks"),
+                pl.sum("strafe_seconds").alias("strafe_time_s"),
             ]
         )
         .with_columns(
             [
-                (pl.col("ticks_alive") / pl.lit(tickrate)).alias("alive_seconds"),
-                pl.when(pl.col("ticks_alive") > 0)
-                .then(pl.col("total_distance_units") / (pl.col("ticks_alive") / pl.lit(tickrate)))
+                pl.when(pl.col("alive_seconds") > 0)
+                .then(pl.col("total_distance_units") / pl.col("alive_seconds"))
                 .otherwise(0.0)
                 .alias("avg_speed_units_s"),
                 (pl.col("total_distance_units") / pl.lit(float(n_rounds))).alias("distance_per_round_units"),
                 (pl.col("total_distance_units") * pl.lit(0.0254)).alias("total_distance_m"),
-                pl.when(pl.col("ticks_alive") > 0)
-                .then((pl.col("total_distance_units") / (pl.col("ticks_alive") / pl.lit(tickrate))) * pl.lit(0.0254))
+                pl.when(pl.col("alive_seconds") > 0)
+                .then((pl.col("total_distance_units") / pl.col("alive_seconds")) * pl.lit(0.0254))
                 .otherwise(0.0)
                 .alias("avg_speed_m_s"),
-                pl.when(pl.col("total_distance_units") > 0)
-                .then(pl.col("strafe_distance_units") / pl.col("total_distance_units"))
+                pl.when(pl.col("alive_seconds") > 0)
+                .then(pl.col("strafe_time_s") / pl.col("alive_seconds"))
                 .otherwise(0.0)
                 .alias("strafe_ratio"),
-                pl.when(pl.col("ticks_alive") > 0)
-                .then(pl.col("stationary_ticks") / pl.col("ticks_alive"))
+                pl.when(pl.col("alive_seconds") > 0)
+                .then(pl.col("camp_time_s") / pl.col("alive_seconds"))
                 .otherwise(0.0)
                 .alias("stationary_ratio"),
-                pl.when(pl.col("ticks_alive") > 0)
-                .then(pl.col("sprint_ticks") / pl.col("ticks_alive"))
+                pl.when(pl.col("alive_seconds") > 0)
+                .then(pl.col("sprint_time_s") / pl.col("alive_seconds"))
                 .otherwise(0.0)
                 .alias("sprint_ratio"),
             ]
@@ -1168,20 +1205,23 @@ def build_derived_movement_stats(parsed_payload, bin_ticks=32):
                 pl.sum("distance_strafe").alias("strafe_distance_units"),
                 pl.max("speed_units_s").fill_null(0.0).alias("max_speed_units_s"),
                 pl.sum("alive_tick").alias("ticks_alive"),
+                pl.sum("alive_seconds_sample").alias("alive_seconds"),
                 pl.sum("stationary_tick").alias("stationary_ticks"),
+                pl.sum("stationary_seconds").alias("camp_time_s"),
                 pl.sum("sprint_tick").alias("sprint_ticks"),
+                pl.sum("sprint_seconds").alias("sprint_time_s"),
                 pl.sum("strafe_tick").alias("strafe_ticks"),
+                pl.sum("strafe_seconds").alias("strafe_time_s"),
             ]
         )
         .with_columns(
             [
-                (pl.col("ticks_alive") / pl.lit(tickrate)).alias("alive_seconds"),
-                pl.when(pl.col("ticks_alive") > 0)
-                .then(pl.col("distance_units") / (pl.col("ticks_alive") / pl.lit(tickrate)))
+                pl.when(pl.col("alive_seconds") > 0)
+                .then(pl.col("distance_units") / pl.col("alive_seconds"))
                 .otherwise(0.0)
                 .alias("avg_speed_units_s"),
-                pl.when(pl.col("distance_units") > 0)
-                .then(pl.col("strafe_distance_units") / pl.col("distance_units"))
+                pl.when(pl.col("alive_seconds") > 0)
+                .then(pl.col("strafe_time_s") / pl.col("alive_seconds"))
                 .otherwise(0.0)
                 .alias("strafe_ratio"),
             ]
@@ -1256,10 +1296,13 @@ def build_derived_movement_stats(parsed_payload, bin_ticks=32):
             "strafe_distance_units",
             "strafe_ratio",
             "stationary_ticks",
+            "camp_time_s",
             "sprint_ticks",
+            "sprint_time_s",
             "stationary_ratio",
             "sprint_ratio",
             "strafe_ticks",
+            "strafe_time_s",
         ]
     ).to_dicts()
 
@@ -1278,8 +1321,11 @@ def build_derived_movement_stats(parsed_payload, bin_ticks=32):
             "ticks_alive",
             "alive_seconds",
             "stationary_ticks",
+            "camp_time_s",
             "sprint_ticks",
+            "sprint_time_s",
             "strafe_ticks",
+            "strafe_time_s",
         ]
     ).to_dicts()
 

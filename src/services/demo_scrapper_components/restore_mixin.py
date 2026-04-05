@@ -856,10 +856,13 @@ class DemoScrapperRestoreMixin:
                     "strafe_distance_units": float(row.get("strafe_distance_units") or 0.0),
                     "strafe_ratio": float(row.get("strafe_ratio") or 0.0),
                     "stationary_ticks": int(row.get("stationary_ticks") or 0),
+                    "camp_time_s": float(row.get("camp_time_s") or 0.0),
                     "sprint_ticks": int(row.get("sprint_ticks") or 0),
+                    "sprint_time_s": float(row.get("sprint_time_s") or 0.0),
                     "stationary_ratio": float(row.get("stationary_ratio") or 0.0),
                     "sprint_ratio": float(row.get("sprint_ratio") or 0.0),
                     "strafe_ticks": int(row.get("strafe_ticks") or 0),
+                    "strafe_time_s": float(row.get("strafe_time_s") or 0.0),
                     "updated_at": now,
                 }
             )
@@ -886,8 +889,11 @@ class DemoScrapperRestoreMixin:
                     "ticks_alive": int(row.get("ticks_alive") or 0),
                     "alive_seconds": float(row.get("alive_seconds") or 0.0),
                     "stationary_ticks": int(row.get("stationary_ticks") or 0),
+                    "camp_time_s": float(row.get("camp_time_s") or 0.0),
                     "sprint_ticks": int(row.get("sprint_ticks") or 0),
+                    "sprint_time_s": float(row.get("sprint_time_s") or 0.0),
                     "strafe_ticks": int(row.get("strafe_ticks") or 0),
+                    "strafe_time_s": float(row.get("strafe_time_s") or 0.0),
                     "updated_at": now,
                 }
             )

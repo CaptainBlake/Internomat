@@ -286,9 +286,12 @@ def init_db():
                 strafe_ratio REAL NOT NULL DEFAULT 0,
                 stationary_ticks INTEGER NOT NULL DEFAULT 0,
                 sprint_ticks INTEGER NOT NULL DEFAULT 0,
+                camp_time_s REAL NOT NULL DEFAULT 0,
+                sprint_time_s REAL NOT NULL DEFAULT 0,
                 stationary_ratio REAL NOT NULL DEFAULT 0,
                 sprint_ratio REAL NOT NULL DEFAULT 0,
                 strafe_ticks INTEGER NOT NULL DEFAULT 0,
+                strafe_time_s REAL NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY (steamid64, match_id, map_number)
             )
@@ -311,8 +314,11 @@ def init_db():
                 ticks_alive INTEGER NOT NULL DEFAULT 0,
                 alive_seconds REAL NOT NULL DEFAULT 0,
                 stationary_ticks INTEGER NOT NULL DEFAULT 0,
+                camp_time_s REAL NOT NULL DEFAULT 0,
                 sprint_ticks INTEGER NOT NULL DEFAULT 0,
+                sprint_time_s REAL NOT NULL DEFAULT 0,
                 strafe_ticks INTEGER NOT NULL DEFAULT 0,
+                strafe_time_s REAL NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY (steamid64, match_id, map_number, round_num)
             )
@@ -366,10 +372,13 @@ def init_db():
             ("strafe_distance_units", "REAL NOT NULL DEFAULT 0"),
             ("strafe_ratio", "REAL NOT NULL DEFAULT 0"),
             ("stationary_ticks", "INTEGER NOT NULL DEFAULT 0"),
+            ("camp_time_s", "REAL NOT NULL DEFAULT 0"),
             ("sprint_ticks", "INTEGER NOT NULL DEFAULT 0"),
+            ("sprint_time_s", "REAL NOT NULL DEFAULT 0"),
             ("stationary_ratio", "REAL NOT NULL DEFAULT 0"),
             ("sprint_ratio", "REAL NOT NULL DEFAULT 0"),
             ("strafe_ticks", "INTEGER NOT NULL DEFAULT 0"),
+            ("strafe_time_s", "REAL NOT NULL DEFAULT 0"),
         ]:
             if col not in pmm_columns:
                 conn.execute(f"ALTER TABLE player_map_movement_stats ADD COLUMN {col} {col_type}")
@@ -381,8 +390,11 @@ def init_db():
             ("strafe_distance_units", "REAL NOT NULL DEFAULT 0"),
             ("strafe_ratio", "REAL NOT NULL DEFAULT 0"),
             ("stationary_ticks", "INTEGER NOT NULL DEFAULT 0"),
+            ("camp_time_s", "REAL NOT NULL DEFAULT 0"),
             ("sprint_ticks", "INTEGER NOT NULL DEFAULT 0"),
+            ("sprint_time_s", "REAL NOT NULL DEFAULT 0"),
             ("strafe_ticks", "INTEGER NOT NULL DEFAULT 0"),
+            ("strafe_time_s", "REAL NOT NULL DEFAULT 0"),
         ]:
             if col not in prm_columns:
                 conn.execute(f"ALTER TABLE player_round_movement_stats ADD COLUMN {col} {col_type}")

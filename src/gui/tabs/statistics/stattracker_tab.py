@@ -133,7 +133,7 @@ _PLOT_COLORS = [
 ]
 
 
-def _build_plot_widget(plot_data, height=300, display_mode="line"):
+def _build_plot_widget(plot_data, height=340, display_mode="line"):
     """Build a QWidget containing [legend sidebar | matplotlib canvas].
 
     plot_data may contain a flat ``series`` dict (legacy single-metric) or
@@ -151,7 +151,7 @@ def _build_plot_widget(plot_data, height=300, display_mode="line"):
     x_labels = plot_data.get("x_labels") or []
     all_empty = not x_labels or all(not s for _, s in groups)
 
-    fig = Figure(figsize=(10, 3.2), dpi=100)
+    fig = Figure(figsize=(10, 3.8), dpi=100)
     fig.patch.set_facecolor("#F5F9FC")
     ax = fig.add_subplot(111)
     ax.set_facecolor("#FAFCFE")
@@ -235,6 +235,8 @@ def _build_plot_widget(plot_data, height=300, display_mode="line"):
             ax.set_xticklabels(x_labels, rotation=35, ha="right", fontsize=8)
             if len(groups) == 1:
                 ax.set_ylabel(groups[0][0], fontsize=9, color="#21443C")
+            # Keep extra top room so hover tooltips are not clipped.
+            ax.margins(y=0.18)
             ax.tick_params(axis="y", labelsize=8)
             ax.grid(True, axis="y", alpha=0.3, linewidth=0.5)
         else:
@@ -255,6 +257,8 @@ def _build_plot_widget(plot_data, height=300, display_mode="line"):
             ax.set_xticklabels(x_labels, rotation=35, ha="right", fontsize=8)
             if len(groups) == 1:
                 ax.set_ylabel(groups[0][0], fontsize=9, color="#21443C")
+            # Keep extra top room so hover tooltips are not clipped.
+            ax.margins(y=0.18)
             ax.tick_params(axis="y", labelsize=8)
             ax.grid(True, alpha=0.3, linewidth=0.5)
 
@@ -268,11 +272,11 @@ def _build_plot_widget(plot_data, height=300, display_mode="line"):
     # Hover tooltip
     if _hover_bars or _hover_lines or _hover_pie:
         _annot = ax.annotate(
-            "", xy=(0, 0), xytext=(8, 8),
+            "", xy=(0, 0), xytext=(8, -26),
             textcoords="offset points",
             bbox=dict(boxstyle="round,pad=0.35", facecolor="#FFFDE7",
                       edgecolor="#BDBDBD", alpha=0.95),
-            fontsize=8, zorder=10, visible=False,
+            fontsize=8, zorder=10, visible=False, annotation_clip=False,
         )
         if _hover_bars:
             def _on_motion(event, _a=_annot, _ax=ax, _c=canvas, _d=_hover_bars):
@@ -956,7 +960,14 @@ def _refresh_plot_only(parent):
     range_from_combo = getattr(parent, "_stattracker_range_from_combo", None)
     range_to_combo = getattr(parent, "_stattracker_range_to_combo", None)
     window_combo = getattr(parent, "_stattracker_range_window_combo", None)
+    range_from_label = getattr(parent, "_stattracker_range_from_label", None)
+    range_to_label = getattr(parent, "_stattracker_range_to_label", None)
+    range_window_label = getattr(parent, "_stattracker_range_window_label", None)
     window_mode = str(getattr(parent, "_stattracker_timeline_window_mode", "all") or "all")
+    can_range = len(labels) > 1
+    if not can_range:
+        window_mode = "all"
+        parent._stattracker_timeline_window_mode = "all"
 
     def _sync_combo(combo, labels_local, selected_index):
         if not isinstance(combo, QComboBox):
@@ -980,6 +991,20 @@ def _refresh_plot_only(parent):
         range_from_combo.setEnabled(window_mode == "range" and bool(labels))
     if isinstance(range_to_combo, QComboBox):
         range_to_combo.setEnabled(window_mode == "range" and bool(labels))
+
+    show_bounds = can_range and window_mode == "range"
+    if isinstance(range_from_combo, QComboBox):
+        range_from_combo.setVisible(show_bounds)
+    if isinstance(range_to_combo, QComboBox):
+        range_to_combo.setVisible(show_bounds)
+    if isinstance(range_from_label, QLabel):
+        range_from_label.setVisible(show_bounds)
+    if isinstance(range_to_label, QLabel):
+        range_to_label.setVisible(show_bounds)
+    if isinstance(window_combo, QComboBox):
+        window_combo.setVisible(can_range)
+    if isinstance(range_window_label, QLabel):
+        range_window_label.setVisible(can_range)
 
     if isinstance(window_combo, QComboBox):
         idx_mode = window_combo.findData(window_mode)
@@ -1041,6 +1066,9 @@ def build_stattracker_tab(parent):
     parent._stattracker_range_from_combo = None
     parent._stattracker_range_to_combo = None
     parent._stattracker_range_window_combo = None
+    parent._stattracker_range_from_label = None
+    parent._stattracker_range_to_label = None
+    parent._stattracker_range_window_label = None
     parent._stattracker_plot_container = None
     parent._stattracker_timeline_combo = None
     parent._stattracker_on_update = lambda: on_stattracker_data_updated(parent)
@@ -1149,8 +1177,8 @@ def refresh_stattracker(parent):
     global_table = _build_table(
         [
             "Maps Played", "Win Rate", "K/D", "ADR",
-            "Avg Kills", "Avg Deaths", "Avg Assists", "HS%",
-            "Avg KAST", "Avg Impact", "Avg Rating", "Avg Performance",
+            "Avg Kills", "Avg Deaths", "HS%",
+            "Strafe %", "Avg Speed (m/s)", "Camp Time (s)",
         ],
         [
             [
@@ -1160,12 +1188,10 @@ def refresh_stattracker(parent):
                 f"{float(kpis.get('adr') or 0.0):.1f}",
                 f"{float(kpis.get('avg_kills') or 0.0):.2f}",
                 f"{float(kpis.get('avg_deaths') or 0.0):.2f}",
-                f"{float(kpis.get('avg_assists') or 0.0):.2f}",
                 _fmt_pct(kpis.get("hs_pct") or 0.0),
-                "-" if kpis.get("avg_kast") is None else _fmt_pct(kpis.get("avg_kast") or 0.0),
-                "-" if kpis.get("avg_impact") is None else f"{float(kpis.get('avg_impact') or 0.0):.2f}",
-                "-" if kpis.get("avg_rating") is None else f"{float(kpis.get('avg_rating') or 0.0):.2f}",
-                f"{float(kpis.get('performance_index') or 0.0):.2f}",
+                _fmt_pct((float(kpis.get("strafe_ratio") or 0.0) * 100.0)),
+                f"{float(kpis.get('avg_speed_m_s') or 0.0):.2f}",
+                f"{float(kpis.get('camp_time_s') or 0.0):.1f}",
             ]
         ],
     )

@@ -64,11 +64,17 @@ def get_player_weapon_categories(steamid64):
         return ["all"]
 
     rows = stattracker_repo.fetch_player_weapon_categories(sid)
+    def _to_category_key(raw):
+        value = str(raw or "unknown").strip().lower() or "unknown"
+        if value in {"all", "unknown"}:
+            return value
+        return value if value.endswith("s") else f"{value}s"
+
     categories = ["all"]
     categories.extend(
         sorted(
             {
-                str(r["category"] or "unknown").strip().lower()
+                _to_category_key(r["category"])
                 for r in rows
                 if str(r["category"] or "").strip()
             }
@@ -96,6 +102,7 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
         }
 
     overall = stattracker_repo.fetch_player_overall_metrics(sid)
+    movement_overall = stattracker_repo.fetch_player_overall_movement_metrics(sid)
     map_rows_raw = stattracker_repo.fetch_player_map_stats(sid)
     weapon_rows_raw = stattracker_repo.fetch_player_weapon_stats(
         sid,
@@ -111,6 +118,12 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
     total_damage = int((overall["total_damage"] if overall else 0) or 0)
     total_headshot_kills = int((overall["total_headshot_kills"] if overall else 0) or 0)
     total_rounds = int((overall["total_rounds"] if overall else 0) or 0)
+
+    total_distance_units = float((movement_overall["total_distance_units"] if movement_overall else 0.0) or 0.0)
+    total_strafe_distance_units = float((movement_overall["strafe_distance_units"] if movement_overall else 0.0) or 0.0)
+    total_strafe_time_s = float((movement_overall["strafe_time_s"] if movement_overall else 0.0) or 0.0)
+    total_alive_seconds = float((movement_overall["alive_seconds"] if movement_overall else 0.0) or 0.0)
+    total_camp_time_s = float((movement_overall["camp_time_s"] if movement_overall else 0.0) or 0.0)
 
     raw_avg_kast = overall["avg_kast"] if overall else None
     avg_kast = float(raw_avg_kast) if raw_avg_kast is not None else None
@@ -128,6 +141,12 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
     hs_pct = M.hs_pct(total_headshot_kills, total_kills)
     # Performance index: lightweight composite until true per-map rating/kast persistence is added.
     performance_index = M.performance_index(total_kills, total_assists, total_deaths) if maps_played > 0 else 0.0
+
+    avg_speed_m_s = (total_distance_units * 0.0254 / total_alive_seconds) if total_alive_seconds > 0 else 0.0
+    if total_alive_seconds > 0:
+        strafe_ratio = total_strafe_time_s / total_alive_seconds
+    else:
+        strafe_ratio = (total_strafe_distance_units / total_distance_units) if total_distance_units > 0 else 0.0
 
     map_rows = []
     for row in map_rows_raw:
@@ -217,6 +236,9 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
             "avg_impact": avg_impact,
             "avg_rating": avg_rating,
             "performance_index": performance_index,
+            "avg_speed_m_s": avg_speed_m_s,
+            "strafe_ratio": strafe_ratio,
+            "camp_time_s": total_camp_time_s,
         },
         "map_rows": map_rows,
         "weapon_rows": weapon_rows,
@@ -265,7 +287,11 @@ MOVEMENT_PLOT_METRICS = {
     "strafe_distance_m": {"label": "Strafe Distance (m)", "fn": lambda r: float(r["strafe_distance_units"] or 0.0) * 0.0254},
     "camp_time_s": {
         "label": "Camp Time (s)",
-        "fn": lambda r: float(r["stationary_ratio"] or 0.0) * float(r["alive_seconds"] or 0.0),
+        "fn": lambda r: (
+            float(r.get("camp_time_s") or 0.0)
+            if float(r.get("camp_time_s") or 0.0) > 0.0
+            else float(r.get("stationary_ratio") or 0.0) * float(r.get("alive_seconds") or 0.0)
+        ),
     },
 }
 
