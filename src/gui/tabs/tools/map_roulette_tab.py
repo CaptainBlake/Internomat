@@ -426,12 +426,17 @@ class SlotMachineWidget(QFrame):
                 self._step += 1
 
                 remaining = len(self._sequence) - self._step
-                if remaining <= 10:
-                    delay = 80 + remaining * 40
-                elif remaining <= 18:
-                    delay = 48
+
+                # Sanftes, gleichmäßiges Ausbremsen über einen längeren Zeitraum
+                slow_down_steps = 40
+                max_delay = 180
+                min_delay = 34
+
+                if remaining <= slow_down_steps:
+                    progress = (slow_down_steps - remaining) / slow_down_steps
+                    delay = int(min_delay + (max_delay - min_delay) * progress)
                 else:
-                    delay = 34
+                    delay = min_delay
 
                 QTimer.singleShot(delay, tick)
                 return
