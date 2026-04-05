@@ -175,6 +175,23 @@ def _write_build_metadata(version: str) -> Path:
     return BUILD_META_PATH
 
 
+def run_tests(skip_tests: bool = False):
+    if skip_tests:
+        print("[BUILD] Skipping tests (--skip-tests).")
+        return
+
+    print("[BUILD] Running test suite (excluding live tests)...")
+    test_cmd = [
+        sys.executable,
+        "-m",
+        "pytest",
+        "-m",
+        "not live",
+    ]
+    subprocess.run(test_cmd, check=True)
+    print("[BUILD] Test suite passed.")
+
+
 def _pyinstaller_cmd(onefile: bool):
     # Keep module collection explicit to avoid pulling test/demo payloads from dependencies.
     # This reduces package size while preserving runtime functionality.
@@ -295,11 +312,17 @@ def parse_args():
         action="store_true",
         help="If ISCC.exe is missing, install Inno Setup 6 via winget and continue.",
     )
+    parser.add_argument(
+        "--skip-tests",
+        action="store_true",
+        help="Skip running tests before build (not recommended for releases).",
+    )
     return parser.parse_args()
 
 
 def build():
     args = parse_args()
+    run_tests(skip_tests=args.skip_tests)
     _write_build_metadata(args.version)
     print(f"[BUILD] Using app version from --version source-of-truth: {args.version}")
     _prepare_bootstrap_secret_bundle()
