@@ -20,6 +20,7 @@ def shutdown():
     except Exception as e:
         logger.log_error(f"[APP_SHUTDOWN] Executor shutdown failed: {e}", exc=e)
 
+
 def main():
     init_db()
     settings.load()
