@@ -18,9 +18,11 @@ from db.matches_db import (
 )
 from db.stattracker_db import (
     upsert_player_map_weapon_stats_many,
+    upsert_player_round_weapon_stats_many,
     upsert_player_map_movement_stats_many,
     upsert_player_round_movement_stats_many,
     upsert_player_round_timeline_bins_many,
+    upsert_player_round_events_many,
 )
 from analytics import demo_payload_analysis
 from services import demo_cache
@@ -717,12 +719,39 @@ class DemoScrapperRestoreMixin:
                     f"Failed to rebuild derived_weapon_stats match={match_id} map={map_number}: {e}",
                     level="WARNING",
                 )
-                return []
+                return [], []
 
         now = datetime.utcnow().isoformat()
-        rows = []
+        map_rows = []
+        round_rows = []
 
-        for steamid64, weapon_map in derived.items():
+        # Backward-compatible: older payloads stored {steamid -> {weapon -> metrics}} directly.
+        map_payload = derived.get("map_rows") if isinstance(derived.get("map_rows"), dict) else derived
+        round_payload = list(derived.get("round_rows") or [])
+
+        if not round_payload:
+            try:
+                rebuilt = demo_payload_analysis.build_derived_weapon_stats(parsed_payload or {})
+                if isinstance(rebuilt, dict):
+                    round_payload = list(rebuilt.get("round_rows") or [])
+                    if isinstance(parsed_payload, dict):
+                        parsed_payload["derived_weapon_stats"] = {
+                            "map_rows": map_payload,
+                            "round_rows": round_payload,
+                        }
+                    self._log_stage(
+                        "RESTORE",
+                        f"Rebuilt missing weapon round rows match={match_id} map={map_number}",
+                        level="DEBUG",
+                    )
+            except Exception as e:
+                self._log_stage(
+                    "RESTORE",
+                    f"Failed to rebuild weapon round rows match={match_id} map={map_number}: {e}",
+                    level="WARNING",
+                )
+
+        for steamid64, weapon_map in map_payload.items():
             sid = self._to_steamid64_string(steamid64)
             if sid is None:
                 continue
@@ -735,7 +764,7 @@ class DemoScrapperRestoreMixin:
                     continue
 
                 values = metrics if isinstance(metrics, dict) else {}
-                rows.append(
+                map_rows.append(
                     {
                         "steamid64": str(sid),
                         "match_id": str(match_id),
@@ -752,7 +781,34 @@ class DemoScrapperRestoreMixin:
                     }
                 )
 
-        return rows
+        for row in round_payload:
+            sid = self._to_steamid64_string(row.get("steamid"))
+            if sid is None:
+                continue
+            round_num = self._to_int(row.get("round_num"), default=0)
+            if round_num <= 0:
+                continue
+            weapon_name = str(row.get("weapon") or "").strip().lower()
+            if not weapon_name:
+                continue
+
+            round_rows.append(
+                {
+                    "steamid64": str(sid),
+                    "match_id": str(match_id),
+                    "map_number": int(map_number),
+                    "round_num": int(round_num),
+                    "weapon": weapon_name,
+                    "shots_fired": int(row.get("shots_fired") or 0),
+                    "shots_hit": int(row.get("shots_hit") or 0),
+                    "kills": int(row.get("kills") or 0),
+                    "headshot_kills": int(row.get("headshot_kills") or 0),
+                    "damage": int(row.get("damage") or 0),
+                    "updated_at": now,
+                }
+            )
+
+        return map_rows, round_rows
 
     def _build_movement_stats_rows(self, *, match_id, map_number, parsed_payload):
         derived = (parsed_payload or {}).get("derived_movement_stats")
@@ -796,6 +852,14 @@ class DemoScrapperRestoreMixin:
                     "ticks_alive": int(row.get("ticks_alive") or 0),
                     "alive_seconds": float(row.get("alive_seconds") or 0.0),
                     "distance_per_round_units": float(row.get("distance_per_round_units") or 0.0),
+                    "freeze_distance_units": float(row.get("freeze_distance_units") or 0.0),
+                    "strafe_distance_units": float(row.get("strafe_distance_units") or 0.0),
+                    "strafe_ratio": float(row.get("strafe_ratio") or 0.0),
+                    "stationary_ticks": int(row.get("stationary_ticks") or 0),
+                    "sprint_ticks": int(row.get("sprint_ticks") or 0),
+                    "stationary_ratio": float(row.get("stationary_ratio") or 0.0),
+                    "sprint_ratio": float(row.get("sprint_ratio") or 0.0),
+                    "strafe_ticks": int(row.get("strafe_ticks") or 0),
                     "updated_at": now,
                 }
             )
@@ -813,10 +877,17 @@ class DemoScrapperRestoreMixin:
                     "round_num": int(round_num),
                     "side": str(row.get("side") or ""),
                     "distance_units": float(row.get("distance_units") or 0.0),
+                    "live_distance_units": float(row.get("live_distance_units") or 0.0),
+                    "freeze_distance_units": float(row.get("freeze_distance_units") or 0.0),
+                    "strafe_distance_units": float(row.get("strafe_distance_units") or 0.0),
+                    "strafe_ratio": float(row.get("strafe_ratio") or 0.0),
                     "avg_speed_units_s": float(row.get("avg_speed_units_s") or 0.0),
                     "max_speed_units_s": float(row.get("max_speed_units_s") or 0.0),
                     "ticks_alive": int(row.get("ticks_alive") or 0),
                     "alive_seconds": float(row.get("alive_seconds") or 0.0),
+                    "stationary_ticks": int(row.get("stationary_ticks") or 0),
+                    "sprint_ticks": int(row.get("sprint_ticks") or 0),
+                    "strafe_ticks": int(row.get("strafe_ticks") or 0),
                     "updated_at": now,
                 }
             )
@@ -835,13 +906,66 @@ class DemoScrapperRestoreMixin:
                     "bin_index": int(row.get("bin_index") or 0),
                     "bin_start_sec": float(row.get("bin_start_sec") or 0.0),
                     "median_speed_m_s": float(row.get("median_speed_m_s") or 0.0),
+                    "mean_speed_m_s": float(row.get("mean_speed_m_s") or 0.0),
+                    "p25_speed_m_s": float(row.get("p25_speed_m_s") or 0.0),
+                    "p75_speed_m_s": float(row.get("p75_speed_m_s") or 0.0),
+                    "max_speed_m_s": float(row.get("max_speed_m_s") or 0.0),
+                    "alive_ratio": float(row.get("alive_ratio") or 0.0),
                     "samples": int(row.get("samples") or 0),
+                    "speed_samples": int(row.get("speed_samples") or 0),
                     "side": str(row.get("side") or ""),
                     "updated_at": now,
                 }
             )
 
         return map_rows, round_rows, bin_rows
+
+    def _build_round_events_rows(self, *, match_id, map_number, parsed_payload):
+        derived = (parsed_payload or {}).get("derived_round_events")
+        if not isinstance(derived, dict) or not derived:
+            try:
+                derived = demo_payload_analysis.build_derived_round_events(parsed_payload or {})
+                if isinstance(parsed_payload, dict):
+                    parsed_payload["derived_round_events"] = derived
+                self._log_stage(
+                    "RESTORE",
+                    f"Rebuilt missing derived_round_events match={match_id} map={map_number}",
+                    level="DEBUG",
+                )
+            except Exception as e:
+                self._log_stage(
+                    "RESTORE",
+                    f"Failed to rebuild derived_round_events match={match_id} map={map_number}: {e}",
+                    level="WARNING",
+                )
+                return []
+
+        now = datetime.utcnow().isoformat()
+        rows = []
+        for row in (derived.get("round_rows") or []):
+            sid = self._to_steamid64_string(row.get("steamid"))
+            round_num = self._to_int(row.get("round_num"), default=0)
+            if sid is None or round_num <= 0:
+                continue
+            rows.append(
+                {
+                    "steamid64": str(sid),
+                    "match_id": str(match_id),
+                    "map_number": int(map_number),
+                    "round_num": int(round_num),
+                    "side": str(row.get("side") or ""),
+                    "opening_attempt": int(row.get("opening_attempt") or 0),
+                    "opening_win": int(row.get("opening_win") or 0),
+                    "trade_kill_count": int(row.get("trade_kill_count") or 0),
+                    "traded_death_count": int(row.get("traded_death_count") or 0),
+                    "clutch_enemy_count": int(row.get("clutch_enemy_count") or 0),
+                    "clutch_win": int(row.get("clutch_win") or 0),
+                    "won_round": int(row.get("won_round") or 0),
+                    "updated_at": now,
+                }
+            )
+
+        return rows
 
     def _restore_db_entities_from_payload(
         self,
@@ -947,12 +1071,17 @@ class DemoScrapperRestoreMixin:
             default_team1_name=player_team1_name,
             default_team2_name=player_team2_name,
         )
-        weapon_rows = self._build_weapon_stats_rows(
+        weapon_rows, weapon_round_rows = self._build_weapon_stats_rows(
             match_id=target_match_id,
             map_number=target_map_number,
             parsed_payload=parsed_payload,
         )
         movement_map_rows, movement_round_rows, movement_bin_rows = self._build_movement_stats_rows(
+            match_id=target_match_id,
+            map_number=target_map_number,
+            parsed_payload=parsed_payload,
+        )
+        round_event_rows = self._build_round_events_rows(
             match_id=target_match_id,
             map_number=target_map_number,
             parsed_payload=parsed_payload,
@@ -995,9 +1124,11 @@ class DemoScrapperRestoreMixin:
 
             insert_match_player_stats_many(player_rows, conn=conn)
             upsert_player_map_weapon_stats_many(weapon_rows, conn=conn)
+            upsert_player_round_weapon_stats_many(weapon_round_rows, conn=conn)
             upsert_player_map_movement_stats_many(movement_map_rows, conn=conn)
             upsert_player_round_movement_stats_many(movement_round_rows, conn=conn)
             upsert_player_round_timeline_bins_many(movement_bin_rows, conn=conn)
+            upsert_player_round_events_many(round_event_rows, conn=conn)
 
             set_match_has_demo(match_id=target_match_id, has_demo=True, conn=conn)
 

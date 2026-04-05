@@ -418,6 +418,7 @@ class DemoScrapperCommonMixin:
         _derive_safe("derived_restore_stats", demo_payload_analysis.build_derived_restore_stats, {})
         _derive_safe("derived_weapon_stats", demo_payload_analysis.build_derived_weapon_stats, {})
         _derive_safe("derived_movement_stats", demo_payload_analysis.build_derived_movement_stats, {})
+        _derive_safe("derived_round_events", demo_payload_analysis.build_derived_round_events, {})
 
         # Compute advanced awpy stats functions if available
         # These provide precomputed aggregates (ADR, KAST, Impact, Rating, etc.)

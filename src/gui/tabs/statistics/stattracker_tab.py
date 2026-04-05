@@ -579,6 +579,14 @@ def _refresh_plot_only(parent):
 
     # Important: keep [] as "show none". Only None means "no filter / all".
     selected_items_filter = checked_items if checked_items is not None else None
+    timeline_scale = str(getattr(parent, "_stattracker_timeline_scale", "match") or "match")
+    if main_view not in {"movement", "weapons"}:
+        timeline_scale = "match"
+        parent._stattracker_timeline_scale = "match"
+    elif timeline_scale == "tick":
+        # Tick-level raw timeline is not persisted yet; use round scale as closest granularity.
+        timeline_scale = "round"
+        parent._stattracker_timeline_scale = "round"
 
     def _normalize_category(category):
         value = str(category or "").strip().lower()
@@ -720,33 +728,35 @@ def _refresh_plot_only(parent):
             return {"x_labels": first["x_labels"], "multi_series": multi}
 
         if main_view == "movement":
+            fetch_fn = stattracker.get_movement_round_series if timeline_scale == "round" else stattracker.get_movement_match_series
             if len(metrics) == 1:
-                return stattracker.get_movement_match_series(
+                return fetch_fn(
                     target_sid,
                     maps=selected_items_filter,
                     metric=metrics[0],
                 )
-            first = stattracker.get_movement_match_series(
+            first = fetch_fn(
                 target_sid,
                 maps=selected_items_filter,
                 metric=metrics[0],
             )
             multi = [{"metric_label": first["metric_label"], "series": first["series"]}]
             for m in metrics[1:]:
-                r = stattracker.get_movement_match_series(
+                r = fetch_fn(
                     target_sid,
                     maps=selected_items_filter,
                     metric=m,
                 )
                 multi.append({"metric_label": r["metric_label"], "series": r["series"]})
-            return {"x_labels": first["x_labels"], "multi_series": multi}
+            return {"x_labels": first["x_labels"], "match_keys": first.get("match_keys") or [], "multi_series": multi}
 
         selected_map = str(getattr(parent, "_stattracker_selected_map", "all") or "all")
         map_name = selected_map if selected_map != "all" else None
         weapon_filter = _resolve_weapon_filter_for_player(target_sid)
         group_mode = str(getattr(parent, "_stattracker_group_mode", "weapon") or "weapon")
+        fetch_weapon_fn = stattracker.get_weapon_round_series if timeline_scale == "round" else stattracker.get_weapon_match_series
         if len(metrics) == 1:
-            result = stattracker.get_weapon_match_series(
+            result = fetch_weapon_fn(
                 target_sid, weapons=weapon_filter, metric=metrics[0], map_name=map_name,
             )
             if group_mode == "category":
@@ -756,18 +766,18 @@ def _refresh_plot_only(parent):
                     metrics[0],
                 )
             return result
-        first = stattracker.get_weapon_match_series(target_sid, weapons=weapon_filter, metric=metrics[0], map_name=map_name)
+        first = fetch_weapon_fn(target_sid, weapons=weapon_filter, metric=metrics[0], map_name=map_name)
         first_series = first["series"]
         if group_mode == "category":
             first_series = _aggregate_weapon_series_by_category(first_series, target_sid, metrics[0])
         multi = [{"metric_label": first["metric_label"], "series": first_series}]
         for m in metrics[1:]:
-            r = stattracker.get_weapon_match_series(target_sid, weapons=weapon_filter, metric=m, map_name=map_name)
+            r = fetch_weapon_fn(target_sid, weapons=weapon_filter, metric=m, map_name=map_name)
             metric_series = r["series"]
             if group_mode == "category":
                 metric_series = _aggregate_weapon_series_by_category(metric_series, target_sid, m)
             multi.append({"metric_label": r["metric_label"], "series": metric_series})
-        return {"x_labels": first["x_labels"], "multi_series": multi}
+        return {"x_labels": first["x_labels"], "match_keys": first.get("match_keys") or [], "multi_series": multi}
 
     def _prefixed(data, prefix):
         if data.get("multi_series"):
@@ -880,6 +890,7 @@ def _refresh_plot_only(parent):
 
             plot_data = {
                 "x_labels": list(plot_data.get("x_labels") or compare_data.get("x_labels") or []),
+                "match_keys": list(plot_data.get("match_keys") or compare_data.get("match_keys") or []),
                 "multi_series": [
                     {"metric_label": label, "series": series}
                     for label, series in merged.items()
@@ -890,9 +901,99 @@ def _refresh_plot_only(parent):
             merged_series.update(compare_data.get("series") or {})
             plot_data = {
                 "x_labels": list(plot_data.get("x_labels") or compare_data.get("x_labels") or []),
+                "match_keys": list(plot_data.get("match_keys") or compare_data.get("match_keys") or []),
                 "metric_label": plot_data.get("metric_label") or compare_data.get("metric_label") or "Value",
                 "series": merged_series,
             }
+
+    def _slice_plot_data(data, start_idx, end_idx):
+        x_labels = list(data.get("x_labels") or [])
+        if not x_labels:
+            return data
+
+        lo = max(0, min(len(x_labels) - 1, int(start_idx)))
+        hi = max(0, min(len(x_labels) - 1, int(end_idx)))
+        if lo > hi:
+            lo, hi = hi, lo
+
+        sliced = {
+            "x_labels": x_labels[lo:hi + 1],
+            "match_keys": list(data.get("match_keys") or [])[lo:hi + 1],
+        }
+
+        if data.get("multi_series"):
+            multi = []
+            for group in (data.get("multi_series") or []):
+                series = {}
+                for name, values in (group.get("series") or {}).items():
+                    vals = list(values or [])
+                    series[name] = vals[lo:hi + 1]
+                multi.append({
+                    "metric_label": group.get("metric_label") or "Value",
+                    "series": series,
+                })
+            sliced["multi_series"] = multi
+            return sliced
+
+        sliced["metric_label"] = data.get("metric_label") or "Value"
+        sliced["series"] = {
+            name: list(values or [])[lo:hi + 1]
+            for name, values in (data.get("series") or {}).items()
+        }
+        return sliced
+
+    labels = list(plot_data.get("x_labels") or [])
+    parent._stattracker_timeline_axis_labels = labels
+    if labels:
+        from_idx = int(getattr(parent, "_stattracker_timeline_from_index", 0) or 0)
+        to_idx = int(getattr(parent, "_stattracker_timeline_to_index", len(labels) - 1) or (len(labels) - 1))
+        parent._stattracker_timeline_from_index = max(0, min(len(labels) - 1, from_idx))
+        parent._stattracker_timeline_to_index = max(0, min(len(labels) - 1, to_idx))
+    else:
+        parent._stattracker_timeline_from_index = 0
+        parent._stattracker_timeline_to_index = 0
+
+    range_from_combo = getattr(parent, "_stattracker_range_from_combo", None)
+    range_to_combo = getattr(parent, "_stattracker_range_to_combo", None)
+    window_combo = getattr(parent, "_stattracker_range_window_combo", None)
+    window_mode = str(getattr(parent, "_stattracker_timeline_window_mode", "all") or "all")
+
+    def _sync_combo(combo, labels_local, selected_index):
+        if not isinstance(combo, QComboBox):
+            return
+        combo.blockSignals(True)
+        combo.clear()
+        if not labels_local:
+            combo.addItem("-", 0)
+            combo.setCurrentIndex(0)
+        else:
+            for idx_lbl, label in enumerate(labels_local):
+                combo.addItem(str(label).replace("\n", " | "), idx_lbl)
+            idx_sel = max(0, min(len(labels_local) - 1, int(selected_index)))
+            combo.setCurrentIndex(idx_sel)
+        combo.blockSignals(False)
+
+    _sync_combo(range_from_combo, labels, getattr(parent, "_stattracker_timeline_from_index", 0))
+    _sync_combo(range_to_combo, labels, getattr(parent, "_stattracker_timeline_to_index", 0))
+
+    if isinstance(range_from_combo, QComboBox):
+        range_from_combo.setEnabled(window_mode == "range" and bool(labels))
+    if isinstance(range_to_combo, QComboBox):
+        range_to_combo.setEnabled(window_mode == "range" and bool(labels))
+
+    if isinstance(window_combo, QComboBox):
+        idx_mode = window_combo.findData(window_mode)
+        if idx_mode >= 0 and window_combo.currentIndex() != idx_mode:
+            window_combo.blockSignals(True)
+            window_combo.setCurrentIndex(idx_mode)
+            window_combo.blockSignals(False)
+
+    if window_mode == "range" and labels:
+        plot_data = _slice_plot_data(
+            plot_data,
+            getattr(parent, "_stattracker_timeline_from_index", 0),
+            getattr(parent, "_stattracker_timeline_to_index", len(labels) - 1),
+        )
 
     display_mode = str(getattr(parent, "_stattracker_chart_mode", "line") or "line")
     widget = _build_plot_widget(plot_data, display_mode=display_mode)
@@ -932,6 +1033,14 @@ def build_stattracker_tab(parent):
     parent._stattracker_compare_player = ""
     parent._stattracker_selected_timeline_items = []
     parent._stattracker_selected_plot_metrics = []
+    parent._stattracker_timeline_scale = "match"
+    parent._stattracker_timeline_window_mode = "all"
+    parent._stattracker_timeline_from_index = 0
+    parent._stattracker_timeline_to_index = 0
+    parent._stattracker_timeline_axis_labels = []
+    parent._stattracker_range_from_combo = None
+    parent._stattracker_range_to_combo = None
+    parent._stattracker_range_window_combo = None
     parent._stattracker_plot_container = None
     parent._stattracker_timeline_combo = None
     parent._stattracker_on_update = lambda: on_stattracker_data_updated(parent)

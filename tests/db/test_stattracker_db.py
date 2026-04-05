@@ -258,6 +258,46 @@ class TestFetchPlayerMapStats:
         assert rows[0]["map_wins"] == 1
 
 
+class TestFetchPlayerWeaponRoundSeries:
+    def test_fetch_round_series_rows(self, db_conn, db_file, seed_match):
+        from db.stattracker_db import (
+            fetch_player_weapon_round_series,
+            upsert_player_round_weapon_stats_many,
+        )
+
+        seed_match(
+            match_kwargs={"match_id": "700", "start_time": "2026-02-01T20:00:00"},
+            map_kwargs={"map_number": 0, "map_name": "de_dust2", "start_time": "2026-02-01T20:00:00"},
+        )
+
+        upsert_player_round_weapon_stats_many(
+            [
+                {
+                    "steamid64": "76561198000000001",
+                    "match_id": "700",
+                    "map_number": 0,
+                    "round_num": 1,
+                    "weapon": "ak-47",
+                    "shots_fired": 10,
+                    "shots_hit": 4,
+                    "kills": 1,
+                    "headshot_kills": 1,
+                    "damage": 100,
+                    "updated_at": "2026-02-01T20:01:00",
+                }
+            ],
+            conn=db_conn,
+        )
+        db_conn.commit()
+
+        with _patch_conn("db.stattracker_db.get_conn", db_file):
+            rows = fetch_player_weapon_round_series("76561198000000001")
+
+        assert len(rows) == 1
+        assert str(rows[0]["weapon"]) == "ak-47"
+        assert int(rows[0]["round_num"]) == 1
+
+
 # ---------------------------------------------------------------------------
 # fetch_player_overview
 # ---------------------------------------------------------------------------

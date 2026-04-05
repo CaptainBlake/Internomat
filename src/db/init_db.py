@@ -242,6 +242,31 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_player_weapon_match_map ON player_map_weapon_stats(match_id, map_number)"
         )
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS player_round_weapon_stats (
+                steamid64 TEXT NOT NULL,
+                match_id TEXT NOT NULL,
+                map_number INTEGER NOT NULL,
+                round_num INTEGER NOT NULL,
+                weapon TEXT NOT NULL,
+                shots_fired INTEGER NOT NULL DEFAULT 0,
+                shots_hit INTEGER NOT NULL DEFAULT 0,
+                kills INTEGER NOT NULL DEFAULT 0,
+                headshot_kills INTEGER NOT NULL DEFAULT 0,
+                damage INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (steamid64, match_id, map_number, round_num, weapon),
+                FOREIGN KEY (weapon) REFERENCES weapon_dim(weapon)
+            )
+        """)
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_player_round_weapon_player ON player_round_weapon_stats(steamid64)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_player_round_weapon_match_map_round ON player_round_weapon_stats(match_id, map_number, round_num)"
+        )
+
         # --- PHASE 4: MOVEMENT + TIMELINE ANALYTICS ---
         conn.execute("""
             CREATE TABLE IF NOT EXISTS player_map_movement_stats (
@@ -256,6 +281,14 @@ def init_db():
                 ticks_alive INTEGER NOT NULL DEFAULT 0,
                 alive_seconds REAL NOT NULL DEFAULT 0,
                 distance_per_round_units REAL NOT NULL DEFAULT 0,
+                freeze_distance_units REAL NOT NULL DEFAULT 0,
+                strafe_distance_units REAL NOT NULL DEFAULT 0,
+                strafe_ratio REAL NOT NULL DEFAULT 0,
+                stationary_ticks INTEGER NOT NULL DEFAULT 0,
+                sprint_ticks INTEGER NOT NULL DEFAULT 0,
+                stationary_ratio REAL NOT NULL DEFAULT 0,
+                sprint_ratio REAL NOT NULL DEFAULT 0,
+                strafe_ticks INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY (steamid64, match_id, map_number)
             )
@@ -269,10 +302,17 @@ def init_db():
                 round_num INTEGER NOT NULL,
                 side TEXT,
                 distance_units REAL NOT NULL DEFAULT 0,
+                live_distance_units REAL NOT NULL DEFAULT 0,
+                freeze_distance_units REAL NOT NULL DEFAULT 0,
+                strafe_distance_units REAL NOT NULL DEFAULT 0,
+                strafe_ratio REAL NOT NULL DEFAULT 0,
                 avg_speed_units_s REAL NOT NULL DEFAULT 0,
                 max_speed_units_s REAL NOT NULL DEFAULT 0,
                 ticks_alive INTEGER NOT NULL DEFAULT 0,
                 alive_seconds REAL NOT NULL DEFAULT 0,
+                stationary_ticks INTEGER NOT NULL DEFAULT 0,
+                sprint_ticks INTEGER NOT NULL DEFAULT 0,
+                strafe_ticks INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY (steamid64, match_id, map_number, round_num)
             )
@@ -287,12 +327,77 @@ def init_db():
                 bin_index INTEGER NOT NULL,
                 bin_start_sec REAL NOT NULL DEFAULT 0,
                 median_speed_m_s REAL NOT NULL DEFAULT 0,
+                mean_speed_m_s REAL NOT NULL DEFAULT 0,
+                p25_speed_m_s REAL NOT NULL DEFAULT 0,
+                p75_speed_m_s REAL NOT NULL DEFAULT 0,
+                max_speed_m_s REAL NOT NULL DEFAULT 0,
+                alive_ratio REAL NOT NULL DEFAULT 0,
                 samples INTEGER NOT NULL DEFAULT 0,
+                speed_samples INTEGER NOT NULL DEFAULT 0,
                 side TEXT,
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY (steamid64, match_id, map_number, round_num, bin_index)
             )
         """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS player_round_events (
+                steamid64 TEXT NOT NULL,
+                match_id TEXT NOT NULL,
+                map_number INTEGER NOT NULL,
+                round_num INTEGER NOT NULL,
+                side TEXT,
+                opening_attempt INTEGER NOT NULL DEFAULT 0,
+                opening_win INTEGER NOT NULL DEFAULT 0,
+                trade_kill_count INTEGER NOT NULL DEFAULT 0,
+                traded_death_count INTEGER NOT NULL DEFAULT 0,
+                clutch_enemy_count INTEGER NOT NULL DEFAULT 0,
+                clutch_win INTEGER NOT NULL DEFAULT 0,
+                won_round INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (steamid64, match_id, map_number, round_num)
+            )
+        """)
+
+        # Backward-compatible migration for movement/event enrichment columns.
+        pmm_columns = {row[1] for row in conn.execute("PRAGMA table_info(player_map_movement_stats)").fetchall()}
+        for col, col_type in [
+            ("freeze_distance_units", "REAL NOT NULL DEFAULT 0"),
+            ("strafe_distance_units", "REAL NOT NULL DEFAULT 0"),
+            ("strafe_ratio", "REAL NOT NULL DEFAULT 0"),
+            ("stationary_ticks", "INTEGER NOT NULL DEFAULT 0"),
+            ("sprint_ticks", "INTEGER NOT NULL DEFAULT 0"),
+            ("stationary_ratio", "REAL NOT NULL DEFAULT 0"),
+            ("sprint_ratio", "REAL NOT NULL DEFAULT 0"),
+            ("strafe_ticks", "INTEGER NOT NULL DEFAULT 0"),
+        ]:
+            if col not in pmm_columns:
+                conn.execute(f"ALTER TABLE player_map_movement_stats ADD COLUMN {col} {col_type}")
+
+        prm_columns = {row[1] for row in conn.execute("PRAGMA table_info(player_round_movement_stats)").fetchall()}
+        for col, col_type in [
+            ("live_distance_units", "REAL NOT NULL DEFAULT 0"),
+            ("freeze_distance_units", "REAL NOT NULL DEFAULT 0"),
+            ("strafe_distance_units", "REAL NOT NULL DEFAULT 0"),
+            ("strafe_ratio", "REAL NOT NULL DEFAULT 0"),
+            ("stationary_ticks", "INTEGER NOT NULL DEFAULT 0"),
+            ("sprint_ticks", "INTEGER NOT NULL DEFAULT 0"),
+            ("strafe_ticks", "INTEGER NOT NULL DEFAULT 0"),
+        ]:
+            if col not in prm_columns:
+                conn.execute(f"ALTER TABLE player_round_movement_stats ADD COLUMN {col} {col_type}")
+
+        prtb_columns = {row[1] for row in conn.execute("PRAGMA table_info(player_round_timeline_bins)").fetchall()}
+        for col, col_type in [
+            ("mean_speed_m_s", "REAL NOT NULL DEFAULT 0"),
+            ("p25_speed_m_s", "REAL NOT NULL DEFAULT 0"),
+            ("p75_speed_m_s", "REAL NOT NULL DEFAULT 0"),
+            ("max_speed_m_s", "REAL NOT NULL DEFAULT 0"),
+            ("alive_ratio", "REAL NOT NULL DEFAULT 0"),
+            ("speed_samples", "INTEGER NOT NULL DEFAULT 0"),
+        ]:
+            if col not in prtb_columns:
+                conn.execute(f"ALTER TABLE player_round_timeline_bins ADD COLUMN {col} {col_type}")
 
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_player_map_move_player ON player_map_movement_stats(steamid64)"
@@ -311,6 +416,12 @@ def init_db():
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_player_round_bins_match_map ON player_round_timeline_bins(match_id, map_number, round_num, bin_index)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_player_round_events_player ON player_round_events(steamid64)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_player_round_events_match_map ON player_round_events(match_id, map_number, round_num)"
         )
 
         weapon_seed_rows = list(iter_seed_weapon_rows())

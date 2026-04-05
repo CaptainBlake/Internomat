@@ -116,6 +116,77 @@ def upsert_player_map_weapon_stats_many(rows, conn=None):
         executemany_write(c, query, params)
 
 
+def upsert_player_round_weapon_stats_many(rows, conn=None):
+    if not rows:
+        return
+
+    query = """
+        INSERT INTO player_round_weapon_stats (
+            steamid64,
+            match_id,
+            map_number,
+            round_num,
+            weapon,
+            shots_fired,
+            shots_hit,
+            kills,
+            headshot_kills,
+            damage,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(steamid64, match_id, map_number, round_num, weapon) DO UPDATE SET
+            shots_fired = excluded.shots_fired,
+            shots_hit = excluded.shots_hit,
+            kills = excluded.kills,
+            headshot_kills = excluded.headshot_kills,
+            damage = excluded.damage,
+            updated_at = excluded.updated_at
+    """
+
+    params = [
+        (
+            str(row.get("steamid64") or ""),
+            str(row.get("match_id") or ""),
+            int(row.get("map_number") or 0),
+            int(row.get("round_num") or 0),
+            str(row.get("weapon") or ""),
+            int(row.get("shots_fired") or 0),
+            int(row.get("shots_hit") or 0),
+            int(row.get("kills") or 0),
+            int(row.get("headshot_kills") or 0),
+            int(row.get("damage") or 0),
+            str(row.get("updated_at") or ""),
+        )
+        for row in rows
+        if isinstance(row, dict)
+        and str(row.get("steamid64") or "").strip()
+        and str(row.get("match_id") or "").strip()
+        and int(row.get("round_num") or 0) > 0
+        and str(row.get("weapon") or "").strip()
+    ]
+
+    if not params:
+        return
+
+    with optional_conn(conn, commit=True) as c:
+        discovered_weapons = sorted({p[4] for p in params if str(p[4]).strip()})
+        if discovered_weapons:
+            executemany_write(
+                c,
+                """
+                INSERT INTO weapon_dim (weapon, display_name, category, source, is_active, first_seen_at, updated_at)
+                VALUES (?, ?, 'unknown', 'observed', 1, datetime('now'), datetime('now'))
+                ON CONFLICT(weapon) DO UPDATE SET
+                    is_active = 1,
+                    updated_at = datetime('now')
+                """,
+                [(w, w) for w in discovered_weapons],
+            )
+
+        executemany_write(c, query, params)
+
+
 def upsert_player_map_movement_stats_many(rows, conn=None):
     if not rows:
         return
@@ -133,9 +204,17 @@ def upsert_player_map_movement_stats_many(rows, conn=None):
             ticks_alive,
             alive_seconds,
             distance_per_round_units,
+            freeze_distance_units,
+            strafe_distance_units,
+            strafe_ratio,
+            stationary_ticks,
+            sprint_ticks,
+            stationary_ratio,
+            sprint_ratio,
+            strafe_ticks,
             updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(steamid64, match_id, map_number) DO UPDATE SET
             total_distance_units = excluded.total_distance_units,
             total_distance_m = excluded.total_distance_m,
@@ -145,6 +224,14 @@ def upsert_player_map_movement_stats_many(rows, conn=None):
             ticks_alive = excluded.ticks_alive,
             alive_seconds = excluded.alive_seconds,
             distance_per_round_units = excluded.distance_per_round_units,
+            freeze_distance_units = excluded.freeze_distance_units,
+            strafe_distance_units = excluded.strafe_distance_units,
+            strafe_ratio = excluded.strafe_ratio,
+            stationary_ticks = excluded.stationary_ticks,
+            sprint_ticks = excluded.sprint_ticks,
+            stationary_ratio = excluded.stationary_ratio,
+            sprint_ratio = excluded.sprint_ratio,
+            strafe_ticks = excluded.strafe_ticks,
             updated_at = excluded.updated_at
     """
 
@@ -161,6 +248,14 @@ def upsert_player_map_movement_stats_many(rows, conn=None):
             int(row.get("ticks_alive") or 0),
             float(row.get("alive_seconds") or 0.0),
             float(row.get("distance_per_round_units") or 0.0),
+            float(row.get("freeze_distance_units") or 0.0),
+            float(row.get("strafe_distance_units") or 0.0),
+            float(row.get("strafe_ratio") or 0.0),
+            int(row.get("stationary_ticks") or 0),
+            int(row.get("sprint_ticks") or 0),
+            float(row.get("stationary_ratio") or 0.0),
+            float(row.get("sprint_ratio") or 0.0),
+            int(row.get("strafe_ticks") or 0),
             str(row.get("updated_at") or ""),
         )
         for row in rows
@@ -188,20 +283,34 @@ def upsert_player_round_movement_stats_many(rows, conn=None):
             round_num,
             side,
             distance_units,
+            live_distance_units,
+            freeze_distance_units,
+            strafe_distance_units,
+            strafe_ratio,
             avg_speed_units_s,
             max_speed_units_s,
             ticks_alive,
             alive_seconds,
+            stationary_ticks,
+            sprint_ticks,
+            strafe_ticks,
             updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(steamid64, match_id, map_number, round_num) DO UPDATE SET
             side = excluded.side,
             distance_units = excluded.distance_units,
+            live_distance_units = excluded.live_distance_units,
+            freeze_distance_units = excluded.freeze_distance_units,
+            strafe_distance_units = excluded.strafe_distance_units,
+            strafe_ratio = excluded.strafe_ratio,
             avg_speed_units_s = excluded.avg_speed_units_s,
             max_speed_units_s = excluded.max_speed_units_s,
             ticks_alive = excluded.ticks_alive,
             alive_seconds = excluded.alive_seconds,
+            stationary_ticks = excluded.stationary_ticks,
+            sprint_ticks = excluded.sprint_ticks,
+            strafe_ticks = excluded.strafe_ticks,
             updated_at = excluded.updated_at
     """
 
@@ -213,10 +322,17 @@ def upsert_player_round_movement_stats_many(rows, conn=None):
             int(row.get("round_num") or 0),
             str(row.get("side") or ""),
             float(row.get("distance_units") or 0.0),
+            float(row.get("live_distance_units") or 0.0),
+            float(row.get("freeze_distance_units") or 0.0),
+            float(row.get("strafe_distance_units") or 0.0),
+            float(row.get("strafe_ratio") or 0.0),
             float(row.get("avg_speed_units_s") or 0.0),
             float(row.get("max_speed_units_s") or 0.0),
             int(row.get("ticks_alive") or 0),
             float(row.get("alive_seconds") or 0.0),
+            int(row.get("stationary_ticks") or 0),
+            int(row.get("sprint_ticks") or 0),
+            int(row.get("strafe_ticks") or 0),
             str(row.get("updated_at") or ""),
         )
         for row in rows
@@ -246,15 +362,27 @@ def upsert_player_round_timeline_bins_many(rows, conn=None):
             bin_index,
             bin_start_sec,
             median_speed_m_s,
+            mean_speed_m_s,
+            p25_speed_m_s,
+            p75_speed_m_s,
+            max_speed_m_s,
+            alive_ratio,
             samples,
+            speed_samples,
             side,
             updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(steamid64, match_id, map_number, round_num, bin_index) DO UPDATE SET
             bin_start_sec = excluded.bin_start_sec,
             median_speed_m_s = excluded.median_speed_m_s,
+            mean_speed_m_s = excluded.mean_speed_m_s,
+            p25_speed_m_s = excluded.p25_speed_m_s,
+            p75_speed_m_s = excluded.p75_speed_m_s,
+            max_speed_m_s = excluded.max_speed_m_s,
+            alive_ratio = excluded.alive_ratio,
             samples = excluded.samples,
+            speed_samples = excluded.speed_samples,
             side = excluded.side,
             updated_at = excluded.updated_at
     """
@@ -268,8 +396,77 @@ def upsert_player_round_timeline_bins_many(rows, conn=None):
             int(row.get("bin_index") or 0),
             float(row.get("bin_start_sec") or 0.0),
             float(row.get("median_speed_m_s") or 0.0),
+            float(row.get("mean_speed_m_s") or 0.0),
+            float(row.get("p25_speed_m_s") or 0.0),
+            float(row.get("p75_speed_m_s") or 0.0),
+            float(row.get("max_speed_m_s") or 0.0),
+            float(row.get("alive_ratio") or 0.0),
             int(row.get("samples") or 0),
+            int(row.get("speed_samples") or 0),
             str(row.get("side") or ""),
+            str(row.get("updated_at") or ""),
+        )
+        for row in rows
+        if isinstance(row, dict)
+        and str(row.get("steamid64") or "").strip()
+        and str(row.get("match_id") or "").strip()
+        and int(row.get("round_num") or 0) > 0
+    ]
+
+    if not params:
+        return
+
+    with optional_conn(conn, commit=True) as c:
+        executemany_write(c, query, params)
+
+
+def upsert_player_round_events_many(rows, conn=None):
+    if not rows:
+        return
+
+    query = """
+        INSERT INTO player_round_events (
+            steamid64,
+            match_id,
+            map_number,
+            round_num,
+            side,
+            opening_attempt,
+            opening_win,
+            trade_kill_count,
+            traded_death_count,
+            clutch_enemy_count,
+            clutch_win,
+            won_round,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(steamid64, match_id, map_number, round_num) DO UPDATE SET
+            side = excluded.side,
+            opening_attempt = excluded.opening_attempt,
+            opening_win = excluded.opening_win,
+            trade_kill_count = excluded.trade_kill_count,
+            traded_death_count = excluded.traded_death_count,
+            clutch_enemy_count = excluded.clutch_enemy_count,
+            clutch_win = excluded.clutch_win,
+            won_round = excluded.won_round,
+            updated_at = excluded.updated_at
+    """
+
+    params = [
+        (
+            str(row.get("steamid64") or ""),
+            str(row.get("match_id") or ""),
+            int(row.get("map_number") or 0),
+            int(row.get("round_num") or 0),
+            str(row.get("side") or ""),
+            int(row.get("opening_attempt") or 0),
+            int(row.get("opening_win") or 0),
+            int(row.get("trade_kill_count") or 0),
+            int(row.get("traded_death_count") or 0),
+            int(row.get("clutch_enemy_count") or 0),
+            int(row.get("clutch_win") or 0),
+            int(row.get("won_round") or 0),
             str(row.get("updated_at") or ""),
         )
         for row in rows
@@ -319,7 +516,15 @@ def fetch_player_movement_match_series(steamid64, maps=None):
                 COALESCE(pmms.max_speed_units_s, 0) AS max_speed_units_s,
                 COALESCE(pmms.ticks_alive, 0) AS ticks_alive,
                 COALESCE(pmms.alive_seconds, 0) AS alive_seconds,
-                COALESCE(pmms.distance_per_round_units, 0) AS distance_per_round_units
+                COALESCE(pmms.distance_per_round_units, 0) AS distance_per_round_units,
+                COALESCE(pmms.freeze_distance_units, 0) AS freeze_distance_units,
+                COALESCE(pmms.strafe_distance_units, 0) AS strafe_distance_units,
+                COALESCE(pmms.strafe_ratio, 0) AS strafe_ratio,
+                COALESCE(pmms.stationary_ticks, 0) AS stationary_ticks,
+                COALESCE(pmms.sprint_ticks, 0) AS sprint_ticks,
+                COALESCE(pmms.stationary_ratio, 0) AS stationary_ratio,
+                COALESCE(pmms.sprint_ratio, 0) AS sprint_ratio,
+                COALESCE(pmms.strafe_ticks, 0) AS strafe_ticks
             FROM player_map_movement_stats pmms
             LEFT JOIN match_maps mm
               ON mm.match_id = pmms.match_id AND mm.map_number = pmms.map_number
@@ -327,6 +532,122 @@ def fetch_player_movement_match_series(steamid64, maps=None):
             WHERE {where}
             ORDER BY COALESCE(mm.start_time, m.start_time, pmms.match_id) ASC,
                      pmms.map_number ASC
+            """,
+            tuple(params),
+        ).fetchall()
+
+
+def fetch_player_movement_round_series(steamid64, maps=None):
+    sid = str(steamid64 or "").strip()
+    if not sid:
+        return []
+
+    if maps is not None and len(maps) == 0:
+        return []
+
+    conditions = ["prms.steamid64 = ?"]
+    params = [sid]
+
+    if maps:
+        placeholders = ",".join("?" for _ in maps)
+        conditions.append(f"COALESCE(mm.map_name, 'unknown') IN ({placeholders})")
+        params.extend([str(m) for m in maps])
+
+    where = " AND ".join(conditions)
+
+    with get_conn() as conn:
+        return conn.execute(
+            f"""
+            SELECT
+                prms.match_id,
+                prms.map_number,
+                prms.round_num,
+                COALESCE(mm.map_name, 'unknown') AS map_name,
+                COALESCE(mm.start_time, m.start_time, '') AS start_time,
+                COALESCE(prms.live_distance_units, prms.distance_units, 0) AS total_distance_units,
+                COALESCE(prms.live_distance_units, prms.distance_units, 0) * 0.0254 AS total_distance_m,
+                COALESCE(prms.avg_speed_units_s, 0) AS avg_speed_units_s,
+                COALESCE(prms.avg_speed_units_s, 0) * 0.0254 AS avg_speed_m_s,
+                COALESCE(prms.max_speed_units_s, 0) AS max_speed_units_s,
+                COALESCE(prms.ticks_alive, 0) AS ticks_alive,
+                COALESCE(prms.alive_seconds, 0) AS alive_seconds,
+                COALESCE(prms.strafe_distance_units, 0) AS strafe_distance_units,
+                COALESCE(prms.strafe_ratio, 0) AS strafe_ratio,
+                COALESCE(prms.stationary_ticks, 0) AS stationary_ticks,
+                COALESCE(prms.sprint_ticks, 0) AS sprint_ticks,
+                COALESCE(prms.strafe_ticks, 0) AS strafe_ticks,
+                CASE
+                    WHEN COALESCE(prms.ticks_alive, 0) > 0
+                    THEN CAST(COALESCE(prms.stationary_ticks, 0) AS REAL) / CAST(prms.ticks_alive AS REAL)
+                    ELSE 0
+                END AS stationary_ratio,
+                CASE
+                    WHEN COALESCE(prms.ticks_alive, 0) > 0
+                    THEN CAST(COALESCE(prms.sprint_ticks, 0) AS REAL) / CAST(prms.ticks_alive AS REAL)
+                    ELSE 0
+                END AS sprint_ratio
+            FROM player_round_movement_stats prms
+            LEFT JOIN match_maps mm
+              ON mm.match_id = prms.match_id AND mm.map_number = prms.map_number
+            LEFT JOIN matches m ON m.match_id = prms.match_id
+            WHERE {where}
+            ORDER BY COALESCE(mm.start_time, m.start_time, prms.match_id) ASC,
+                     prms.map_number ASC,
+                     prms.round_num ASC
+            """,
+            tuple(params),
+        ).fetchall()
+
+
+def fetch_player_weapon_round_series(steamid64, weapons=None, map_name=None):
+    sid = str(steamid64 or "").strip()
+    if not sid:
+        return []
+
+    if weapons is not None and len(weapons) == 0:
+        return []
+
+    conditions = ["prws.steamid64 = ?"]
+    params = [sid]
+
+    if map_name and str(map_name).strip().lower() != "all":
+        conditions.append("COALESCE(mm.map_name, 'unknown') = ?")
+        params.append(str(map_name).strip())
+
+    if weapons:
+        placeholders = ",".join("?" for _ in weapons)
+        conditions.append(f"COALESCE(wa.canonical_weapon, prws.weapon) IN ({placeholders})")
+        params.extend([str(w) for w in weapons])
+
+    where = " AND ".join(conditions)
+
+    with get_conn() as conn:
+        return conn.execute(
+            f"""
+            SELECT
+                prws.match_id,
+                prws.map_number,
+                prws.round_num,
+                COALESCE(mm.map_name, 'unknown') AS map_name,
+                COALESCE(mm.start_time, m.start_time, '') AS start_time,
+                COALESCE(wa.canonical_weapon, prws.weapon) AS weapon,
+                COALESCE(NULLIF(wd.category, ''), 'unknown') AS category,
+                COALESCE(prws.shots_fired, 0) AS shots_fired,
+                COALESCE(prws.shots_hit, 0) AS shots_hit,
+                COALESCE(prws.kills, 0) AS kills,
+                COALESCE(prws.headshot_kills, 0) AS headshot_kills,
+                COALESCE(prws.damage, 0) AS damage
+            FROM player_round_weapon_stats prws
+            LEFT JOIN weapon_alias wa ON wa.raw_weapon = prws.weapon
+            LEFT JOIN weapon_dim wd ON wd.weapon = COALESCE(wa.canonical_weapon, prws.weapon)
+            LEFT JOIN match_maps mm
+              ON mm.match_id = prws.match_id AND mm.map_number = prws.map_number
+            LEFT JOIN matches m ON m.match_id = prws.match_id
+            WHERE {where}
+            ORDER BY COALESCE(mm.start_time, m.start_time, prws.match_id) ASC,
+                     prws.map_number ASC,
+                     prws.round_num ASC,
+                     weapon ASC
             """,
             tuple(params),
         ).fetchall()

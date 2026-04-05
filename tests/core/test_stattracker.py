@@ -3,13 +3,16 @@
 import pytest
 
 from core.stats.stattracker import (
+    get_map_match_series,
     get_movement_match_series,
     get_movement_plot_metric_options,
+    get_movement_round_series,
     get_overview,
     get_player_dashboard,
     get_player_options,
     get_player_samples,
     get_player_weapon_categories,
+    get_weapon_round_series,
 )
 
 
@@ -194,11 +197,21 @@ class TestGetPlayerDashboard:
 
 
 class TestMovementSeries:
+    def test_map_series_x_labels_use_timestamps(self, seeded_db, monkeypatch_db):
+        series = get_map_match_series("76561198000000001", metric="kills")
+        labels = list(series.get("x_labels") or [])
+
+        assert labels
+        assert labels[0] == "de_dust2\n01-10 20:00"
+        assert all("de_" in str(label) for label in labels)
+
     def test_metric_options_include_avg_speed(self):
         opts = get_movement_plot_metric_options()
         keys = {o["key"] for o in opts}
         assert "avg_speed_m_s" in keys
         assert "max_speed_units_s" in keys
+        assert "camp_time_s" in keys
+        assert "freeze_distance_m" not in keys
 
     def test_get_movement_match_series(self, db_conn, monkeypatch_db):
         from db.stattracker_db import upsert_player_map_movement_stats_many
@@ -229,3 +242,68 @@ class TestMovementSeries:
         assert series["metric_label"] == "Avg Speed (m/s)"
         assert len(series["x_labels"]) >= 1
         assert "Movement" in (series["series"] or {})
+
+    def test_get_movement_round_series(self, db_conn, monkeypatch_db):
+        from db.stattracker_db import upsert_player_round_movement_stats_many
+
+        upsert_player_round_movement_stats_many(
+            [
+                {
+                    "steamid64": "76561198000000001",
+                    "match_id": "100",
+                    "map_number": 0,
+                    "round_num": 1,
+                    "distance_units": 500,
+                    "live_distance_units": 450,
+                    "strafe_distance_units": 120,
+                    "strafe_ratio": 0.2,
+                    "avg_speed_units_s": 190,
+                    "max_speed_units_s": 280,
+                    "ticks_alive": 300,
+                    "alive_seconds": 2.34,
+                    "stationary_ticks": 60,
+                    "sprint_ticks": 120,
+                    "strafe_ticks": 45,
+                    "updated_at": "2026-04-05T00:00:00",
+                },
+            ],
+            conn=db_conn,
+        )
+        db_conn.commit()
+
+        series = get_movement_round_series("76561198000000001", metric="avg_speed_m_s")
+
+        assert series["metric_label"] == "Avg Speed (m/s)"
+        assert len(series["x_labels"]) >= 1
+        assert "R01" in str(series["x_labels"][0])
+        assert "Movement" in (series["series"] or {})
+
+    def test_get_weapon_round_series(self, db_conn, monkeypatch_db):
+        from db.stattracker_db import upsert_player_round_weapon_stats_many
+
+        upsert_player_round_weapon_stats_many(
+            [
+                {
+                    "steamid64": "76561198000000001",
+                    "match_id": "100",
+                    "map_number": 0,
+                    "round_num": 1,
+                    "weapon": "ak-47",
+                    "shots_fired": 12,
+                    "shots_hit": 5,
+                    "kills": 1,
+                    "headshot_kills": 1,
+                    "damage": 100,
+                    "updated_at": "2026-04-05T00:00:00",
+                },
+            ],
+            conn=db_conn,
+        )
+        db_conn.commit()
+
+        series = get_weapon_round_series("76561198000000001", metric="accuracy")
+
+        assert series["metric_label"] == "Accuracy %"
+        assert len(series["x_labels"]) >= 1
+        assert "R01" in str(series["x_labels"][0])
+        assert "ak-47" in (series["series"] or {})

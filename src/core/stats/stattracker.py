@@ -1,6 +1,7 @@
 from db import stattracker_db as stattracker_repo
 from core.stats import metrics as M
 import services.logger as logger
+from datetime import datetime
 
 
 def get_overview():
@@ -258,6 +259,14 @@ MOVEMENT_PLOT_METRICS = {
     "max_speed_units_s": {"label": "Max Speed (units/s)", "fn": lambda r: float(r["max_speed_units_s"])},
     "total_distance_m": {"label": "Distance (m)", "fn": lambda r: float(r["total_distance_m"])},
     "alive_seconds": {"label": "Alive Time (s)", "fn": lambda r: float(r["alive_seconds"])},
+    "strafe_ratio": {"label": "Strafe Ratio %", "fn": lambda r: float(r["strafe_ratio"] or 0.0) * 100.0},
+    "stationary_ratio": {"label": "Stationary Ratio %", "fn": lambda r: float(r["stationary_ratio"] or 0.0) * 100.0},
+    "sprint_ratio": {"label": "Sprint Ratio %", "fn": lambda r: float(r["sprint_ratio"] or 0.0) * 100.0},
+    "strafe_distance_m": {"label": "Strafe Distance (m)", "fn": lambda r: float(r["strafe_distance_units"] or 0.0) * 0.0254},
+    "camp_time_s": {
+        "label": "Camp Time (s)",
+        "fn": lambda r: float(r["stationary_ratio"] or 0.0) * float(r["alive_seconds"] or 0.0),
+    },
 }
 
 
@@ -273,6 +282,33 @@ def get_movement_plot_metric_options():
     return [{"key": k, "label": v["label"]} for k, v in MOVEMENT_PLOT_METRICS.items()]
 
 
+def _format_match_time_subtitle(start_time):
+    text = str(start_time or "").strip()
+    if not text:
+        return ""
+
+    normalized = text.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized).strftime("%m-%d %H:%M")
+    except ValueError:
+        cleaned = text.replace("T", " ")
+        if len(cleaned) >= 16:
+            # Keep the compact "MM-DD HH:MM" style for readability.
+            return cleaned[5:16]
+        return cleaned
+
+
+def _format_match_x_label(row):
+    map_name = str(row["map_name"] or "unknown").strip() or "unknown"
+    subtitle = _format_match_time_subtitle(row["start_time"])
+    if subtitle:
+        return f"{map_name}\n{subtitle}"
+
+    match_id = str(row["match_id"] or "?")
+    map_number = int(row["map_number"] or 0)
+    return f"{map_name}\n{match_id}:{map_number}"
+
+
 def _build_match_series(rows, metric_fn, series_key_fn, log_tag):
     """Generic helper: build plot-ready {x_labels, series} from DB rows.
 
@@ -281,12 +317,21 @@ def _build_match_series(rows, metric_fn, series_key_fn, log_tag):
     match_keys = []
     match_key_set = set()
     x_labels = []
+    used_x_labels = set()
     for r in rows:
         key = (str(r["match_id"]), int(r["map_number"]))
         if key not in match_key_set:
             match_key_set.add(key)
             match_keys.append(key)
-            x_labels.append(str(r["map_name"] or "?"))
+            label = _format_match_x_label(r)
+            if label in used_x_labels:
+                lines = label.split("\n", 1)
+                if len(lines) == 2:
+                    label = f"{lines[0]}\n{lines[1]} · M{int(r['map_number']) + 1}"
+                else:
+                    label = f"{label} · M{int(r['map_number']) + 1}"
+            used_x_labels.add(label)
+            x_labels.append(label)
 
     match_index = {k: i for i, k in enumerate(match_keys)}
 
@@ -302,6 +347,46 @@ def _build_match_series(rows, metric_fn, series_key_fn, log_tag):
         series[s_key][idx] = metric_fn(r)
 
     return match_keys, x_labels, series
+
+
+def _build_round_series(rows, metric_fn, series_key_fn, log_tag):
+    round_keys = []
+    round_key_set = set()
+    x_labels = []
+    used_x_labels = set()
+
+    for r in rows:
+        key = (str(r["match_id"]), int(r["map_number"]), int(r["round_num"]))
+        if key in round_key_set:
+            continue
+        round_key_set.add(key)
+        round_keys.append(key)
+
+        map_name = str(r["map_name"] or "unknown").strip() or "unknown"
+        round_num = int(r["round_num"] or 0)
+        subtitle = _format_match_time_subtitle(r["start_time"])
+        label = f"{map_name} R{round_num:02d}"
+        if subtitle:
+            label = f"{label}\n{subtitle}"
+
+        if label in used_x_labels:
+            label = f"{label} · {str(r['match_id'])}:{int(r['map_number'])}"
+        used_x_labels.add(label)
+        x_labels.append(label)
+
+    round_index = {k: i for i, k in enumerate(round_keys)}
+    series: dict[str, list] = {}
+    for r in rows:
+        s_key = series_key_fn(r)
+        key = (str(r["match_id"]), int(r["map_number"]), int(r["round_num"]))
+        idx = round_index.get(key)
+        if idx is None:
+            continue
+        if s_key not in series:
+            series[s_key] = [None] * len(round_keys)
+        series[s_key][idx] = metric_fn(r)
+
+    return round_keys, x_labels, series
 
 
 def get_weapon_match_series(steamid64, weapons=None, metric="accuracy", map_name=None):
@@ -325,6 +410,30 @@ def get_weapon_match_series(steamid64, weapons=None, metric="accuracy", map_name
         "x_labels": x_labels,
         "series": series,
         "match_keys": [f"{mk[0]}:{mk[1]}" for mk in match_keys],
+    }
+
+
+def get_weapon_round_series(steamid64, weapons=None, metric="accuracy", map_name=None):
+    sid = str(steamid64 or "").strip()
+    if not sid:
+        return {"metric_label": "", "x_labels": [], "series": {}, "match_keys": []}
+
+    metric_def = PLOT_METRICS.get(metric, PLOT_METRICS["accuracy"])
+    rows = stattracker_repo.fetch_player_weapon_round_series(sid, weapons=weapons, map_name=map_name)
+    round_keys, x_labels, series = _build_round_series(
+        rows, metric_def["fn"], lambda r: str(r["weapon"]), "weapon-round",
+    )
+
+    logger.log(
+        f"[STATTRACKER] weapon round series steamid={sid[:8]} metric={metric} "
+        f"rounds={len(round_keys)} weapons={len(series)}",
+        level="DEBUG",
+    )
+    return {
+        "metric_label": metric_def["label"],
+        "x_labels": x_labels,
+        "series": series,
+        "match_keys": [f"{rk[0]}:{rk[1]}:{rk[2]}" for rk in round_keys],
     }
 
 
@@ -373,4 +482,28 @@ def get_movement_match_series(steamid64, maps=None, metric="avg_speed_m_s"):
         "x_labels": x_labels,
         "series": series,
         "match_keys": [f"{mk[0]}:{mk[1]}" for mk in match_keys],
+    }
+
+
+def get_movement_round_series(steamid64, maps=None, metric="avg_speed_m_s"):
+    sid = str(steamid64 or "").strip()
+    if not sid:
+        return {"metric_label": "", "x_labels": [], "series": {}, "match_keys": []}
+
+    metric_def = MOVEMENT_PLOT_METRICS.get(metric, MOVEMENT_PLOT_METRICS["avg_speed_m_s"])
+    rows = stattracker_repo.fetch_player_movement_round_series(sid, maps=maps)
+    round_keys, x_labels, series = _build_round_series(
+        rows, metric_def["fn"], lambda r: "Movement", "movement-round",
+    )
+
+    logger.log(
+        f"[STATTRACKER] movement round series steamid={sid[:8]} metric={metric} "
+        f"rounds={len(round_keys)}",
+        level="DEBUG",
+    )
+    return {
+        "metric_label": metric_def["label"],
+        "x_labels": x_labels,
+        "series": series,
+        "match_keys": [f"{rk[0]}:{rk[1]}:{rk[2]}" for rk in round_keys],
     }

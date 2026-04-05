@@ -54,6 +54,8 @@ def _on_main_view_changed(parent, combo):
     parent._stattracker_main_view = str(combo.currentData() or "weapons")
     parent._stattracker_selected_map = "all"
     parent._stattracker_selected_weapon = "all"
+    if parent._stattracker_main_view not in {"movement", "weapons"}:
+        parent._stattracker_timeline_scale = "match"
     if parent._stattracker_main_view in ("maps", "movement"):
         # Maps default to timeline mode for consistency with current UX direction.
         parent._stattracker_timeline = True
@@ -179,6 +181,33 @@ def _on_compare_player_changed(parent, combo):
 def _on_group_mode_changed(parent, combo):
     parent._stattracker_group_mode = str(combo.currentData() or "weapon")
     _on_timeline_selection_changed(parent)
+
+
+def _on_timeline_scale_changed(parent, combo):
+    selected = str(combo.currentData() or "match")
+    main_view = str(getattr(parent, "_stattracker_main_view", "weapons") or "weapons")
+    if main_view not in {"movement", "weapons"} and selected != "match":
+        selected = "match"
+    if selected == "tick":
+        # No raw tick persistence in DB; keep option visible but inactive.
+        selected = "round"
+
+    parent._stattracker_timeline_scale = selected
+    from .stattracker_tab import _refresh_plot_only
+    _refresh_plot_only(parent)
+
+
+def _on_timeline_window_mode_changed(parent, combo):
+    parent._stattracker_timeline_window_mode = str(combo.currentData() or "all")
+    from .stattracker_tab import _refresh_plot_only
+    _refresh_plot_only(parent)
+
+
+def _on_timeline_range_changed(parent, combo_from, combo_to):
+    parent._stattracker_timeline_from_index = int(combo_from.currentData() or 0)
+    parent._stattracker_timeline_to_index = int(combo_to.currentData() or 0)
+    from .stattracker_tab import _refresh_plot_only
+    _refresh_plot_only(parent)
 
 
 def _create_weapon_table_click_handler_internal(parent):
@@ -425,6 +454,81 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
         insight_row.addWidget(QLabel("Display:"))
         insight_row.addWidget(chart_mode_combo)
 
+        scale_combo = QComboBox()
+        scale_combo.setMinimumWidth(130)
+        scale_combo.addItem("Match", "match")
+        scale_combo.addItem("Round", "round")
+        scale_combo.addItem("Tick", "tick")
+        scale_value = str(getattr(parent, "_stattracker_timeline_scale", "match") or "match")
+        if main_view not in {"movement", "weapons"} and scale_value != "match":
+            scale_value = "match"
+            parent._stattracker_timeline_scale = "match"
+        scale_idx = scale_combo.findData(scale_value)
+        if scale_idx < 0:
+            scale_idx = 0
+        scale_combo.setCurrentIndex(scale_idx)
+
+        model = scale_combo.model()
+        round_idx = scale_combo.findData("round")
+        tick_idx = scale_combo.findData("tick")
+        if round_idx >= 0:
+            model.item(round_idx).setEnabled(main_view in {"movement", "weapons"})
+        if tick_idx >= 0:
+            model.item(tick_idx).setEnabled(False)
+
+        scale_combo.currentIndexChanged.connect(lambda _i: _on_timeline_scale_changed(parent, scale_combo))
+        insight_row.addWidget(QLabel("Scale:"))
+        insight_row.addWidget(scale_combo)
+
+        window_combo = QComboBox()
+        window_combo.setMinimumWidth(120)
+        window_combo.addItem("ALL", "all")
+        window_combo.addItem("From -> To", "range")
+        window_mode = str(getattr(parent, "_stattracker_timeline_window_mode", "all") or "all")
+        window_idx = window_combo.findData(window_mode)
+        if window_idx < 0:
+            window_idx = 0
+            parent._stattracker_timeline_window_mode = "all"
+        window_combo.setCurrentIndex(window_idx)
+        window_combo.currentIndexChanged.connect(lambda _i: _on_timeline_window_mode_changed(parent, window_combo))
+        insight_row.addWidget(QLabel("Window:"))
+        insight_row.addWidget(window_combo)
+
+        labels = list(getattr(parent, "_stattracker_timeline_axis_labels", []) or [])
+        combo_from = QComboBox()
+        combo_to = QComboBox()
+        combo_from.setMinimumWidth(120)
+        combo_to.setMinimumWidth(120)
+        if not labels:
+            combo_from.addItem("-", 0)
+            combo_to.addItem("-", 0)
+        else:
+            for idx_lbl, lbl in enumerate(labels):
+                short = str(lbl).replace("\n", " | ")
+                combo_from.addItem(short, idx_lbl)
+                combo_to.addItem(short, idx_lbl)
+
+        from_idx = int(getattr(parent, "_stattracker_timeline_from_index", 0) or 0)
+        to_default = max(0, len(labels) - 1)
+        to_idx = int(getattr(parent, "_stattracker_timeline_to_index", to_default) or to_default)
+        from_idx = max(0, min(combo_from.count() - 1, from_idx)) if combo_from.count() else 0
+        to_idx = max(0, min(combo_to.count() - 1, to_idx)) if combo_to.count() else 0
+        combo_from.setCurrentIndex(from_idx)
+        combo_to.setCurrentIndex(to_idx)
+
+        combo_from.currentIndexChanged.connect(lambda _i: _on_timeline_range_changed(parent, combo_from, combo_to))
+        combo_to.currentIndexChanged.connect(lambda _i: _on_timeline_range_changed(parent, combo_from, combo_to))
+        combo_from.setEnabled(window_mode == "range")
+        combo_to.setEnabled(window_mode == "range")
+        insight_row.addWidget(QLabel("From:"))
+        insight_row.addWidget(combo_from)
+        insight_row.addWidget(QLabel("To:"))
+        insight_row.addWidget(combo_to)
+
+        parent._stattracker_range_from_combo = combo_from
+        parent._stattracker_range_to_combo = combo_to
+        parent._stattracker_range_window_combo = window_combo
+
         if main_view == "weapons":
             group_combo = QComboBox()
             group_combo.addItem("Weapons", "weapon")
@@ -574,16 +678,32 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
     elif main_view == "movement":
         selected_map_local = str(getattr(parent, "_stattracker_selected_map", "all") or "all")
         map_filter = None if selected_map_local == "all" else [selected_map_local]
-        avg_speed = stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="avg_speed_m_s")
-        max_speed = stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="max_speed_units_s")
-        distance = stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="total_distance_m")
-        alive = stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="alive_seconds")
+        metric_series = {
+            "avg_speed_m_s": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="avg_speed_m_s"),
+            "max_speed_units_s": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="max_speed_units_s"),
+            "total_distance_m": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="total_distance_m"),
+            "alive_seconds": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="alive_seconds"),
+            "strafe_ratio": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="strafe_ratio"),
+            "stationary_ratio": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="stationary_ratio"),
+            "sprint_ratio": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="sprint_ratio"),
+            "strafe_distance_m": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="strafe_distance_m"),
+            "camp_time_s": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="camp_time_s"),
+        }
 
-        speed_vals = list((avg_speed.get("series") or {}).get("Movement") or [])
-        max_vals = list((max_speed.get("series") or {}).get("Movement") or [])
-        dist_vals = list((distance.get("series") or {}).get("Movement") or [])
-        alive_vals = list((alive.get("series") or {}).get("Movement") or [])
-        labels = list(avg_speed.get("x_labels") or [])
+        labels = list((metric_series.get("avg_speed_m_s") or {}).get("x_labels") or [])
+
+        def _vals(metric_key):
+            return list(((metric_series.get(metric_key) or {}).get("series") or {}).get("Movement") or [])
+
+        speed_vals = _vals("avg_speed_m_s")
+        max_vals = _vals("max_speed_units_s")
+        dist_vals = _vals("total_distance_m")
+        alive_vals = _vals("alive_seconds")
+        strafe_ratio_vals = _vals("strafe_ratio")
+        stationary_ratio_vals = _vals("stationary_ratio")
+        sprint_ratio_vals = _vals("sprint_ratio")
+        strafe_dist_vals = _vals("strafe_distance_m")
+        camp_time_vals = _vals("camp_time_s")
 
         movement_rows = []
         for idx, label in enumerate(labels):
@@ -593,11 +713,27 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
                 "-" if idx >= len(max_vals) or max_vals[idx] is None else f"{float(max_vals[idx]):.1f}",
                 "-" if idx >= len(dist_vals) or dist_vals[idx] is None else f"{float(dist_vals[idx]):.1f}",
                 "-" if idx >= len(alive_vals) or alive_vals[idx] is None else f"{float(alive_vals[idx]):.1f}",
+                "-" if idx >= len(strafe_ratio_vals) or strafe_ratio_vals[idx] is None else f"{float(strafe_ratio_vals[idx]):.1f}%",
+                "-" if idx >= len(stationary_ratio_vals) or stationary_ratio_vals[idx] is None else f"{float(stationary_ratio_vals[idx]):.1f}%",
+                "-" if idx >= len(sprint_ratio_vals) or sprint_ratio_vals[idx] is None else f"{float(sprint_ratio_vals[idx]):.1f}%",
+                "-" if idx >= len(strafe_dist_vals) or strafe_dist_vals[idx] is None else f"{float(strafe_dist_vals[idx]):.1f}",
+                "-" if idx >= len(camp_time_vals) or camp_time_vals[idx] is None else f"{float(camp_time_vals[idx]):.1f}",
             ])
 
         if movement_rows:
             movement_table = _build_table(
-                ["Map", "Avg Speed (m/s)", "Max Speed (u/s)", "Distance (m)", "Alive Time (s)"],
+                [
+                    "Map",
+                    "Avg Speed (m/s)",
+                    "Max Speed (u/s)",
+                    "Distance (m)",
+                    "Alive Time (s)",
+                    "Strafe %",
+                    "Stationary %",
+                    "Sprint %",
+                    "Strafe Dist (m)",
+                    "Camp Time (s)",
+                ],
                 movement_rows,
             )
             layout.addWidget(movement_table, 1)

@@ -270,6 +270,16 @@ class TestRestorePayloadToDB:
         assert row["headshot_kills"] == 1
         assert row["shots_fired"] == 50
 
+    def test_round_weapon_stats_inserted(self, restored):
+        conn, mid, mnum = restored
+        rows = conn.execute(
+            """SELECT steamid64, round_num, weapon, kills
+               FROM player_round_weapon_stats
+               WHERE match_id = ? AND map_number = ?""",
+            (mid, mnum),
+        ).fetchall()
+        assert len(rows) >= 3
+
     # -- demo flag --
     def test_match_demo_flag_set(self, restored):
         conn, mid, _ = restored
