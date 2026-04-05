@@ -37,7 +37,7 @@ def find_signtool():
 
 def sign_executable(exe_path: str):
     if not SIGN_PASSWORD:
-        raise RuntimeError("CERT_PASSWORD not set in .env")
+        raise RuntimeError("CERT_PASSWORD not set (environment variable or .env)")
 
     signtool = find_signtool()
 
