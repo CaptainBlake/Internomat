@@ -9,3 +9,4 @@ PySide6
 matplotlib
 seaborn
 mysql-connector-python
+pytest
