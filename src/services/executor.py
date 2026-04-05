@@ -44,7 +44,7 @@ def run_async(task, lock: Optional[Lock] = None, on_error=None):
 
     return True
 
-def shutdown():
+def shutdown(wait=True):
     global _is_shutdown
 
     with _state_lock:
@@ -52,4 +52,4 @@ def shutdown():
             return
         _is_shutdown = True
 
-    _executor.shutdown(wait=False, cancel_futures=True)
+    _executor.shutdown(wait=bool(wait), cancel_futures=True)

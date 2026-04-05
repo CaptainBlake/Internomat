@@ -72,6 +72,7 @@ def update_players(
 
     return pipeline.run_full_update(
         steam_ids,
+        run_matchzy_sync=False,
         on_progress=on_progress,
         on_player=_on_player,  
         on_error=on_error,
