@@ -13,11 +13,11 @@ from db.weapon_catalog import (
 # -- normalize_weapon_name: alias resolution --
 
 def test_normalize_m4a1():
-    assert normalize_weapon_name("m4a1") == "m4a1-s"
+    assert normalize_weapon_name("m4a1") == "m4a4"
 
 
 def test_normalize_weapon_m4a1():
-    assert normalize_weapon_name("weapon_m4a1") == "m4a1-s"
+    assert normalize_weapon_name("weapon_m4a1") == "m4a4"
 
 
 def test_normalize_tec9():
@@ -79,7 +79,7 @@ def test_normalize_whitespace_only():
 
 def test_normalize_uppercase_m4a1():
     """Input is lowered internally, so 'M4A1' should resolve."""
-    assert normalize_weapon_name("M4A1") == "m4a1-s"
+    assert normalize_weapon_name("M4A1") == "m4a4"
 
 
 # -- CS2_KNIFE_VARIANT_ALIASES all map to knife --

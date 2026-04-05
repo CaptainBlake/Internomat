@@ -2,8 +2,8 @@ from .connection_db import executemany_write, get_conn, optional_conn
 
 _WEAPON_FROM = """
     FROM player_map_weapon_stats pmws
-    LEFT JOIN weapon_alias wa ON wa.raw_weapon = pmws.weapon
-    LEFT JOIN weapon_dim wd ON wd.weapon = COALESCE(wa.canonical_weapon, pmws.weapon)
+    LEFT JOIN weapon_alias wa ON LOWER(wa.raw_weapon) = LOWER(pmws.weapon)
+    LEFT JOIN weapon_dim wd ON LOWER(wd.weapon) = LOWER(COALESCE(wa.canonical_weapon, pmws.weapon))
 """
 
 
@@ -750,8 +750,8 @@ def fetch_player_weapon_round_series(steamid64, weapons=None, map_name=None):
                 COALESCE(prws.headshot_kills, 0) AS headshot_kills,
                 COALESCE(prws.damage, 0) AS damage
             FROM player_round_weapon_stats prws
-            LEFT JOIN weapon_alias wa ON wa.raw_weapon = prws.weapon
-            LEFT JOIN weapon_dim wd ON wd.weapon = COALESCE(wa.canonical_weapon, prws.weapon)
+            LEFT JOIN weapon_alias wa ON LOWER(wa.raw_weapon) = LOWER(prws.weapon)
+            LEFT JOIN weapon_dim wd ON LOWER(wd.weapon) = LOWER(COALESCE(wa.canonical_weapon, prws.weapon))
             LEFT JOIN match_maps mm
               ON mm.match_id = prws.match_id AND mm.map_number = prws.map_number
             LEFT JOIN matches m ON m.match_id = prws.match_id

@@ -469,6 +469,49 @@ def init_db():
             level="INFO",
         )
 
+        # Normalize legacy stored weapon tokens to canonical ids so stattracker
+        # can categorize them correctly even before a full re-parse.
+        conn.execute(
+            """
+            UPDATE player_map_weapon_stats
+            SET weapon = CASE LOWER(weapon)
+                WHEN 'ak47' THEN 'ak-47'
+                WHEN 'weapon_ak47' THEN 'ak-47'
+                WHEN 'm4a1' THEN 'm4a4'
+                WHEN 'weapon_m4a1' THEN 'm4a4'
+                WHEN 'weapon_m4a4' THEN 'm4a4'
+                WHEN 'm4a1_silencer' THEN 'm4a1-s'
+                WHEN 'weapon_m4a1_silencer' THEN 'm4a1-s'
+                ELSE weapon
+            END
+            WHERE LOWER(weapon) IN (
+                'ak47', 'weapon_ak47',
+                'm4a1', 'weapon_m4a1', 'weapon_m4a4',
+                'm4a1_silencer', 'weapon_m4a1_silencer'
+            )
+            """
+        )
+        conn.execute(
+            """
+            UPDATE player_round_weapon_stats
+            SET weapon = CASE LOWER(weapon)
+                WHEN 'ak47' THEN 'ak-47'
+                WHEN 'weapon_ak47' THEN 'ak-47'
+                WHEN 'm4a1' THEN 'm4a4'
+                WHEN 'weapon_m4a1' THEN 'm4a4'
+                WHEN 'weapon_m4a4' THEN 'm4a4'
+                WHEN 'm4a1_silencer' THEN 'm4a1-s'
+                WHEN 'weapon_m4a1_silencer' THEN 'm4a1-s'
+                ELSE weapon
+            END
+            WHERE LOWER(weapon) IN (
+                'ak47', 'weapon_ak47',
+                'm4a1', 'weapon_m4a1', 'weapon_m4a4',
+                'm4a1_silencer', 'weapon_m4a1_silencer'
+            )
+            """
+        )
+
         # --- DEFAULT MAPS ---
         cur = conn.execute("SELECT COUNT(*) FROM maps")
         if cur.fetchone()[0] == 0:

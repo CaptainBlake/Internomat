@@ -631,6 +631,8 @@ def build_derived_weapon_stats(parsed_payload):
     stats = {}
     round_stats = {}
     kill_drop_events = []
+    shot_events_by_player_round = {}
+    kill_events_by_player_round = {}
 
     def ensure_entry(steamid64, weapon):
         if not steamid64 or not weapon:
@@ -663,6 +665,32 @@ def build_derived_weapon_stats(parsed_payload):
             }
         return round_stats[key]
 
+    def _register_shot_event(steamid64, round_num, tick, weapon):
+        if not steamid64 or int(round_num or 0) <= 0 or not weapon:
+            return
+        key = (str(steamid64), int(round_num))
+        shot_events_by_player_round.setdefault(key, []).append((int(tick or 0), str(weapon)))
+
+    def _register_kill_event(steamid64, round_num, tick, weapon):
+        if not steamid64 or int(round_num or 0) <= 0 or not weapon:
+            return
+        key = (str(steamid64), int(round_num))
+        kill_events_by_player_round.setdefault(key, []).append((int(tick or 0), str(weapon)))
+
+    def _infer_m4_variant_from_events(steamid64, round_num, tick, fallback_weapon):
+        key = (str(steamid64), int(round_num or 0))
+        events = (shot_events_by_player_round.get(key) or []) + (kill_events_by_player_round.get(key) or [])
+        if not events:
+            return fallback_weapon
+
+        nearest_tick, nearest_weapon = min(events, key=lambda ev: abs(int(ev[0]) - int(tick or 0)))
+        if abs(int(nearest_tick) - int(tick or 0)) > 96:
+            return fallback_weapon
+
+        if nearest_weapon in {"m4a4", "m4a1-s"}:
+            return nearest_weapon
+        return fallback_weapon
+
     # Shots fired per weapon
     for row in iter_rows(payload.get("shots")):
         sid = to_steamid64_string(
@@ -680,22 +708,44 @@ def build_derived_weapon_stats(parsed_payload):
         item["shots_fired"] += 1
 
         round_num = to_int(pick_value(row, ["round_num", "round", "round_number"]), default=0)
+        tick = to_int(pick_value(row, ["tick", "event_tick", "game_tick"]), default=0)
         if round_num > 0:
             item["_round_set"].add(round_num)
+            _register_shot_event(sid, round_num, tick, weapon)
             round_item = ensure_round_entry(sid, round_num, weapon)
             if round_item is not None:
                 round_item["shots_fired"] += 1
 
-    # Hits and damage per weapon from damages table
-    for row in iter_rows(payload.get("damages")):
+    # Pre-index kills as a secondary source for weapon variant disambiguation.
+    for row in iter_rows(payload.get("kills")):
         sid = to_steamid64_string(
             pick_value(row, ["attacker_steamid", "attacker_steamid64", "attacker"])
         )
         weapon = normalize_weapon_name(
             pick_value(row, ["weapon", "weapon_name", "weapon_class", "weapon_type", "weapon_item"])
         )
+        round_num = to_int(pick_value(row, ["round_num", "round", "round_number"]), default=0)
+        tick = to_int(pick_value(row, ["tick", "event_tick", "game_tick"]), default=0)
+        _register_kill_event(sid, round_num, tick, weapon)
+
+    # Hits and damage per weapon from damages table
+    for row in iter_rows(payload.get("damages")):
+        sid = to_steamid64_string(
+            pick_value(row, ["attacker_steamid", "attacker_steamid64", "attacker"])
+        )
+        raw_weapon_value = pick_value(row, ["weapon", "weapon_name", "weapon_class", "weapon_type", "weapon_item"])
+        weapon = normalize_weapon_name(raw_weapon_value)
         if not sid or not weapon:
             continue
+
+        round_num = to_int(pick_value(row, ["round_num", "round", "round_number"]), default=0)
+        tick = to_int(pick_value(row, ["tick", "event_tick", "game_tick"]), default=0)
+
+        # awpy damage events often emit generic "m4a1" for both CT M4 variants.
+        # Use nearest shot/kill event in the same player-round window to recover variant.
+        raw_weapon_token = str(raw_weapon_value or "").strip().lower()
+        if raw_weapon_token in {"m4a1", "weapon_m4a1"}:
+            weapon = _infer_m4_variant_from_events(sid, round_num, tick, weapon)
 
         attacker_side = normalize_side_label(
             pick_value(row, ["attacker_side", "attacker_team", "attacker_team_name"])

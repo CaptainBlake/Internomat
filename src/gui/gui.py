@@ -65,6 +65,7 @@ def resource_path(relative_path):
 
 
 MAIN_WINDOW = None
+_RELOADING_UI = False
 
 class InternomatWindow(QMainWindow):
     def __init__(self):
@@ -229,7 +230,7 @@ class InternomatWindow(QMainWindow):
         super().closeEvent(event)
 
         app = QApplication.instance()
-        if app is not None:
+        if app is not None and not _RELOADING_UI:
             app.quit()
 
 
@@ -263,13 +264,25 @@ def start_gui():
     return app
     
 def restart_window():
-    global MAIN_WINDOW
+    global MAIN_WINDOW, _RELOADING_UI
 
     logger.log("[GUI] Reloading UI", level="INFO")
 
-    if MAIN_WINDOW:
-        MAIN_WINDOW.close()
-        MAIN_WINDOW.deleteLater()
+    app = QApplication.instance()
+    previous_quit_on_last = app.quitOnLastWindowClosed() if app is not None else True
+    if app is not None:
+        app.setQuitOnLastWindowClosed(False)
 
-    MAIN_WINDOW = InternomatWindow()
-    MAIN_WINDOW.show()
+    _RELOADING_UI = True
+
+    try:
+        if MAIN_WINDOW:
+            MAIN_WINDOW.close()
+            MAIN_WINDOW.deleteLater()
+
+        MAIN_WINDOW = InternomatWindow()
+        MAIN_WINDOW.show()
+    finally:
+        _RELOADING_UI = False
+        if app is not None:
+            app.setQuitOnLastWindowClosed(previous_quit_on_last)

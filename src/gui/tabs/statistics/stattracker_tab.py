@@ -1170,6 +1170,7 @@ def build_stattracker_tab(parent):
     parent._stattracker_range_window_label = None
     parent._stattracker_plot_container = None
     parent._stattracker_timeline_combo = None
+    parent._stattracker_initial_focus_applied = False
     parent._stattracker_on_update = lambda: on_stattracker_data_updated(parent)
     parent._stattracker_refresh = lambda: refresh_stattracker(parent)
     refresh_stattracker(parent)
@@ -1258,14 +1259,33 @@ def refresh_stattracker(parent):
         layout.addWidget(hint, 1)
         return
 
-    selected_category = str(getattr(parent, "_stattracker_weapon_category", "all") or "all")
-
     # Global stats must always represent the full player profile, independent of insight filters.
     dashboard = stattracker.get_player_dashboard(
         selected_sid,
         min_weapon_shots=1,
         weapon_category="all",
     )
+
+    # First open defaults: rifles category with one focused weapon to avoid clutter.
+    if not bool(getattr(parent, "_stattracker_initial_focus_applied", False)):
+        weapon_rows = list(dashboard.get("weapon_rows") or [])
+        rifle_rows = [
+            row for row in weapon_rows
+            if str(row.get("category") or "").strip().lower() in {"rifle", "rifles"}
+        ]
+        if rifle_rows:
+            rifle_names = [str(row.get("weapon") or "") for row in rifle_rows if str(row.get("weapon") or "").strip()]
+            if "ak-47" in rifle_names:
+                preferred_weapon = "ak-47"
+            else:
+                preferred_weapon = sorted(rifle_names, key=lambda w: w.lower())[0]
+
+            parent._stattracker_weapon_category = "rifles"
+            parent._stattracker_selected_weapon = preferred_weapon
+            parent._stattracker_selected_timeline_items = [preferred_weapon]
+
+        parent._stattracker_initial_focus_applied = True
+
     kpis = dashboard.get("kpis") or {}
 
     # --- Global Stats ---
