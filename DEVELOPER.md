@@ -161,20 +161,62 @@ This separates logic (true randomness) from presentation (animated reveal).
 
 ## Build process
 
-The project uses PyInstaller to create a standalone executable.
+The project uses PyInstaller for app bundling and Inno Setup for installer creation.
 
-Run:
+### 1) Build app bundle (default: one-folder)
 
 ```bash
 python src/build.py
 ```
 
-check out the `src/build.py` file for specifics
-
 Output:
 
 ```txt
-dist/Internomat.exe
+dist/Internomat/
+  Internomat.exe
+  ...runtime files...
+```
+
+### 2) Optional: sign executable
+
+```bash
+python src/build.py --sign
+```
+
+Requirements:
+
+- `CERT_PASSWORD` in `.env`
+- certificate at `internomat.pfx`
+- Windows SDK (`signtool.exe`)
+
+### 3) Build installer wizard (install dir + desktop shortcut task)
+
+```bash
+python src/build.py --installer --version 0.1.0
+```
+
+If Inno Setup is not installed yet:
+
+```bash
+python src/build.py --installer --ensure-iscc --version 0.1.0
+```
+
+Requirements:
+
+- Inno Setup 6 (`ISCC.exe`) installed
+- `ISCC.exe` can be found via `INNO_SETUP_COMPILER`, system `PATH`, or common install locations
+- installer definition: `installer/Internomat.iss`
+
+Installer output:
+
+```txt
+dist/Internomat-Setup-<version>.exe
+```
+
+### Optional one-file build (debug/legacy)
+
+```bash
+python src/build.py --onefile
 ```
 
 ---
@@ -182,7 +224,8 @@ dist/Internomat.exe
 ## Notes
 
 - The build must be executed inside the virtual environment  
-- The `.env` file is bundled into the executable  
+- The `.env` file is **not** bundled into build artifacts  
+- Runtime secrets should be provided via OS environment variables or a local `.env` on the target machine  
 
 ---
 

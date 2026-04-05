@@ -16,14 +16,18 @@ from dotenv import load_dotenv
 import services.logger as logger
 from core.settings.settings import settings
 from threading import Lock
-from core.pathing import data_path, resource_path
+from core.pathing import data_path
+from core.security.secret_store import (
+    load_bootstrap_leetify_api,
+    load_leetify_api,
+    save_leetify_api,
+)
 
 
 def load_env_file():
     candidates = [
         data_path(".env"),
         Path.cwd() / ".env",
-        resource_path(".env"),
     ]
 
     for env_path in candidates:
@@ -43,6 +47,42 @@ load_env_file()
 FETCH_DELAY = 0.5  # seconds between bulk fetches to avoid rate limits
 _driver = None
 _driver_lock = Lock()
+_cached_leetify_api = None
+
+
+def _resolve_leetify_api_key():
+    global _cached_leetify_api
+    if _cached_leetify_api:
+        return _cached_leetify_api
+
+    env_api = os.getenv("LEETIFY_API", "").strip()
+    if env_api:
+        _cached_leetify_api = env_api
+        try:
+            save_leetify_api(env_api)
+            logger.log("[SECRET] LEETIFY_API stored in Windows encrypted local store", level="DEBUG")
+        except Exception as exc:
+            logger.log(f"[SECRET_WARNING] Could not persist encrypted LEETIFY_API locally: {exc}", level="DEBUG")
+        return _cached_leetify_api
+
+    stored_api = load_leetify_api()
+    if stored_api:
+        _cached_leetify_api = stored_api
+        return _cached_leetify_api
+
+    bootstrap_api = load_bootstrap_leetify_api()
+    if bootstrap_api:
+        _cached_leetify_api = bootstrap_api
+        try:
+            save_leetify_api(bootstrap_api)
+            logger.log("[SECRET] Migrated bundled bootstrap key into Windows encrypted local store", level="INFO")
+        except Exception as exc:
+            logger.log(f"[SECRET_WARNING] Could not persist bootstrap LEETIFY_API locally: {exc}", level="DEBUG")
+        return _cached_leetify_api
+
+    raise RuntimeError(
+        "Missing LEETIFY_API. Set LEETIFY_API once or configure encrypted local secret via installer."
+    )
 
 
 def _normalize_steam64_id(value):
@@ -108,9 +148,7 @@ def get_leetify_player(steam_id, auto_close=False):
     auto_close = True: ensures driver cleanup after call
     """
 
-    LEETIFY_API = os.getenv("LEETIFY_API")
-    if not LEETIFY_API:
-        raise RuntimeError("Missing LEETIFY_API in .env file")
+    LEETIFY_API = _resolve_leetify_api_key()
 
     steam_id = _normalize_steam64_id(steam_id)
     redacted = logger.redact(steam_id)

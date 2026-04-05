@@ -17,10 +17,31 @@ https://github.com/CaptainBlake/Internomat/releases
 
 ## Quick Start
 
-1. Download the executable from the Releases page  
-2. Start the application  
-3. Add players via Steam links  
-4. Have fun
+1. Download the installer from the Releases page  
+2. Run the setup wizard and choose your installation directory  
+3. Optionally enable desktop shortcut creation during setup  
+4. Start the application  
+5. Add players via Steam links  
+6. Have fun
+
+---
+
+## Shipping (Maintainers)
+
+Create shipping artifacts locally:
+
+```bash
+python src/build.py --installer --version 0.1.0
+```
+
+This produces:
+
+- `dist/Internomat/` (one-folder app bundle)
+- `dist/Internomat-Setup-0.1.0.exe` (installer wizard)
+
+Installer config lives in `installer/Internomat.iss`.
+
+For signing support and advanced packaging options, see `DEVELOPER.md`.
 
 ---
 

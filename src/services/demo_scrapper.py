@@ -250,13 +250,24 @@ class DemoScrapperIntegration(
                                 stage="ftp",
                             )
 
-                        IOManager.stream_to_file(
-                            temp_local_file,
-                            lambda cb: ftp.retrbinary(f"RETR {file}", cb),
-                            total_size=filesize,
-                            desc=normalized_name,
-                            progress_callback=_on_file_progress,
-                        )
+                        # Use an explicit file callback here to avoid wrapper-level
+                        # edge cases observed in some frozen runtime environments.
+                        temp_local_file.parent.mkdir(parents=True, exist_ok=True)
+                        bytes_written = 0
+
+                        with open(temp_local_file, "wb") as out_f:
+                            if out_f is None:
+                                raise RuntimeError("FTP download writer could not be created")
+
+                            def _on_chunk(chunk):
+                                nonlocal bytes_written
+                                if not chunk:
+                                    return
+                                out_f.write(chunk)
+                                bytes_written += len(chunk)
+                                _on_file_progress(bytes_written, filesize)
+
+                            ftp.retrbinary(f"RETR {file}", _on_chunk)
 
                         # Promote to final name only when download completed successfully.
                         temp_local_file.replace(local_file)
@@ -269,7 +280,7 @@ class DemoScrapperIntegration(
                                 Path(temp_local_file).unlink()
                             except Exception:
                                 pass
-                        self._log_stage("FTP", f"FAILED {file}: {e}", level="ERROR")
+                        logger.log_error(f"[FTP] FAILED {file}: {e}", exc=e)
                 finally:
                     processed_demo_files += 1
                     self._emit_progress(

@@ -21,13 +21,19 @@ try:
     import seaborn as sns
 except Exception:  # pragma: no cover - optional runtime dependency guard
     sns = None
+    _SEABORN_IMPORT_ERROR = "unknown"
+else:
+    _SEABORN_IMPORT_ERROR = ""
 
 try:
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
     from matplotlib.figure import Figure
-except Exception:  # pragma: no cover - optional runtime dependency guard
+except Exception as exc:  # pragma: no cover - optional runtime dependency guard
     FigureCanvas = None
     Figure = None
+    _MPL_IMPORT_ERROR = str(exc)
+else:
+    _MPL_IMPORT_ERROR = ""
 
 import core.stats.stattracker as stattracker
 import services.logger as logger
@@ -180,7 +186,17 @@ def _build_plot_widget(plot_data, height=340, display_mode="line"):
     metrics are selected.
     """
     if sns is None or FigureCanvas is None or Figure is None:
-        missing = QLabel("Seaborn/Matplotlib is not installed. Run: pip install seaborn matplotlib")
+        details = []
+        if sns is None:
+            details.append("seaborn import failed")
+        if FigureCanvas is None or Figure is None:
+            reason = _MPL_IMPORT_ERROR or "matplotlib Qt backend import failed"
+            details.append(reason)
+        detail_text = "; ".join(details) if details else "plot backend unavailable"
+        missing = QLabel(
+            "Seaborn/Matplotlib plot backend unavailable. "
+            f"Reason: {detail_text}"
+        )
         missing.setAlignment(Qt.AlignmentFlag.AlignCenter)
         missing.setStyleSheet(
             "font-size: 12px; color: #7A9099; background: rgba(255,255,255,0.96);"

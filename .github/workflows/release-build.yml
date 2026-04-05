@@ -1,0 +1,65 @@
+name: Build And Publish Release Assets
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+jobs:
+  build-release-assets:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate tag matches APP_VERSION
+        shell: pwsh
+        run: |
+          $tagVersion = "${env:GITHUB_REF_NAME}".TrimStart('v')
+          $appVersion = python - <<'PY'
+from pathlib import Path
+import re
+text = Path('src/core/version.py').read_text(encoding='utf-8')
+m = re.search(r'^APP_VERSION\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"', text, re.M)
+if not m:
+    raise SystemExit('APP_VERSION not found')
+print(m.group(1))
+PY
+          if ($tagVersion -ne $appVersion) {
+            throw "Tag version $tagVersion does not match APP_VERSION $appVersion"
+          }
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $tagVersion = "${env:GITHUB_REF_NAME}".TrimStart('v')
+          python src/build.py --installer --version $tagVersion
+
+      - name: Generate SHA256SUMS
+        shell: pwsh
+        run: |
+          $tagVersion = "${env:GITHUB_REF_NAME}".TrimStart('v')
+          $installer = "dist/Internomat-Setup-$tagVersion.exe"
+          if (!(Test-Path $installer)) { throw "Installer not found: $installer" }
+          $hash = (Get-FileHash -Algorithm SHA256 $installer).Hash.ToLower()
+          $line = "$hash  Internomat-Setup-$tagVersion.exe"
+          Set-Content -Path "dist/SHA256SUMS.txt" -Value $line -NoNewline
+
+      - name: Upload assets to GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/Internomat-Setup-*.exe
+            dist/SHA256SUMS.txt

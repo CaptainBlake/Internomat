@@ -4,16 +4,16 @@ import services.matchzy as matchzy
 
 def run_full_update(
     steam_ids,
+    run_matchzy_sync=False,
     on_progress=None,
     on_player=None,
     on_error=None,
     on_finish=None
 ):
-    import services.matchzy as matchzy
-
     try:
-        logger.log("[UPDATE] Starting MatchZy sync", level="INFO")
-        matchzy.sync()
+        if run_matchzy_sync:
+            logger.log("[UPDATE] Starting MatchZy sync", level="INFO")
+            matchzy.sync()
 
         return update_players_pipeline(
             steam_ids,
