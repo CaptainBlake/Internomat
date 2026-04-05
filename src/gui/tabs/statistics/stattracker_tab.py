@@ -15,10 +15,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import math
+
 try:
-    import pyqtgraph as pg
+    import seaborn as sns
 except Exception:  # pragma: no cover - optional runtime dependency guard
-    pg = None
+    sns = None
+
+try:
+    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+    from matplotlib.figure import Figure
+except Exception:  # pragma: no cover - optional runtime dependency guard
+    FigureCanvas = None
+    Figure = None
 
 import core.stats.stattracker as stattracker
 import services.logger as logger
@@ -132,22 +141,54 @@ _PLOT_COLORS = [
     "#1ABC9C", "#E67E22", "#34495E", "#F1C40F", "#7F8C8D",
 ]
 
+_SEABORN_THEME_APPLIED = False
+
+
+def _ensure_seaborn_theme():
+    """Apply a single shared Seaborn/Matplotlib style for stattracker charts."""
+    global _SEABORN_THEME_APPLIED
+    if _SEABORN_THEME_APPLIED or sns is None:
+        return
+
+    sns.set_theme(
+        style="whitegrid",
+        context="notebook",
+        rc={
+            "figure.facecolor": "#F5F9FC",
+            "axes.facecolor": "#FAFCFE",
+            "axes.edgecolor": "#D7E2EB",
+            "axes.labelcolor": "#21443C",
+            "axes.titlesize": 10,
+            "axes.labelsize": 9,
+            "grid.color": "#DCE6EE",
+            "grid.alpha": 0.62,
+            "grid.linewidth": 0.65,
+            "xtick.color": "#40615B",
+            "ytick.color": "#40615B",
+            "font.size": 9,
+            "legend.frameon": False,
+        },
+    )
+    _SEABORN_THEME_APPLIED = True
+
 
 def _build_plot_widget(plot_data, height=340, display_mode="line"):
-    """Build a QWidget containing [legend sidebar | PyQtGraph plot].
+    """Build a QWidget containing [legend sidebar | Seaborn/Matplotlib plot].
 
     plot_data may contain a flat ``series`` dict (legacy single-metric) or
     a ``multi_series`` list of ``{metric_label, series}`` dicts when multiple
     metrics are selected.
     """
-    if pg is None:
-        missing = QLabel("PyQtGraph is not installed. Run: pip install pyqtgraph")
+    if sns is None or FigureCanvas is None or Figure is None:
+        missing = QLabel("Seaborn/Matplotlib is not installed. Run: pip install seaborn matplotlib")
         missing.setAlignment(Qt.AlignmentFlag.AlignCenter)
         missing.setStyleSheet(
             "font-size: 12px; color: #7A9099; background: rgba(255,255,255,0.96);"
             "border: 1px solid #D5E0EA; border-radius: 8px; padding: 12px;"
         )
         return missing
+
+    _ensure_seaborn_theme()
 
     # Normalise into a list of (metric_label, {name: [values]})
     multi = plot_data.get("multi_series")
@@ -160,40 +201,40 @@ def _build_plot_widget(plot_data, height=340, display_mode="line"):
     x_labels = plot_data.get("x_labels") or []
     all_empty = not x_labels or all(not s for _, s in groups)
 
-    tooltip_by_index: dict[int, dict] = {}
+    fig = Figure(figsize=(10, 3.8), dpi=100)
+    fig.patch.set_facecolor("#F5F9FC")
+    ax = fig.add_subplot(111)
+    ax.set_facecolor("#FAFCFE")
+    for spine in ax.spines.values():
+        spine.set_color("#D7E2EB")
+        spine.set_linewidth(0.9)
+
+    _hover_bars = []
+    _hover_lines = {}
+    _hover_pie = []
     legend_entries: list[tuple[str, str]] = []  # (color, label)
+    series_count = sum(len(series) for _, series in groups)
+    palette = [
+        c if isinstance(c, str) else "#2F6FB3"
+        for c in sns.color_palette("deep", max(series_count, len(_PLOT_COLORS))).as_hex()
+    ]
     color_idx = 0
-
-    plot_widget = pg.PlotWidget()
-    plot_widget.setBackground("#FAFCFE")
-    plot_widget.setMinimumHeight(height)
-    plot_widget.setMaximumHeight(height + 80)
-    plot_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-
-    plot_item = plot_widget.getPlotItem()
-    plot_item.showGrid(x=False, y=True, alpha=0.28)
-    plot_item.getAxis("left").setTextPen(pg.mkColor("#21443C"))
-    plot_item.getAxis("bottom").setTextPen(pg.mkColor("#21443C"))
-    plot_item.getAxis("left").setStyle(tickTextOffset=6)
-    plot_item.getAxis("bottom").setStyle(tickTextOffset=8)
 
     info_label = None
 
     if all_empty:
-        empty_label = QLabel("No items selected")
-        empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty_label.setStyleSheet("font-size: 11px; color: #7A9099;")
-        plot_item.hideAxis("left")
-        plot_item.hideAxis("bottom")
-        overlay = QWidget()
-        overlay_layout = QVBoxLayout(overlay)
-        overlay_layout.setContentsMargins(0, 0, 0, 0)
-        overlay_layout.addWidget(plot_widget)
-        overlay_layout.addWidget(empty_label)
-        overlay.setMinimumHeight(height)
-        overlay.setMaximumHeight(height + 80)
-        overlay.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        return overlay
+        ax.text(
+            0.5,
+            0.5,
+            "No items selected",
+            ha="center",
+            va="center",
+            fontsize=11,
+            color="#7A9099",
+            transform=ax.transAxes,
+        )
+        ax.set_xticks([])
+        ax.set_yticks([])
     else:
         x = list(range(len(x_labels)))
 
@@ -201,42 +242,31 @@ def _build_plot_widget(plot_data, height=340, display_mode="line"):
         for metric_label, series in groups:
             prefix = f"{metric_label} · " if len(groups) > 1 else ""
             for name, values in series.items():
-                color = _PLOT_COLORS[color_idx % len(_PLOT_COLORS)]
+                color = palette[color_idx % len(palette)]
                 color_idx += 1
                 plotted_series.append((f"{prefix}{name}", values, color))
 
         if display_mode == "pie":
-            # PyQtGraph has no native pie chart item; show an equivalent interactive
-            # contribution chart using one bar per series.
-            contribution_values = []
-            contribution_labels = []
-            contribution_colors = []
+            pie_values = []
+            pie_labels = []
+            pie_colors = []
             for label, values, color in plotted_series:
                 total = float(sum(v for v in values if v is not None))
                 if total > 0:
-                    contribution_values.append(total)
-                    contribution_labels.append(label)
-                    contribution_colors.append(color)
+                    pie_values.append(total)
+                    pie_labels.append(label)
+                    pie_colors.append(color)
                     legend_entries.append((color, label))
 
-            if contribution_values:
-                x_labels = contribution_labels
-                for idx, (value, color) in enumerate(zip(contribution_values, contribution_colors)):
-                    bars = pg.BarGraphItem(
-                        x=[idx],
-                        height=[value],
-                        width=0.66,
-                        brush=pg.mkBrush(color),
-                        pen=pg.mkPen(color, width=1.0),
-                    )
-                    plot_item.addItem(bars)
-                for idx, (lbl, val) in enumerate(zip(contribution_labels, contribution_values)):
-                    tooltip_by_index[idx] = {
-                        "x_label": lbl,
-                        "series": [(lbl, val)],
-                    }
-                info_label = QLabel("Pie mode is shown as contribution bars in PyQtGraph.")
-                info_label.setStyleSheet("font-size: 10px; color: #5D7480;")
+            if pie_values:
+                wedges, *_ = ax.pie(
+                    pie_values,
+                    colors=pie_colors,
+                    startangle=90,
+                    wedgeprops={"linewidth": 0.8, "edgecolor": "white"},
+                )
+                _hover_pie.extend(zip(wedges, pie_labels))
+                ax.set_aspect("equal")
             else:
                 info_label = QLabel("No positive values for pie view")
                 info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -255,93 +285,155 @@ def _build_plot_widget(plot_data, height=340, display_mode="line"):
                     xs.append(i + start + idx * width)
                     ys.append(v)
                 if ys:
-                    bar = pg.BarGraphItem(
-                        x=xs,
-                        height=ys,
-                        width=width,
-                        brush=pg.mkBrush(color),
-                        pen=pg.mkPen(color, width=1.0),
-                    )
-                    plot_item.addItem(bar)
+                    bars = ax.bar(xs, ys, width=width, color=color, alpha=0.92)
+                    x_idxs = [i for i, v in enumerate(values) if v is not None]
+                    for rect, xi, yv in zip(bars, x_idxs, ys):
+                        _hover_bars.append((
+                            rect,
+                            x_labels[xi] if 0 <= xi < len(x_labels) else "",
+                            label,
+                            float(yv),
+                        ))
                 for i, v in enumerate(values):
                     if v is None:
                         continue
-                    entry = tooltip_by_index.setdefault(
+                    entry = _hover_lines.setdefault(
                         i,
                         {"x_label": x_labels[i] if 0 <= i < len(x_labels) else "", "series": []},
                     )
                     entry["series"].append((label, float(v)))
                 legend_entries.append((color, label))
+
+            ax.set_xticks(x)
+            ax.set_xticklabels(x_labels, rotation=30, ha="right", fontsize=8)
+            if len(groups) == 1:
+                ax.set_ylabel(groups[0][0], fontsize=9, color="#21443C")
+            ax.margins(y=0.18)
+            ax.tick_params(axis="y", labelsize=8)
+            ax.grid(True, axis="y", alpha=0.42, linewidth=0.65)
         else:
             for label, values, color in plotted_series:
                 xs = [i for i, v in enumerate(values) if v is not None]
                 ys = [v for v in values if v is not None]
                 if xs:
-                    plot_item.plot(
+                    ax.plot(
                         xs,
                         ys,
-                        pen=pg.mkPen(color, width=2),
-                        symbol="o",
-                        symbolSize=6,
-                        symbolBrush=pg.mkBrush(color),
-                        symbolPen=pg.mkPen(color),
+                        marker="o",
+                        markersize=4,
+                        linewidth=1.9,
+                        color=color,
                     )
                     for xi, yv in zip(xs, ys):
-                        entry = tooltip_by_index.setdefault(
+                        entry = _hover_lines.setdefault(
                             xi, {"x_label": x_labels[xi] if 0 <= xi < len(x_labels) else "", "series": []}
                         )
                         entry["series"].append((label, float(yv)))
                 legend_entries.append((color, label))
 
-    if x_labels:
-        ticks = [(i, str(lbl).replace("\n", " | ")) for i, lbl in enumerate(x_labels)]
-        plot_item.getAxis("bottom").setTicks([ticks])
+            ax.set_xticks(x)
+            ax.set_xticklabels(x_labels, rotation=30, ha="right", fontsize=8)
+            if len(groups) == 1:
+                ax.set_ylabel(groups[0][0], fontsize=9, color="#21443C")
+            ax.margins(y=0.18)
+            ax.tick_params(axis="y", labelsize=8)
+            ax.grid(True, axis="y", alpha=0.42, linewidth=0.65)
 
-    if len(groups) == 1:
-        plot_item.setLabel("left", groups[0][0], color="#21443C")
+    fig.tight_layout(pad=1.4)
 
-    if tooltip_by_index:
-        vline = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen("#AFC5D8", width=1))
-        plot_item.addItem(vline, ignoreBounds=True)
+    canvas = FigureCanvas(fig)
+    canvas.setMinimumHeight(height)
+    canvas.setMaximumHeight(height + 80)
+    canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-        def _on_mouse_moved(evt):
-            scene_pos = evt[0]
-            if not plot_widget.sceneBoundingRect().contains(scene_pos):
-                plot_widget.setToolTip("")
-                return
-
-            view_pos = plot_item.vb.mapSceneToView(scene_pos)
-            xi = int(round(view_pos.x()))
-            if xi < 0 or xi >= len(x_labels):
-                plot_widget.setToolTip("")
-                return
-
-            vline.setPos(xi)
-            entry = tooltip_by_index.get(xi)
-            if not entry:
-                plot_widget.setToolTip("")
-                return
-
-            tip = f"[{entry['x_label']}]\n" + "\n".join(
-                f"{series_label}: {value:.4g}" for series_label, value in entry["series"]
-            )
-            plot_widget.setToolTip(tip)
-
-        plot_widget._hover_proxy = pg.SignalProxy(
-            plot_widget.scene().sigMouseMoved,
-            rateLimit=60,
-            slot=_on_mouse_moved,
+    if _hover_bars or _hover_lines or _hover_pie:
+        annot = ax.annotate(
+            "",
+            xy=(0, 0),
+            xytext=(8, -26),
+            textcoords="offset points",
+            bbox=dict(boxstyle="round,pad=0.35", facecolor="#FFFDE7", edgecolor="#BDBDBD", alpha=0.95),
+            fontsize=8,
+            zorder=10,
+            visible=False,
+            annotation_clip=False,
         )
+
+        if _hover_bars:
+            def _on_motion(event):
+                if event.inaxes != ax:
+                    if annot.get_visible():
+                        annot.set_visible(False)
+                        canvas.draw_idle()
+                    return
+                for rect, x_lbl, s_lbl, val in _hover_bars:
+                    if rect.contains(event)[0]:
+                        annot.xy = (rect.get_x() + rect.get_width() / 2, rect.get_height())
+                        annot.set_text(f"{s_lbl}\n{x_lbl}:  {val:.4g}")
+                        if not annot.get_visible():
+                            annot.set_visible(True)
+                        canvas.draw_idle()
+                        return
+                if annot.get_visible():
+                    annot.set_visible(False)
+                    canvas.draw_idle()
+            canvas.mpl_connect("motion_notify_event", _on_motion)
+        elif _hover_lines:
+            def _on_motion(event):
+                if event.inaxes != ax or event.xdata is None:
+                    if annot.get_visible():
+                        annot.set_visible(False)
+                        canvas.draw_idle()
+                    return
+                xi = int(round(event.xdata))
+                if xi in _hover_lines:
+                    entry = _hover_lines[xi]
+                    tip = f"[{entry['x_label']}]\n" + "\n".join(
+                        f"{sl}: {v:.4g}" for sl, v in entry["series"]
+                    )
+                    annot.set_text(tip)
+                    annot.xy = (xi, event.ydata)
+                    if not annot.get_visible():
+                        annot.set_visible(True)
+                    canvas.draw_idle()
+                else:
+                    if annot.get_visible():
+                        annot.set_visible(False)
+                        canvas.draw_idle()
+            canvas.mpl_connect("motion_notify_event", _on_motion)
+        elif _hover_pie:
+            def _on_motion(event):
+                if event.inaxes != ax:
+                    if annot.get_visible():
+                        annot.set_visible(False)
+                        canvas.draw_idle()
+                    return
+                for wedge, lbl in _hover_pie:
+                    if wedge.contains(event)[0]:
+                        theta = (wedge.theta1 + wedge.theta2) / 2.0
+                        annot.xy = (
+                            0.5 * math.cos(math.radians(theta)),
+                            0.5 * math.sin(math.radians(theta)),
+                        )
+                        annot.set_text(lbl)
+                        if not annot.get_visible():
+                            annot.set_visible(True)
+                        canvas.draw_idle()
+                        return
+                if annot.get_visible():
+                    annot.set_visible(False)
+                    canvas.draw_idle()
+            canvas.mpl_connect("motion_notify_event", _on_motion)
 
     if not legend_entries:
         if info_label is None:
-            return plot_widget
+            return canvas
         info_wrapper = QWidget()
         info_layout = QVBoxLayout(info_wrapper)
         info_layout.setContentsMargins(0, 0, 0, 0)
         info_layout.setSpacing(4)
         info_layout.addWidget(info_label)
-        info_layout.addWidget(plot_widget)
+        info_layout.addWidget(canvas)
         info_wrapper.setMinimumHeight(height)
         info_wrapper.setMaximumHeight(height + 80)
         info_wrapper.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -384,7 +476,7 @@ def _build_plot_widget(plot_data, height=340, display_mode="line"):
     chart_area_layout.setSpacing(4)
     if info_label is not None:
         chart_area_layout.addWidget(info_label)
-    chart_area_layout.addWidget(plot_widget, 1)
+    chart_area_layout.addWidget(canvas, 1)
     wrapper_layout.addWidget(chart_area, 1)
     wrapper.setMinimumHeight(height)
     wrapper.setMaximumHeight(height + 80)

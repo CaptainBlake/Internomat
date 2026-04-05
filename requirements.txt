@@ -6,5 +6,6 @@ selenium
 Pillow
 awpy
 PySide6
-pyqtgraph
+matplotlib
+seaborn
 mysql-connector-python

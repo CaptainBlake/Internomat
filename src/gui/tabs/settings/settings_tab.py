@@ -414,6 +414,16 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         "When enabled, map roulette uses match history percentages as map weights."
     ))
 
+    checkbox_log_export_enabled = QCheckBox()
+    checkbox_log_export_enabled.setChecked(bool(getattr(settings, "log_export_enabled", True)))
+
+    settings_layout.addLayout(create_setting_row(
+        "Export logs to file:",
+        checkbox_log_export_enabled,
+        "log_export_enabled",
+        "When enabled, logs are written to timestamped files in the log folder."
+    ))
+
     settings_button_row = QHBoxLayout()
     settings_button_row.setSpacing(10)
     settings_button_row.addWidget(import_settings_button)
@@ -718,6 +728,7 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
             apply_settings_payload_to_form(payload)
 
             apply_form_to_settings(save=True)
+            logger.set_log_export_enabled(bool(getattr(settings, "log_export_enabled", True)))
             settings_dirty["value"] = False
             save_settings_button.setEnabled(False)
             logger.log_info(f"[SETTINGS] Imported from {path}")
@@ -746,6 +757,7 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
 
     def save_settings_action():
         apply_form_to_settings(save=True)
+        logger.set_log_export_enabled(bool(getattr(settings, "log_export_enabled", True)))
         settings_dirty["value"] = False
         save_settings_button.setEnabled(False)
         logger.log("[SETTINGS] Saved", level="INFO")

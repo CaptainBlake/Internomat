@@ -15,6 +15,7 @@ SETTINGS_SCHEMA = {
     "update_cooldown_minutes": int,
     "max_demos_per_update": int,
     "log_level": str,
+    "log_export_enabled": _to_bool,
     "dist_weight": float,
     "default_rating": int,
     "allow_uneven_teams": _to_bool,

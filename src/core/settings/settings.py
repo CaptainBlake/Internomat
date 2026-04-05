@@ -12,6 +12,7 @@ _SETTINGS_DEFAULTS = {
     "update_cooldown_minutes":          (int,      0),
     "max_demos_per_update":             (int,      0),
     "log_level":                        (str,      "INFO"),
+    "log_export_enabled":               (_to_bool, True),
     "dist_weight":                      (float,    0.25),
     "default_rating":                   (int,      10000),
     "allow_uneven_teams":               (_to_bool, False),

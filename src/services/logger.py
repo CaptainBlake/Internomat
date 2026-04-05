@@ -1,13 +1,19 @@
 import traceback
+import atexit
 from datetime import datetime
+from pathlib import Path
 
 # --- config ---
 
 LOG_ENABLED = True
 LOG_LEVEL = "DEBUG"  # DEBUG, INFO, OFF
+LOG_EXPORT_ENABLED = True
+LOG_EXPORT_DIRNAME = "log"
 
 LOG_HISTORY = []  
 MAX_HISTORY = 20000
+_LOG_FILE_HANDLE = None
+_LOG_FILE_PATH = None
 
 
 # --- core helpers ---
@@ -33,6 +39,66 @@ def _store_log(entry):
     LOG_HISTORY.append(entry)
     if len(LOG_HISTORY) > MAX_HISTORY:
         LOG_HISTORY.pop(0)
+
+
+def _resolve_log_dir():
+    # src/services/logger.py -> ../../ = repository root
+    return Path(__file__).resolve().parents[2] / LOG_EXPORT_DIRNAME
+
+
+def _close_log_file():
+    global _LOG_FILE_HANDLE
+    if _LOG_FILE_HANDLE is not None:
+        try:
+            _LOG_FILE_HANDLE.flush()
+            _LOG_FILE_HANDLE.close()
+        except Exception:
+            pass
+        _LOG_FILE_HANDLE = None
+
+
+def _open_log_file():
+    global _LOG_FILE_HANDLE, _LOG_FILE_PATH
+    if _LOG_FILE_HANDLE is not None:
+        return
+
+    try:
+        log_dir = _resolve_log_dir()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        _LOG_FILE_PATH = log_dir / f"internomat_{timestamp}.log"
+        _LOG_FILE_HANDLE = open(_LOG_FILE_PATH, "a", encoding="utf-8")
+    except Exception:
+        _LOG_FILE_HANDLE = None
+        _LOG_FILE_PATH = None
+
+
+def _write_log_file(entry):
+    if not LOG_EXPORT_ENABLED:
+        return
+
+    if _LOG_FILE_HANDLE is None:
+        _open_log_file()
+
+    if _LOG_FILE_HANDLE is None:
+        return
+
+    try:
+        _LOG_FILE_HANDLE.write(entry + "\n")
+        _LOG_FILE_HANDLE.flush()
+    except Exception:
+        pass
+
+
+def set_log_export_enabled(enabled):
+    global LOG_EXPORT_ENABLED
+    LOG_EXPORT_ENABLED = bool(enabled)
+    if not LOG_EXPORT_ENABLED:
+        _close_log_file()
+
+
+def get_log_file_path():
+    return str(_LOG_FILE_PATH) if _LOG_FILE_PATH else ""
 
 def get_log_history():
     return LOG_HISTORY
@@ -127,6 +193,7 @@ def log(message, level="INFO"):
     print(entry, flush=True)
 
     _store_log(entry)
+    _write_log_file(entry)
     _notify(entry)
 
 
@@ -308,4 +375,7 @@ def log_error(message, exc=None):
             message = f"{message} | {exc}"
 
     log(message, level="ERROR")
+
+
+atexit.register(_close_log_file)
 
