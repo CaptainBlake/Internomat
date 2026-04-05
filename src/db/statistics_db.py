@@ -30,6 +30,16 @@ def fetch_overview():
                         GROUP BY match_id, map_number
                     )
                 ) AS maps_with_stats,
+                (
+                    SELECT COALESCE(
+                        SUM(COALESCE(mm.team1_score, m.team1_score, 0) + COALESCE(mm.team2_score, m.team2_score, 0)),
+                        0
+                    )
+                    FROM match_maps mm
+                    LEFT JOIN matches m ON mm.match_id = m.match_id
+                    WHERE COALESCE(mm.team1_score, m.team1_score) IS NOT NULL
+                      AND COALESCE(mm.team2_score, m.team2_score) IS NOT NULL
+                ) AS total_rounds_played,
                 (SELECT map_name FROM top_map) AS top_map_name,
                 (SELECT cnt FROM top_map) AS top_map_count
             """

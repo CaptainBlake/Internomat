@@ -381,6 +381,7 @@ def _render_statistics_content(parent, overview, recent_rows):
 
     metrics.addWidget(_build_metric_card("Total Maps", str(overview["total_maps"])))
     metrics.addWidget(_build_metric_card("Unique Players", str(overview["unique_players"])))
+    metrics.addWidget(_build_metric_card("Total rounds played", str(overview["total_rounds_played"])))
     metrics.addWidget(_build_metric_card("Demo Matches", str(overview["demo_matches"])))
 
     layout.addLayout(metrics)
@@ -424,6 +425,7 @@ def _ensure_dispatcher(parent):
         overview = payload.get("overview") or {
             "total_maps": 0,
             "unique_players": 0,
+            "total_rounds_played": 0,
             "demo_matches": 0,
         }
         recent_rows = payload.get("recent_rows") or []

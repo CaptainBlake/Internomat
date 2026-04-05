@@ -41,7 +41,7 @@ MENU_TABS = [
     {
         "category": "Statistics",
         "id": "statistics",
-        "label": "Statistics",
+        "label": "History",
         "page_key": "statistics",
         "on_select": "refresh_statistics",
     },

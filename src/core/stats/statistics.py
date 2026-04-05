@@ -89,6 +89,7 @@ def get_overview():
         "unique_players": int(row["unique_players"] or 0),
         "demo_matches": int(row["demo_matches"] or 0),
         "maps_with_stats": int(row["maps_with_stats"] or 0),
+        "total_rounds_played": int(row["total_rounds_played"] or 0),
         "top_map_name": str(row["top_map_name"] or ""),
         "top_map_count": int(row["top_map_count"] or 0),
     }
@@ -98,6 +99,7 @@ def get_overview():
         f"overview matches={result['total_matches']} "
         f"maps={result['total_maps']} players={result['unique_players']} "
         f"demo_matches={result['demo_matches']} maps_with_stats={result['maps_with_stats']} "
+        f"rounds={result['total_rounds_played']} "
         f"top_map={result['top_map_name']}({result['top_map_count']})",
         level="DEBUG",
     )

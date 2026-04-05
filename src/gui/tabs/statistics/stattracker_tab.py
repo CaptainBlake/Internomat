@@ -199,6 +199,19 @@ def _build_plot_widget(plot_data, height=340, display_mode="line"):
                    plot_data.get("series") or {})]
 
     x_labels = plot_data.get("x_labels") or []
+    axis_labels = plot_data.get("axis_labels") or x_labels
+
+    def _compute_tick_positions(total_count, max_labels=24):
+        if total_count <= 0:
+            return []
+        if total_count <= max_labels:
+            return list(range(total_count))
+
+        step = int(math.ceil(float(total_count) / float(max_labels)))
+        ticks = list(range(0, total_count, step))
+        if ticks[-1] != (total_count - 1):
+            ticks.append(total_count - 1)
+        return ticks
     all_empty = not x_labels or all(not s for _, s in groups)
 
     fig = Figure(figsize=(10, 3.8), dpi=100)
@@ -237,6 +250,8 @@ def _build_plot_widget(plot_data, height=340, display_mode="line"):
         ax.set_yticks([])
     else:
         x = list(range(len(x_labels)))
+        tick_positions = _compute_tick_positions(len(x_labels), max_labels=24)
+        tick_labels = [axis_labels[i] if i < len(axis_labels) else str(i + 1) for i in tick_positions]
 
         plotted_series = []
         for metric_label, series in groups:
@@ -304,8 +319,8 @@ def _build_plot_widget(plot_data, height=340, display_mode="line"):
                     entry["series"].append((label, float(v)))
                 legend_entries.append((color, label))
 
-            ax.set_xticks(x)
-            ax.set_xticklabels(x_labels, rotation=30, ha="right", fontsize=8)
+            ax.set_xticks(tick_positions)
+            ax.set_xticklabels(tick_labels, rotation=30, ha="right", fontsize=8)
             if len(groups) == 1:
                 ax.set_ylabel(groups[0][0], fontsize=9, color="#21443C")
             ax.margins(y=0.18)
@@ -331,8 +346,8 @@ def _build_plot_widget(plot_data, height=340, display_mode="line"):
                         entry["series"].append((label, float(yv)))
                 legend_entries.append((color, label))
 
-            ax.set_xticks(x)
-            ax.set_xticklabels(x_labels, rotation=30, ha="right", fontsize=8)
+            ax.set_xticks(tick_positions)
+            ax.set_xticklabels(tick_labels, rotation=30, ha="right", fontsize=8)
             if len(groups) == 1:
                 ax.set_ylabel(groups[0][0], fontsize=9, color="#21443C")
             ax.margins(y=0.18)
@@ -553,6 +568,13 @@ def _on_player_changed(parent, combo):
     parent._stattracker_selected_player = str(sid or "")
     if str(getattr(parent, "_stattracker_compare_player", "") or "") == parent._stattracker_selected_player:
         parent._stattracker_compare_player = ""
+    compare_players = [
+        s for s in (getattr(parent, "_stattracker_compare_players", []) or [])
+        if str(s or "") and str(s or "") != parent._stattracker_selected_player
+    ]
+    parent._stattracker_compare_players = compare_players
+    if compare_players:
+        parent._stattracker_compare_player = str(compare_players[0])
     refresh_stattracker(parent)
 
 
@@ -631,9 +653,21 @@ def _refresh_plot_only(parent):
 
     sid = str(getattr(parent, "_stattracker_selected_player", "") or "")
     main_view = str(getattr(parent, "_stattracker_main_view", "weapons") or "weapons")
-    compare_sid = str(getattr(parent, "_stattracker_compare_player", "") or "")
-    if compare_sid == sid:
-        compare_sid = ""
+    compare_sids = list(getattr(parent, "_stattracker_compare_players", []) or [])
+    legacy_compare_sid = str(getattr(parent, "_stattracker_compare_player", "") or "")
+    if not compare_sids and legacy_compare_sid:
+        compare_sids = [legacy_compare_sid]
+    compare_sids = [
+        str(s or "") for s in compare_sids
+        if str(s or "") and str(s or "") != sid
+    ]
+    deduped_compare_sids = []
+    for s in compare_sids:
+        if s not in deduped_compare_sids:
+            deduped_compare_sids.append(s)
+    compare_sids = deduped_compare_sids
+    parent._stattracker_compare_players = list(compare_sids)
+    parent._stattracker_compare_player = compare_sids[0] if compare_sids else ""
 
     # Gather checked metrics
     metric_combo = getattr(parent, "_stattracker_metric_combo", None)
@@ -978,39 +1012,44 @@ def _refresh_plot_only(parent):
 
     plot_data = _prefixed(_build_plot_data_for(sid), _player_label(sid))
 
-    if compare_sid:
-        compare_data = _prefixed(_build_plot_data_for(compare_sid), _player_label(compare_sid))
-        plot_data, compare_data = _align_plot_data(plot_data, compare_data)
-        if plot_data.get("multi_series"):
+    def _merge_plot_data(base_data, extra_data):
+        aligned_base, aligned_extra = _align_plot_data(base_data, extra_data)
+
+        if aligned_base.get("multi_series"):
             merged = {
                 g.get("metric_label") or "Value": dict(g.get("series") or {})
-                for g in (plot_data.get("multi_series") or [])
+                for g in (aligned_base.get("multi_series") or [])
             }
-            for group in (compare_data.get("multi_series") or []):
+            for group in (aligned_extra.get("multi_series") or []):
                 label = group.get("metric_label") or "Value"
                 merged.setdefault(label, {})
                 merged[label].update(group.get("series") or {})
 
-            plot_data = {
-                "x_labels": list(plot_data.get("x_labels") or compare_data.get("x_labels") or []),
-                "match_keys": list(plot_data.get("match_keys") or compare_data.get("match_keys") or []),
+            return {
+                "x_labels": list(aligned_base.get("x_labels") or aligned_extra.get("x_labels") or []),
+                "match_keys": list(aligned_base.get("match_keys") or aligned_extra.get("match_keys") or []),
                 "multi_series": [
                     {"metric_label": label, "series": series}
                     for label, series in merged.items()
                 ],
             }
-        else:
-            merged_series = dict(plot_data.get("series") or {})
-            merged_series.update(compare_data.get("series") or {})
-            plot_data = {
-                "x_labels": list(plot_data.get("x_labels") or compare_data.get("x_labels") or []),
-                "match_keys": list(plot_data.get("match_keys") or compare_data.get("match_keys") or []),
-                "metric_label": plot_data.get("metric_label") or compare_data.get("metric_label") or "Value",
-                "series": merged_series,
-            }
+
+        merged_series = dict(aligned_base.get("series") or {})
+        merged_series.update(aligned_extra.get("series") or {})
+        return {
+            "x_labels": list(aligned_base.get("x_labels") or aligned_extra.get("x_labels") or []),
+            "match_keys": list(aligned_base.get("match_keys") or aligned_extra.get("match_keys") or []),
+            "metric_label": aligned_base.get("metric_label") or aligned_extra.get("metric_label") or "Value",
+            "series": merged_series,
+        }
+
+    for compare_sid in compare_sids:
+        compare_data = _prefixed(_build_plot_data_for(compare_sid), _player_label(compare_sid))
+        plot_data = _merge_plot_data(plot_data, compare_data)
 
     def _slice_plot_data(data, start_idx, end_idx):
         x_labels = list(data.get("x_labels") or [])
+        axis_labels = list(data.get("axis_labels") or [])
         if not x_labels:
             return data
 
@@ -1023,6 +1062,8 @@ def _refresh_plot_only(parent):
             "x_labels": x_labels[lo:hi + 1],
             "match_keys": list(data.get("match_keys") or [])[lo:hi + 1],
         }
+        if axis_labels:
+            sliced["axis_labels"] = axis_labels[lo:hi + 1]
 
         if data.get("multi_series"):
             multi = []
@@ -1045,7 +1086,90 @@ def _refresh_plot_only(parent):
         }
         return sliced
 
+    def _filter_plot_data_by_match_id(data, match_id):
+        target = str(match_id or "").strip()
+        if not target:
+            return data
+
+        match_keys = list(data.get("match_keys") or [])
+        x_labels_local = list(data.get("x_labels") or [])
+        axis_labels_local = list(data.get("axis_labels") or [])
+        if not match_keys:
+            return data
+
+        keep_idx = [
+            i for i, key in enumerate(match_keys)
+            if str(key or "").split(":", 1)[0] == target
+        ]
+        if not keep_idx:
+            return {
+                "x_labels": [],
+                "match_keys": [],
+                "axis_labels": [],
+                "multi_series": [] if data.get("multi_series") else None,
+                "metric_label": data.get("metric_label") or "Value",
+                "series": {} if not data.get("multi_series") else None,
+            }
+
+        filtered = {
+            "x_labels": [x_labels_local[i] for i in keep_idx if i < len(x_labels_local)],
+            "match_keys": [match_keys[i] for i in keep_idx],
+        }
+        if axis_labels_local:
+            filtered["axis_labels"] = [axis_labels_local[i] for i in keep_idx if i < len(axis_labels_local)]
+
+        if data.get("multi_series"):
+            multi = []
+            for group in (data.get("multi_series") or []):
+                series = {}
+                for name, values in (group.get("series") or {}).items():
+                    vals = list(values or [])
+                    series[name] = [vals[i] if i < len(vals) else None for i in keep_idx]
+                multi.append({
+                    "metric_label": group.get("metric_label") or "Value",
+                    "series": series,
+                })
+            filtered["multi_series"] = multi
+            return filtered
+
+        filtered["metric_label"] = data.get("metric_label") or "Value"
+        filtered_series = {}
+        for name, values in (data.get("series") or {}).items():
+            vals = list(values or [])
+            filtered_series[name] = [vals[i] if i < len(vals) else None for i in keep_idx]
+        filtered["series"] = filtered_series
+        return filtered
+
+    # Keep full, pre-window keys/options for match-window dropdown options.
+    full_match_keys = list(plot_data.get("match_keys") or [])
+    full_x_labels = list(plot_data.get("x_labels") or [])
+    parent._stattracker_timeline_match_keys = full_match_keys
+
+    match_options = []
+    seen_match_ids = set()
+    for idx_key, key in enumerate(full_match_keys):
+        parts = str(key or "").split(":")
+        if not parts:
+            continue
+        match_id = str(parts[0] or "").strip()
+        if not match_id or match_id in seen_match_ids:
+            continue
+        seen_match_ids.add(match_id)
+
+        raw_label = str(full_x_labels[idx_key] if idx_key < len(full_x_labels) else "").strip()
+        line0 = raw_label.split("\n", 1)[0].strip() if raw_label else ""
+        # Round labels often look like "de_map R03" -> keep only map name for selector.
+        if " R" in line0:
+            line0 = line0.rsplit(" R", 1)[0].strip()
+        if not line0:
+            line0 = "unknown"
+
+        match_options.append((match_id, f"{match_id} - {line0}"))
+
+    parent._stattracker_timeline_match_options = match_options
+
     labels = list(plot_data.get("x_labels") or [])
+
     parent._stattracker_timeline_axis_labels = labels
     if labels:
         from_idx = int(getattr(parent, "_stattracker_timeline_from_index", 0) or 0)
@@ -1059,14 +1183,24 @@ def _refresh_plot_only(parent):
     range_from_combo = getattr(parent, "_stattracker_range_from_combo", None)
     range_to_combo = getattr(parent, "_stattracker_range_to_combo", None)
     window_combo = getattr(parent, "_stattracker_range_window_combo", None)
+    match_combo = getattr(parent, "_stattracker_range_match_combo", None)
     range_from_label = getattr(parent, "_stattracker_range_from_label", None)
     range_to_label = getattr(parent, "_stattracker_range_to_label", None)
     range_window_label = getattr(parent, "_stattracker_range_window_label", None)
+    match_label = getattr(parent, "_stattracker_range_match_label", None)
     window_mode = str(getattr(parent, "_stattracker_timeline_window_mode", "all") or "all")
+    match_filter = str(getattr(parent, "_stattracker_timeline_match_filter", "") or "")
     can_range = len(labels) > 1
-    if not can_range:
+    available_match_options = list(getattr(parent, "_stattracker_timeline_match_options", []) or [])
+    can_match_filter = bool(available_match_options)
+
+    if window_mode == "range" and not can_range:
         window_mode = "all"
         parent._stattracker_timeline_window_mode = "all"
+    if window_mode == "match" and not can_match_filter:
+        window_mode = "all"
+        parent._stattracker_timeline_window_mode = "all"
+        parent._stattracker_timeline_match_filter = ""
 
     def _sync_combo(combo, labels_local, selected_index):
         if not isinstance(combo, QComboBox):
@@ -1086,12 +1220,26 @@ def _refresh_plot_only(parent):
     _sync_combo(range_from_combo, labels, getattr(parent, "_stattracker_timeline_from_index", 0))
     _sync_combo(range_to_combo, labels, getattr(parent, "_stattracker_timeline_to_index", 0))
 
+    if isinstance(match_combo, QComboBox):
+        match_combo.blockSignals(True)
+        match_combo.clear()
+        match_combo.addItem("All Matches", "")
+        for mid, label in available_match_options:
+            match_combo.addItem(str(label or mid), str(mid or ""))
+        idx_match = match_combo.findData(match_filter)
+        if idx_match < 0:
+            idx_match = 0
+            parent._stattracker_timeline_match_filter = ""
+        match_combo.setCurrentIndex(idx_match)
+        match_combo.blockSignals(False)
+
     if isinstance(range_from_combo, QComboBox):
         range_from_combo.setEnabled(window_mode == "range" and bool(labels))
     if isinstance(range_to_combo, QComboBox):
         range_to_combo.setEnabled(window_mode == "range" and bool(labels))
 
     show_bounds = can_range and window_mode == "range"
+    show_match = can_match_filter and window_mode == "match"
     if isinstance(range_from_combo, QComboBox):
         range_from_combo.setVisible(show_bounds)
     if isinstance(range_to_combo, QComboBox):
@@ -1103,7 +1251,12 @@ def _refresh_plot_only(parent):
     if isinstance(window_combo, QComboBox):
         window_combo.setVisible(can_range)
     if isinstance(range_window_label, QLabel):
-        range_window_label.setVisible(can_range)
+        range_window_label.setVisible(can_range or can_match_filter)
+    if isinstance(match_combo, QComboBox):
+        match_combo.setVisible(show_match)
+        match_combo.setEnabled(show_match)
+    if isinstance(match_label, QLabel):
+        match_label.setVisible(show_match)
 
     if isinstance(window_combo, QComboBox):
         idx_mode = window_combo.findData(window_mode)
@@ -1112,12 +1265,29 @@ def _refresh_plot_only(parent):
             window_combo.setCurrentIndex(idx_mode)
             window_combo.blockSignals(False)
 
-    if window_mode == "range" and labels:
+    if window_mode == "match" and match_filter:
+        plot_data = _filter_plot_data_by_match_id(plot_data, match_filter)
+    elif window_mode == "range" and labels:
         plot_data = _slice_plot_data(
             plot_data,
             getattr(parent, "_stattracker_timeline_from_index", 0),
             getattr(parent, "_stattracker_timeline_to_index", len(labels) - 1),
         )
+
+    if timeline_scale == "round":
+        round_axis_labels = []
+        for idx_key, key in enumerate(list(plot_data.get("match_keys") or [])):
+            parts = str(key or "").split(":")
+            if len(parts) >= 3:
+                try:
+                    round_num = int(parts[2])
+                    round_axis_labels.append(f"R{round_num}")
+                    continue
+                except Exception:
+                    pass
+            round_axis_labels.append(f"R{idx_key + 1}")
+        if round_axis_labels:
+            plot_data["axis_labels"] = round_axis_labels
 
     display_mode = str(getattr(parent, "_stattracker_chart_mode", "line") or "line")
     widget = _build_plot_widget(plot_data, display_mode=display_mode)
@@ -1155,21 +1325,28 @@ def build_stattracker_tab(parent):
     parent._stattracker_plot_metric = "accuracy"
     parent._stattracker_chart_mode = "line"
     parent._stattracker_compare_player = ""
+    parent._stattracker_compare_players = []
     parent._stattracker_selected_timeline_items = []
     parent._stattracker_selected_plot_metrics = []
     parent._stattracker_timeline_scale = "match"
     parent._stattracker_timeline_window_mode = "all"
+    parent._stattracker_timeline_match_filter = ""
     parent._stattracker_timeline_from_index = 0
     parent._stattracker_timeline_to_index = 0
     parent._stattracker_timeline_axis_labels = []
+    parent._stattracker_timeline_match_keys = []
+    parent._stattracker_timeline_match_options = []
     parent._stattracker_range_from_combo = None
     parent._stattracker_range_to_combo = None
     parent._stattracker_range_window_combo = None
+    parent._stattracker_range_match_combo = None
     parent._stattracker_range_from_label = None
     parent._stattracker_range_to_label = None
     parent._stattracker_range_window_label = None
+    parent._stattracker_range_match_label = None
     parent._stattracker_plot_container = None
     parent._stattracker_timeline_combo = None
+    parent._stattracker_compare_combo = None
     parent._stattracker_initial_focus_applied = False
     parent._stattracker_on_update = lambda: on_stattracker_data_updated(parent)
     parent._stattracker_refresh = lambda: refresh_stattracker(parent)

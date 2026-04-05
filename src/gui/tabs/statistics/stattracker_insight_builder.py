@@ -121,6 +121,11 @@ def _on_timeline_multi_toggled(parent, checked):
             selected_metric = str(metric_combo.currentData() or "").strip()
             if selected_metric:
                 parent._stattracker_selected_plot_metrics = [selected_metric]
+
+        compare_combo = getattr(parent, "_stattracker_compare_combo", None)
+        if isinstance(compare_combo, QComboBox):
+            selected_compare_sid = str(compare_combo.currentData() or "").strip()
+            parent._stattracker_compare_players = [selected_compare_sid] if selected_compare_sid else []
     else:
         item_combo = getattr(parent, "_stattracker_timeline_combo", None)
         if item_combo is not None and hasattr(item_combo, "checked_data"):
@@ -131,6 +136,12 @@ def _on_timeline_multi_toggled(parent, checked):
         if metric_combo is not None and hasattr(metric_combo, "checked_data"):
             selected_metrics = list(metric_combo.checked_data() or [])
             parent._stattracker_selected_plot_metrics = selected_metrics
+
+        compare_combo = getattr(parent, "_stattracker_compare_combo", None)
+        if compare_combo is not None and hasattr(compare_combo, "checked_data"):
+            selected_compare_sids = list(compare_combo.checked_data() or [])
+            parent._stattracker_compare_players = selected_compare_sids
+            parent._stattracker_compare_player = selected_compare_sids[0] if selected_compare_sids else ""
 
     from .stattracker_tab import refresh_stattracker
     refresh_stattracker(parent)
@@ -186,7 +197,21 @@ def _on_chart_mode_changed(parent, combo):
 
 
 def _on_compare_player_changed(parent, combo):
-    parent._stattracker_compare_player = str(combo.currentData() or "")
+    selected = str(combo.currentData() or "")
+    parent._stattracker_compare_player = selected
+    parent._stattracker_compare_players = [selected] if selected else []
+    _on_timeline_selection_changed(parent)
+
+
+def _on_compare_players_multi_changed(parent):
+    compare_combo = getattr(parent, "_stattracker_compare_combo", None)
+    if compare_combo is not None and hasattr(compare_combo, "checked_data"):
+        selected = list(compare_combo.checked_data() or [])
+    else:
+        selected = []
+
+    parent._stattracker_compare_players = selected
+    parent._stattracker_compare_player = selected[0] if selected else ""
     _on_timeline_selection_changed(parent)
 
 
@@ -210,7 +235,21 @@ def _on_timeline_scale_changed(parent, combo):
 
 
 def _on_timeline_window_mode_changed(parent, combo):
-    parent._stattracker_timeline_window_mode = str(combo.currentData() or "all")
+    mode = str(combo.currentData() or "all")
+    parent._stattracker_timeline_window_mode = mode
+
+    # UX default: match-window is most useful at round granularity.
+    # Users can still switch back to "match" scale manually.
+    main_view = str(getattr(parent, "_stattracker_main_view", "weapons") or "weapons")
+    if mode == "match" and main_view in {"movement", "weapons"}:
+        parent._stattracker_timeline_scale = "round"
+
+    from .stattracker_tab import _refresh_plot_only
+    _refresh_plot_only(parent)
+
+
+def _on_timeline_match_filter_changed(parent, combo):
+    parent._stattracker_timeline_match_filter = str(combo.currentData() or "")
     from .stattracker_tab import _refresh_plot_only
     _refresh_plot_only(parent)
 
@@ -539,6 +578,7 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
         window_combo = QComboBox()
         window_combo.setMinimumWidth(120)
         window_combo.addItem("All Data", "all")
+        window_combo.addItem("Match", "match")
         window_combo.addItem("Custom Span", "range")
         window_mode = str(getattr(parent, "_stattracker_timeline_window_mode", "all") or "all")
         window_idx = window_combo.findData(window_mode)
@@ -547,9 +587,35 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
             parent._stattracker_timeline_window_mode = "all"
         window_combo.setCurrentIndex(window_idx)
         window_combo.currentIndexChanged.connect(lambda _i: _on_timeline_window_mode_changed(parent, window_combo))
-        range_mode_label = QLabel("Range:")
+        range_mode_label = QLabel("Window:")
         advanced_row.addWidget(range_mode_label)
         advanced_row.addWidget(window_combo)
+
+        # Match selector for window-mode = "match".
+        match_combo = QComboBox()
+        match_combo.setMinimumWidth(160)
+        match_combo.addItem("All Matches", "")
+        match_options = list(getattr(parent, "_stattracker_timeline_match_options", []) or [])
+        for match_id, label in match_options:
+            sid = str(match_id or "").strip()
+            if not sid:
+                continue
+            display = str(label or sid)
+            match_combo.addItem(display, sid)
+
+        selected_match = str(getattr(parent, "_stattracker_timeline_match_filter", "") or "")
+        match_idx = match_combo.findData(selected_match)
+        if match_idx < 0:
+            match_idx = 0
+            parent._stattracker_timeline_match_filter = ""
+        match_combo.setCurrentIndex(match_idx)
+        match_combo.currentIndexChanged.connect(lambda _i: _on_timeline_match_filter_changed(parent, match_combo))
+        match_label = QLabel("Match:")
+        show_match_filter = window_mode == "match"
+        match_label.setVisible(show_match_filter)
+        match_combo.setVisible(show_match_filter)
+        advanced_row.addWidget(match_label)
+        advanced_row.addWidget(match_combo)
 
         labels = list(getattr(parent, "_stattracker_timeline_axis_labels", []) or [])
         combo_from = QComboBox()
@@ -592,9 +658,11 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
         parent._stattracker_range_from_combo = combo_from
         parent._stattracker_range_to_combo = combo_to
         parent._stattracker_range_window_combo = window_combo
+        parent._stattracker_range_match_combo = match_combo
         parent._stattracker_range_from_label = from_label
         parent._stattracker_range_to_label = to_label
         parent._stattracker_range_window_label = range_mode_label
+        parent._stattracker_range_match_label = match_label
 
         if main_view == "weapons":
             group_combo = QComboBox()
@@ -610,29 +678,60 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
             advanced_row.addWidget(QLabel("Group by:"))
             advanced_row.addWidget(group_combo)
 
-        compare_combo = QComboBox()
-        compare_combo.setMinimumWidth(160)
-        compare_combo.addItem("none", "")
+        compare_combo = None
         player_options = getattr(parent, "_stattracker_player_options", []) or []
         has_compare_candidates = False
+        compare_sids_stored = list(getattr(parent, "_stattracker_compare_players", []) or [])
+        legacy_compare_sid = str(getattr(parent, "_stattracker_compare_player", "") or "")
+        if not compare_sids_stored and legacy_compare_sid:
+            compare_sids_stored = [legacy_compare_sid]
+
+        if timeline_multi:
+            compare_combo = _CheckableCombo(label_plural="Players")
+            compare_combo.setMinimumWidth(160)
+        else:
+            compare_combo = QComboBox()
+            compare_combo.setMinimumWidth(160)
+            compare_combo.addItem("none", "")
+
         for opt in player_options:
             sid_opt = str(opt.get("steamid64") or "")
             if sid_opt and sid_opt != str(selected_sid or ""):
-                compare_combo.addItem(str(opt.get("player_name") or sid_opt), sid_opt)
-            has_compare_candidates = True
+                has_compare_candidates = True
+                if timeline_multi:
+                    compare_combo.add_checkable_item(
+                        str(opt.get("player_name") or sid_opt),
+                        data=sid_opt,
+                        checked=sid_opt in compare_sids_stored,
+                    )
+                else:
+                    compare_combo.addItem(str(opt.get("player_name") or sid_opt), sid_opt)
 
-        compare_sid = str(getattr(parent, "_stattracker_compare_player", "") or "")
-        compare_idx = compare_combo.findData(compare_sid)
-        if compare_idx < 0:
-            compare_idx = 0
-            parent._stattracker_compare_player = ""
-        compare_combo.setCurrentIndex(compare_idx)
-        compare_combo.currentIndexChanged.connect(lambda _i: _on_compare_player_changed(parent, compare_combo))
+        if timeline_multi:
+            compare_combo._update_display_text()
+            compare_combo._model.dataChanged.connect(lambda *_: _on_compare_players_multi_changed(parent))
+            checked_now = list(compare_combo.checked_data() or [])
+            parent._stattracker_compare_players = checked_now
+            parent._stattracker_compare_player = checked_now[0] if checked_now else ""
+        else:
+            compare_sid = str(getattr(parent, "_stattracker_compare_player", "") or "")
+            compare_idx = compare_combo.findData(compare_sid)
+            if compare_idx < 0:
+                compare_idx = 0
+                parent._stattracker_compare_player = ""
+                parent._stattracker_compare_players = []
+            compare_combo.setCurrentIndex(compare_idx)
+            compare_combo.currentIndexChanged.connect(lambda _i: _on_compare_player_changed(parent, compare_combo))
+
+        parent._stattracker_compare_combo = compare_combo
         if has_compare_candidates:
             advanced_row.addWidget(QLabel("Compare:"))
             advanced_row.addWidget(compare_combo)
     else:
         parent._stattracker_metric_combo = None
+        parent._stattracker_compare_combo = None
+        parent._stattracker_range_match_combo = None
+        parent._stattracker_range_match_label = None
 
     # [5] Best/Worst badges (maps table mode only)
     if main_view == "maps" and not is_timeline:
