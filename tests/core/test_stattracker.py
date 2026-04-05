@@ -196,6 +196,109 @@ class TestGetPlayerDashboard:
         weapons = {r["weapon"] for r in result["weapon_rows"]}
         assert "m4a4" in weapons
 
+    def test_global_kpis_use_full_totals_when_weapon_attribution_is_partial(self, monkeypatch):
+        import core.stats.stattracker as stattracker_module
+
+        monkeypatch.setattr(
+            stattracker_module.stattracker_repo,
+            "fetch_player_overall_metrics",
+            lambda _sid: {
+                "maps_played": 2,
+                "map_wins": 1,
+                "total_kills": 20,
+                "total_deaths": 10,
+                "total_assists": 4,
+                "total_damage": 2000,
+                "total_headshot_kills": 8,
+                "total_rounds": 40,
+                "avg_kast": 0.7,
+                "avg_impact": 1.0,
+                "avg_rating": 1.1,
+            },
+        )
+        monkeypatch.setattr(
+            stattracker_module.stattracker_repo,
+            "fetch_player_overall_movement_metrics",
+            lambda _sid: {
+                "total_distance_units": 0.0,
+                "strafe_distance_units": 0.0,
+                "strafe_time_s": 0.0,
+                "alive_seconds": 0.0,
+                "camp_time_s": 0.0,
+            },
+        )
+        monkeypatch.setattr(stattracker_module.stattracker_repo, "fetch_player_map_stats", lambda _sid: [])
+        monkeypatch.setattr(
+            stattracker_module.stattracker_repo,
+            "fetch_player_weapon_stats",
+            lambda _sid, min_shots, weapon_category: [
+                {
+                    "weapon": "ak-47",
+                    "category": "rifles",
+                    "shots_fired": 100,
+                    "shots_hit": 30,
+                    "kills": 10,
+                    "headshot_kills": 4,
+                    "damage": 1000,
+                    "rounds_with_weapon": 20,
+                }
+            ],
+        )
+        monkeypatch.setattr(
+            stattracker_module.stattracker_repo,
+            "fetch_player_weapon_kill_attribution_deltas",
+            lambda _sid: [],
+        )
+
+        result = stattracker_module.get_player_dashboard("76561198000000001")
+        kpis = result["kpis"]
+
+        # Global KPIs must remain tied to full match totals, not weapon-attributed subsets.
+        assert kpis["kdr"] == pytest.approx(2.0)
+        assert kpis["avg_kills"] == pytest.approx(10.0)
+        assert kpis["hs_pct"] == pytest.approx(40.0)
+
+    def test_camp_time_kpi_is_averaged_per_played_map(self, monkeypatch):
+        import core.stats.stattracker as stattracker_module
+
+        monkeypatch.setattr(
+            stattracker_module.stattracker_repo,
+            "fetch_player_overall_metrics",
+            lambda _sid: {
+                "maps_played": 4,
+                "map_wins": 2,
+                "total_kills": 40,
+                "total_deaths": 20,
+                "total_assists": 10,
+                "total_damage": 4000,
+                "total_headshot_kills": 16,
+                "total_rounds": 80,
+                "avg_kast": 0.7,
+                "avg_impact": 1.0,
+                "avg_rating": 1.1,
+            },
+        )
+        monkeypatch.setattr(
+            stattracker_module.stattracker_repo,
+            "fetch_player_overall_movement_metrics",
+            lambda _sid: {
+                "total_distance_units": 0.0,
+                "strafe_distance_units": 0.0,
+                "strafe_time_s": 0.0,
+                "alive_seconds": 0.0,
+                "camp_time_s": 200.0,
+            },
+        )
+        monkeypatch.setattr(stattracker_module.stattracker_repo, "fetch_player_map_stats", lambda _sid: [])
+        monkeypatch.setattr(stattracker_module.stattracker_repo, "fetch_player_weapon_stats", lambda _sid, min_shots, weapon_category: [])
+        monkeypatch.setattr(stattracker_module.stattracker_repo, "fetch_player_weapon_kill_attribution_deltas", lambda _sid: [])
+
+        result = stattracker_module.get_player_dashboard("76561198000000001")
+        kpis = result["kpis"]
+
+        # 200 total camp seconds over 4 maps -> 50.0 shown in global KPI row.
+        assert kpis["camp_time_s"] == pytest.approx(50.0)
+
 
 class TestMovementSeries:
     def test_map_series_x_labels_use_timestamps(self, seeded_db, monkeypatch_db):

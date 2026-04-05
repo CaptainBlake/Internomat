@@ -147,6 +147,7 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
         strafe_ratio = total_strafe_time_s / total_alive_seconds
     else:
         strafe_ratio = (total_strafe_distance_units / total_distance_units) if total_distance_units > 0 else 0.0
+    avg_camp_time_s = M.safe_avg(total_camp_time_s, maps_played)
 
     map_rows = []
     for row in map_rows_raw:
@@ -196,7 +197,6 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
 
     weapon_kills_total = sum(int(r.get("kills") or 0) for r in weapon_rows)
     unattributed_kills = int(max(0, total_kills - weapon_kills_total))
-    effective_total_kills = int(total_kills - unattributed_kills)
 
     if unattributed_kills > 0:
         deltas = stattracker_repo.fetch_player_weapon_kill_attribution_deltas(sid)
@@ -215,13 +215,6 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
                 level="DEBUG",
             )
 
-    # Filter unattributed kill events from KPI kill-derived metrics so values
-    # align with the visible per-weapon table.
-    kdr = M.kd_ratio(effective_total_kills, max(1, total_deaths)) if maps_played > 0 else 0.0
-    avg_kills = M.safe_avg(effective_total_kills, maps_played)
-    hs_pct = M.hs_pct(min(total_headshot_kills, effective_total_kills), effective_total_kills)
-    performance_index = M.performance_index(effective_total_kills, total_assists, total_deaths) if maps_played > 0 else 0.0
-
     result = {
         "kpis": {
             "maps_played": maps_played,
@@ -238,7 +231,7 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
             "performance_index": performance_index,
             "avg_speed_m_s": avg_speed_m_s,
             "strafe_ratio": strafe_ratio,
-            "camp_time_s": total_camp_time_s,
+            "camp_time_s": avg_camp_time_s,
         },
         "map_rows": map_rows,
         "weapon_rows": weapon_rows,
