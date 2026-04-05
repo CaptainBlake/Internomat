@@ -94,7 +94,7 @@ class InternomatWindow(QMainWindow):
             QTabBar::tab {
                 min-height: 36px;
                 padding: 10px 18px;
-                font-size: 16px;
+                font-size: 14px;
                 font-weight: 600;
             }
             QTabWidget::pane {
@@ -246,7 +246,7 @@ def start_gui():
     app.setWindowIcon(icon)
 
     def load_stylesheet():
-        path = resource_path("styles/app.qss")
+        path = resource_path("../styles/app.qss")
 
         logger.log(f"[GUI] Loading stylesheet from {path}", level="DEBUG")
 
@@ -254,7 +254,6 @@ def start_gui():
             return f.read()
 
     app.setStyleSheet(load_stylesheet())
-
 
     MAIN_WINDOW = InternomatWindow()
     MAIN_WINDOW.setWindowIcon(icon)

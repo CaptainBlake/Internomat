@@ -17,17 +17,37 @@ import services.logger as logger
 from core.settings.settings import settings
 from threading import Lock
 
+
 # ENV & CONFIG
 def resource_path(relative_path):
     if getattr(sys, "frozen", False):
         base_path = sys._MEIPASS
     else:
-        base_path = os.path.abspath(".")
+        base_path = os.path.dirname(os.path.abspath(__file__))
 
     return os.path.join(base_path, relative_path)
 
-env_path = resource_path(".env")
-load_dotenv(env_path)
+
+def load_env_file():
+    candidates = [
+        resource_path(os.path.join("..", "..", ".env")),  # project root from src/services
+        resource_path(os.path.join("..", ".env")),        # just in case layout differs
+        resource_path(".env"),                            # frozen/packaged fallback
+    ]
+
+    for env_path in candidates:
+        env_path = os.path.abspath(env_path)
+        if os.path.isfile(env_path):
+            load_dotenv(env_path)
+            logger.log(f"[ENV] Loaded .env from {env_path}", level="DEBUG")
+            return env_path
+
+    logger.log("[ENV_WARNING] No .env file found in expected locations", level="INFO")
+    return None
+
+
+load_env_file()
+
 # CONSTANTS & GLOBALS
 FETCH_DELAY = 0.5  # seconds between bulk fetches to avoid rate limits
 _driver = None
@@ -146,7 +166,8 @@ def get_leetify_player(steam_id, auto_close=False):
     finally:
         if auto_close:
             close_driver()
-    
+
+
 # FALLBACK (SELENIUM)
 
 def _create_driver():
@@ -157,6 +178,7 @@ def _create_driver():
     logger.log("[CRAWLER] Selenium driver created", level="DEBUG")
     return webdriver.Chrome(options=options)
 
+
 def get_driver():
     global _driver
 
@@ -165,6 +187,7 @@ def get_driver():
 
     return _driver
 
+
 def close_driver():
     global _driver
 
@@ -172,7 +195,8 @@ def close_driver():
         logger.log("[CRAWLER] Closing Selenium driver", level="DEBUG")
         _driver.quit()
         _driver = None
-        
+
+
 def _fetch_leetify_profile_html(steam_id):
     redacted = logger.redact(steam_id)
 
@@ -192,6 +216,7 @@ def _fetch_leetify_profile_html(steam_id):
             logger.log(f"[FETCH_WARNING] Timeout {redacted}", level="DEBUG")
 
         return driver.page_source
+
 
 def _get_steam_name(steam_id):
     redacted = logger.redact(steam_id)
@@ -328,6 +353,7 @@ def _parse_leetify_profile(html, steam_id):
                 }
 
     raise Exception("Premier rank not found in profile")
+
 
 # PUBLIC API
 
