@@ -3,8 +3,11 @@ name: Build And Publish Release Assets
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - "v*.*.*"
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-release-assets:
@@ -18,7 +21,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install dependencies
         shell: pwsh
@@ -29,7 +32,7 @@ jobs:
       - name: Validate tag format
         shell: pwsh
         run: |
-          $tagVersion = "${env:GITHUB_REF_NAME}".TrimStart('v')
+          $tagVersion = $env:GITHUB_REF_NAME.TrimStart('v')
           if ($tagVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
             throw "Tag must match semantic version format vX.Y.Z"
           }
@@ -37,24 +40,27 @@ jobs:
       - name: Report secret bootstrap mode
         shell: pwsh
         run: |
-          if ([string]::IsNullOrWhiteSpace("${env:LEETIFY_API}")) {
+          if ([string]::IsNullOrWhiteSpace($env:LEETIFY_API)) {
             Write-Host "LEETIFY_API secret is not set; build will skip encrypted bootstrap bundle."
-          } else {
+          }
+          else {
             Write-Host "LEETIFY_API secret detected; build will embed encrypted bootstrap bundle."
           }
 
       - name: Build installer
         shell: pwsh
         run: |
-          $tagVersion = "${env:GITHUB_REF_NAME}".TrimStart('v')
+          $tagVersion = $env:GITHUB_REF_NAME.TrimStart('v')
           python src/build.py --installer --version $tagVersion
 
       - name: Generate SHA256SUMS
         shell: pwsh
         run: |
-          $tagVersion = "${env:GITHUB_REF_NAME}".TrimStart('v')
+          $tagVersion = $env:GITHUB_REF_NAME.TrimStart('v')
           $installer = "dist/Internomat-Setup-$tagVersion.exe"
-          if (!(Test-Path $installer)) { throw "Installer not found: $installer" }
+          if (!(Test-Path $installer)) {
+            throw "Installer not found: $installer"
+          }
           $hash = (Get-FileHash -Algorithm SHA256 $installer).Hash.ToLower()
           $line = "$hash  Internomat-Setup-$tagVersion.exe"
           Set-Content -Path "dist/SHA256SUMS.txt" -Value $line -NoNewline
