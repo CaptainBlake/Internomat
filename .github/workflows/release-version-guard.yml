@@ -26,8 +26,8 @@ jobs:
           echo "Tag ref: ${TAG_REF}"
           echo "Tag version: ${TAG_VERSION}"
 
-          if [[ ! "${TAG_REF}" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Tag must match semantic version (vX.Y.Z)"
+          if [[ ! "${TAG_REF}" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Tag must match semantic version (vX.Y.Z or vX.Y.Z-<prerelease>)"
             exit 1
           fi
 
