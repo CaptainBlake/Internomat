@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
-
+# load .env
 load_dotenv()
 
 APP_NAME = "Internomat"
