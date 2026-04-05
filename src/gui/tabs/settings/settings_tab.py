@@ -1,4 +1,5 @@
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QCheckBox,
@@ -22,6 +23,8 @@ from PySide6.QtWidgets import (
 )
 from core.settings.settings import settings
 from core.settings import service as settings_service
+from core.update import service as update_service
+from core.version import APP_VERSION
 from core import io_service
 from services import executor
 import services.logger as logger
@@ -45,6 +48,10 @@ class SettingsDispatcher(QObject):
     demos_sync_finished = Signal(object)
     demos_sync_error = Signal(object)
     demos_sync_progress = Signal(object)
+    update_check_finished = Signal(object)
+    update_check_error = Signal(object)
+    update_download_finished = Signal(object)
+    update_download_error = Signal(object)
 
 # SETTINGS TAB
 def build_settings_tab(parent, on_players_updated=None, on_update_players=None, on_update_players_only=None, on_data_updated=None, on_players_data_updated=None):
@@ -306,6 +313,7 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
     sync_matchzy_button = small_button("Sync with Matchzy")
     sync_demos_button = small_button("Sync demos")
     clear_cache_button = danger_button("Clear Cache")
+    check_updates_button = small_button("Look for Updates")
 
     for btn in [
         import_settings_button,
@@ -313,6 +321,7 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         save_settings_button,
         sync_matchzy_button,
         sync_demos_button,
+        check_updates_button,
         clear_cache_button,
     ]:
         btn.setFocusPolicy(Qt.NoFocus)
@@ -324,7 +333,7 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
 
     # MAINTENANCE
     maintenance_frame = create_grid_section("Maintenance", [
-        [open_logs_button, clear_cache_button, None],
+        [open_logs_button, clear_cache_button, check_updates_button],
         [import_settings_button, export_settings_button, None],
     ], columns=3)
 
@@ -949,6 +958,34 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
 
         executor.submit(worker)
 
+    def check_updates_action():
+        if not check_updates_button.isEnabled():
+            return
+
+        check_updates_button.setEnabled(False)
+        logger.log("[UPDATE_CLIENT] Checking GitHub releases for updates", level="INFO")
+
+        def worker():
+            try:
+                result = update_service.check_latest_release()
+                dispatcher.update_check_finished.emit(result)
+            except Exception as exc:
+                dispatcher.update_check_error.emit(exc)
+
+        executor.submit(worker)
+
+    def _download_update_action(result):
+        check_updates_button.setEnabled(False)
+
+        def worker():
+            try:
+                downloaded = update_service.download_and_verify_installer(result)
+                dispatcher.update_download_finished.emit(downloaded)
+            except Exception as exc:
+                dispatcher.update_download_error.emit(exc)
+
+        executor.submit(worker)
+
     def on_sync_finished():
         sync_matchzy_button.setEnabled(True)
         logger.log("[MATCHZY] Sync completed", level="INFO")
@@ -1037,6 +1074,78 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
             return
         dialog.update_status(payload)
 
+    def on_update_check_finished(result):
+        check_updates_button.setEnabled(True)
+
+        title = "Update Available" if result.update_available else "No Updates"
+        if result.update_available:
+            msg = (
+                f"Current version: {result.current_version}\n"
+                f"Latest version: {result.latest_version}\n\n"
+                "Download installer now?"
+            )
+            button = QMessageBox.question(
+                parent,
+                title,
+                msg,
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if button == QMessageBox.Yes:
+                _download_update_action(result)
+            logger.log(
+                f"[UPDATE_CLIENT] Update available current={result.current_version} latest={result.latest_version}",
+                level="INFO",
+            )
+            return
+
+        QMessageBox.information(
+            parent,
+            title,
+            f"Current version {APP_VERSION} is up to date.",
+        )
+        logger.log(f"[UPDATE_CLIENT] Up to date version={result.current_version}", level="INFO")
+
+    def on_update_check_error(exc):
+        check_updates_button.setEnabled(True)
+        logger.log_error(f"[UPDATE_CLIENT] Update check failed: {exc}", exc=exc)
+        QMessageBox.warning(parent, "Update Check Failed", str(exc))
+
+    def on_update_download_finished(downloaded):
+        check_updates_button.setEnabled(True)
+        verification_status = (
+            "verified with release checksums"
+            if downloaded.verified_with_release_checksums
+            else "downloaded (no release checksums asset found)"
+        )
+
+        msg = (
+            f"Installer downloaded to:\n{downloaded.file_path}\n\n"
+            f"SHA256: {downloaded.sha256}\n"
+            f"Status: {verification_status}\n\n"
+            "Open installer now?"
+        )
+        button = QMessageBox.question(
+            parent,
+            "Update Downloaded",
+            msg,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if button == QMessageBox.Yes:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(downloaded.file_path))
+
+        logger.log(
+            f"[UPDATE_CLIENT] Installer downloaded path={downloaded.file_path} "
+            f"checksum_verified={downloaded.verified_with_release_checksums}",
+            level="INFO",
+        )
+
+    def on_update_download_error(exc):
+        check_updates_button.setEnabled(True)
+        logger.log_error(f"[UPDATE_CLIENT] Update download failed: {exc}", exc=exc)
+        QMessageBox.warning(parent, "Update Download Failed", str(exc))
+
     # SIGNALS
 
     open_logs_button.clicked.connect(open_logs)
@@ -1046,12 +1155,17 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
     sync_matchzy_button.clicked.connect(sync_matchzy_action)
     sync_demos_button.clicked.connect(sync_demos_action)
     clear_cache_button.clicked.connect(clear_cache_action)
+    check_updates_button.clicked.connect(check_updates_action)
     sidebar.currentRowChanged.connect(go_to_section)
     dispatcher.sync_finished.connect(on_sync_finished)
     dispatcher.sync_error.connect(on_sync_error)
     dispatcher.demos_sync_finished.connect(on_demos_sync_finished)
     dispatcher.demos_sync_error.connect(on_demos_sync_error)
     dispatcher.demos_sync_progress.connect(on_demos_sync_progress)
+    dispatcher.update_check_finished.connect(on_update_check_finished)
+    dispatcher.update_check_error.connect(on_update_check_error)
+    dispatcher.update_download_finished.connect(on_update_download_finished)
+    dispatcher.update_download_error.connect(on_update_download_error)
 
     sidebar.setCurrentRow(0)
 

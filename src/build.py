@@ -15,6 +15,7 @@ APP_NAME = "Internomat"
 DIST_PATH = Path("dist")
 INSTALLER_SCRIPT = Path("installer") / "Internomat.iss"
 BOOTSTRAP_SECRET_PATH = Path("build") / "embedded" / "leetify_bootstrap.bin"
+BUILD_META_PATH = Path("build") / "embedded" / "build_meta.json"
 CERT_PATH = r"D:\Git_repo\Internomat\internomat.pfx"
 SIGN_PASSWORD = os.getenv("CERT_PASSWORD")  # from .env
 
@@ -165,6 +166,15 @@ def _prepare_bootstrap_secret_bundle() -> bool:
     return True
 
 
+def _write_build_metadata(version: str) -> Path:
+    BUILD_META_PATH.parent.mkdir(parents=True, exist_ok=True)
+    BUILD_META_PATH.write_text(
+        json.dumps({"app_version": version}),
+        encoding="utf-8",
+    )
+    return BUILD_META_PATH
+
+
 def _pyinstaller_cmd(onefile: bool):
     # Keep module collection explicit to avoid pulling test/demo payloads from dependencies.
     # This reduces package size while preserving runtime functionality.
@@ -203,6 +213,9 @@ def _pyinstaller_cmd(onefile: bool):
 
     if BOOTSTRAP_SECRET_PATH.exists():
         cmd.extend(["--add-data", f"{BOOTSTRAP_SECRET_PATH};bootstrap"])
+
+    if BUILD_META_PATH.exists():
+        cmd.extend(["--add-data", f"{BUILD_META_PATH};bootstrap"])
 
     if onefile:
         cmd.append("--onefile")
@@ -274,8 +287,8 @@ def parse_args():
     )
     parser.add_argument(
         "--version",
-        default=os.getenv("APP_VERSION", "0.1.0"),
-        help="Version string passed to installer metadata (default: APP_VERSION env or 0.1.0).",
+        required=True,
+        help="Release version used as source-of-truth for installer metadata and bundled runtime version.",
     )
     parser.add_argument(
         "--ensure-iscc",
@@ -287,6 +300,8 @@ def parse_args():
 
 def build():
     args = parse_args()
+    _write_build_metadata(args.version)
+    print(f"[BUILD] Using app version from --version source-of-truth: {args.version}")
     _prepare_bootstrap_secret_bundle()
     exe_path = build_app(onefile=args.onefile)
 
