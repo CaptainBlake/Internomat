@@ -26,9 +26,24 @@ def bundle_root() -> Path:
     return app_data_root()
 
 
+def _safe_join(root: Path, *parts: str) -> Path:
+    """Join parts to root and guarantee the result stays under root."""
+    resolved_root = root.resolve()
+    candidate = resolved_root.joinpath(*parts).resolve(strict=False)
+
+    try:
+        candidate.relative_to(resolved_root)
+    except ValueError as exc:
+        raise ValueError(
+            f"Path escapes root: root={resolved_root} candidate={candidate}"
+        ) from exc
+
+    return candidate
+
+
 def data_path(*parts: str) -> Path:
-    return app_data_root().joinpath(*parts)
+    return _safe_join(app_data_root(), *parts)
 
 
 def resource_path(*parts: str) -> Path:
-    return bundle_root().joinpath(*parts)
+    return _safe_join(bundle_root(), *parts)
