@@ -11,19 +11,18 @@ import polars as pl
 
 from services.IO_manager import IOManager
 import services.logger as logger
+from core.pathing import data_path
 
 
 _INDEX_NAME = "index.json"
 
 
 def _default_cache_dir():
-    base_dir = Path(__file__).resolve().parents[2]
-    return base_dir / "demos" / "parsed"
+    return data_path("demos", "parsed")
 
 
 def _default_demo_dir():
-    base_dir = Path(__file__).resolve().parents[2]
-    return base_dir / "demos"
+    return data_path("demos")
 
 
 def _to_path(path_value):

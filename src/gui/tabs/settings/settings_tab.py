@@ -37,6 +37,7 @@ import shutil
 from db.connection_db import DB_FILE, get_conn
 from db.init_db import init_db
 import db.settings_db as settings_db
+from core.pathing import data_path
 
 class SettingsDispatcher(QObject):
     sync_finished = Signal()
@@ -717,7 +718,7 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         executor.submit(worker)
 
     def clear_cache_action():
-        base_dir = Path(__file__).resolve().parents[4]
+        base_dir = data_path()
         demos_dir = base_dir / "demos"
         parsed_dir = demos_dir / "parsed"
         logs_dir = base_dir / "log"

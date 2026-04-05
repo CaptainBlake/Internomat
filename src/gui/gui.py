@@ -23,8 +23,7 @@ from gui.tabs.statistics.stattracker_tab import (
 )
 from gui.tabs.statistics.leaderboard_tab import on_stat_overview_data_updated
 import services.logger as logger
-import os
-import sys
+from core.pathing import resource_path
 
 
 MENU_CATEGORIES = ["Play", "Tools", "Statistics", "Settings"]
@@ -55,15 +54,6 @@ MENU_TABS = [
     },
 ]
 
-def resource_path(relative_path):
-    if getattr(sys, "frozen", False):
-        base_path = sys._MEIPASS
-    else:
-        base_path = os.path.abspath(".")
-
-    return os.path.join(base_path, relative_path)
-
-
 MAIN_WINDOW = None
 _RELOADING_UI = False
 
@@ -87,8 +77,8 @@ class InternomatWindow(QMainWindow):
         self.tabs.tabBar().setUsesScrollButtons(False)
 
         # important feature!
-        icon_path = resource_path("assets/duck_icon.ico")
-        self.setWindowIcon(QIcon(icon_path))
+        icon_path = resource_path("assets", "duck_icon.ico")
+        self.setWindowIcon(QIcon(str(icon_path)))
 
         self.tabs.setStyleSheet("""
             QTabBar::tab {
@@ -242,11 +232,11 @@ def start_gui():
     app = QApplication.instance() or QApplication([])
 
     # very important feature! do not change:
-    icon = QIcon(resource_path("assets/duck_icon.ico"))
+    icon = QIcon(str(resource_path("assets", "duck_icon.ico")))
     app.setWindowIcon(icon)
 
     def load_stylesheet():
-        path = resource_path("../styles/app.qss")
+        path = resource_path("styles", "app.qss")
 
         logger.log(f"[GUI] Loading stylesheet from {path}", level="DEBUG")
 

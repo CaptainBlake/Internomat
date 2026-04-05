@@ -1,10 +1,10 @@
 import re
-import sys
 import time
 import requests
 from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
 import os
+from pathlib import Path
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -16,31 +16,22 @@ from dotenv import load_dotenv
 import services.logger as logger
 from core.settings.settings import settings
 from threading import Lock
-
-
-# ENV & CONFIG
-def resource_path(relative_path):
-    if getattr(sys, "frozen", False):
-        base_path = sys._MEIPASS
-    else:
-        base_path = os.path.dirname(os.path.abspath(__file__))
-
-    return os.path.join(base_path, relative_path)
+from core.pathing import data_path, resource_path
 
 
 def load_env_file():
     candidates = [
-        resource_path(os.path.join("..", "..", ".env")),  # project root from src/services
-        resource_path(os.path.join("..", ".env")),        # just in case layout differs
-        resource_path(".env"),                            # frozen/packaged fallback
+        data_path(".env"),
+        Path.cwd() / ".env",
+        resource_path(".env"),
     ]
 
     for env_path in candidates:
-        env_path = os.path.abspath(env_path)
-        if os.path.isfile(env_path):
+        env_path = Path(env_path).resolve()
+        if env_path.is_file():
             load_dotenv(env_path)
             logger.log(f"[ENV] Loaded .env from {env_path}", level="DEBUG")
-            return env_path
+            return str(env_path)
 
     logger.log("[ENV_WARNING] No .env file found in expected locations", level="INFO")
     return None

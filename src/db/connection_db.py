@@ -2,10 +2,10 @@ from pathlib import Path
 import sqlite3
 from contextlib import contextmanager
 from threading import RLock
+from core.pathing import data_path
 
-# go to project root (Internomat)
-BASE_DIR = Path(__file__).resolve().parents[2]
-DB_FILE = BASE_DIR / "internomat.db"
+BASE_DIR = data_path()
+DB_FILE = data_path("internomat.db")
 _WRITE_LOCK = RLock()
 
 

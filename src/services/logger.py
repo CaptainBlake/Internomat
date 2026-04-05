@@ -2,6 +2,7 @@ import traceback
 import atexit
 from datetime import datetime
 from pathlib import Path
+from core.pathing import data_path
 
 # --- config ---
 
@@ -42,8 +43,7 @@ def _store_log(entry):
 
 
 def _resolve_log_dir():
-    # src/services/logger.py -> ../../ = repository root
-    return Path(__file__).resolve().parents[2] / LOG_EXPORT_DIRNAME
+    return data_path(LOG_EXPORT_DIRNAME)
 
 
 def _close_log_file():

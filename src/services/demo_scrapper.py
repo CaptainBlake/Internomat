@@ -13,6 +13,7 @@ from services.IO_manager import IOManager
 from services import demo_cache
 from services import executor
 import services.logger as logger
+from core.pathing import data_path
 from services.demo_scrapper_components import (
     DemoScrapperCommonMixin,
     DemoScrapperMetricsMixin,
@@ -45,7 +46,7 @@ class DemoScrapperIntegration(
         progress_callback=None,
         cancel_requested=None,
     ):
-        self.base_dir = base_dir or Path(__file__).parent.parent.parent
+        self.base_dir = base_dir or data_path()
         self.db_file = db_file or (self.base_dir / "internomat.db")
         self.demo_dir = demo_dir or (self.base_dir / "demos")
         self.parsed_demo_dir = self.demo_dir / "parsed"
