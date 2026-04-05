@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - "v*.*.*"
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -32,8 +31,8 @@ jobs:
       - name: Validate tag format
         shell: pwsh
         run: |
-          $tagVersion = $env:GITHUB_REF_NAME.TrimStart('v')
-          if ($tagVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+          $tagRef = $env:GITHUB_REF
+          if ($tagRef -notmatch '^refs/tags/v([0-9]+\.[0-9]+\.[0-9]+)$') {
             throw "Tag must match semantic version format vX.Y.Z"
           }
 
@@ -50,13 +49,15 @@ jobs:
       - name: Build installer
         shell: pwsh
         run: |
-          $tagVersion = $env:GITHUB_REF_NAME.TrimStart('v')
+          $tagVersion = $env:GITHUB_REF_NAME
+          $tagVersion = $tagVersion.TrimStart('v')
           python src/build.py --installer --version $tagVersion
 
       - name: Generate SHA256SUMS
         shell: pwsh
         run: |
-          $tagVersion = $env:GITHUB_REF_NAME.TrimStart('v')
+          $tagVersion = $env:GITHUB_REF_NAME
+          $tagVersion = $tagVersion.TrimStart('v')
           $installer = "dist/Internomat-Setup-$tagVersion.exe"
           if (!(Test-Path $installer)) {
             throw "Installer not found: $installer"
