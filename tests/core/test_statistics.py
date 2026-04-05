@@ -30,7 +30,8 @@ class TestGetOverview:
         result = get_overview()
         expected_keys = {
             "total_matches", "total_maps", "unique_players",
-            "demo_matches", "maps_with_stats", "top_map_name", "top_map_count",
+            "demo_matches", "maps_with_stats", "total_rounds_played",
+            "top_map_name", "top_map_count",
         }
         assert set(result.keys()) == expected_keys
 

@@ -47,3 +47,4 @@ internomat_settings.cfg
 internomat_backup.json
 docs/*.md
 /log/*
+.secrets/leetify_api.bin
