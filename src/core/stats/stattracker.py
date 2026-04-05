@@ -258,6 +258,18 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
 # Plot series: generic builder + two public wrappers
 # ---------------------------------------------------------------------------
 
+
+def _row_value(row, key, default=None):
+    if row is None:
+        return default
+    try:
+        value = row[key]
+    except (KeyError, IndexError, TypeError):
+        if hasattr(row, "get"):
+            return row.get(key, default)
+        return default
+    return default if value is None else value
+
 PLOT_METRICS = {
     "accuracy": {"label": "Accuracy %", "fn": lambda r: M.accuracy_pct(r["shots_hit"], r["shots_fired"]) if r["shots_fired"] > 0 else None},
     "hs_pct": {"label": "Headshot %", "fn": lambda r: M.hs_pct(r["headshot_kills"], r["kills"]) if r["kills"] > 0 else None},
@@ -288,9 +300,10 @@ MOVEMENT_PLOT_METRICS = {
     "camp_time_s": {
         "label": "Camp Time (s)",
         "fn": lambda r: (
-            float(r.get("camp_time_s") or 0.0)
-            if float(r.get("camp_time_s") or 0.0) > 0.0
-            else float(r.get("stationary_ratio") or 0.0) * float(r.get("alive_seconds") or 0.0)
+            float(_row_value(r, "camp_time_s", 0.0) or 0.0)
+            if float(_row_value(r, "camp_time_s", 0.0) or 0.0) > 0.0
+            else float(_row_value(r, "stationary_ratio", 0.0) or 0.0)
+            * float(_row_value(r, "alive_seconds", 0.0) or 0.0)
         ),
     },
 }

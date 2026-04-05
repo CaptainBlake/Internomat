@@ -746,8 +746,11 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         cb_logs = QCheckBox("Logs")
         cb_database = QCheckBox("Database")
         cb_include_settings = QCheckBox("Including settings")
+        cb_include_players = QCheckBox("Including player-list")
         cb_include_settings.setChecked(False)
         cb_include_settings.setEnabled(False)
+        cb_include_players.setChecked(False)
+        cb_include_players.setEnabled(False)
 
         for cb in (cb_demos, cb_parsed, cb_logs, cb_database):
             cb.setStyleSheet("QCheckBox { color: #2E4C69; font-weight: 600; padding: 2px 0px; }")
@@ -755,10 +758,12 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
 
         cb_include_settings.setStyleSheet("QCheckBox { color: #5A6B7C; font-weight: 600; padding: 0px 0px 2px 18px; }")
         dlg_layout.addWidget(cb_include_settings)
+        cb_include_players.setStyleSheet("QCheckBox { color: #5A6B7C; font-weight: 600; padding: 0px 0px 2px 18px; }")
+        dlg_layout.addWidget(cb_include_players)
 
         hint = QLabel(
             "Notes: 'Demos' removes raw demo files, 'Parsed payloads' removes cached parsed files,\n"
-            "'Database' resets internomat.db and recreates a clean schema. Settings are kept unless 'Including settings' is checked."
+            "'Database' resets internomat.db and recreates a clean schema. Settings and player-list are kept unless explicitly included."
         )
         hint.setStyleSheet("font-size: 11px; color: #5A6B7C;")
         dlg_layout.addWidget(hint)
@@ -781,8 +786,10 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
             delete_btn.setEnabled(any((cb_demos.isChecked(), cb_parsed.isChecked(), cb_logs.isChecked(), cb_database.isChecked())))
             allow_settings_toggle = cb_database.isChecked()
             cb_include_settings.setEnabled(allow_settings_toggle)
+            cb_include_players.setEnabled(allow_settings_toggle)
             if not allow_settings_toggle:
                 cb_include_settings.setChecked(False)
+                cb_include_players.setChecked(False)
 
         for cb in (cb_demos, cb_parsed, cb_logs, cb_database):
             cb.stateChanged.connect(_update_delete_enabled)
@@ -826,6 +833,7 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
             selected_logs = cb_logs.isChecked()
             selected_database = cb_database.isChecked()
             selected_include_settings = cb_include_settings.isChecked()
+            selected_include_players = cb_include_players.isChecked()
             requires_restart = bool(selected_database)
 
             if selected_demos and selected_parsed:
@@ -846,6 +854,7 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
 
             if selected_database:
                 settings_snapshot = []
+                players_snapshot = []
                 if not selected_include_settings:
                     try:
                         with get_conn() as conn:
@@ -853,6 +862,12 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
                             settings_snapshot = [(str(r["key"]), str(r["value"])) for r in rows]
                     except Exception as exc:
                         logger.log_error(f"[CLEANUP] Failed to snapshot settings before DB deletion: {exc}")
+
+                if not selected_include_players:
+                    try:
+                        players_snapshot = io_service.get_players_payload()
+                    except Exception as exc:
+                        logger.log_error(f"[CLEANUP] Failed to snapshot players before DB deletion: {exc}")
 
                 db_deleted = 0
                 for db_path in db_files:
@@ -869,6 +884,11 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
                         for key, value in settings_snapshot:
                             settings_db.set(key, value)
                         logger.log_info(f"[CLEANUP] Restored settings entries={len(settings_snapshot)}")
+
+                    if not selected_include_players and players_snapshot:
+                        restored_players = io_service.import_players_payload(players_snapshot)
+                        logger.log_info(f"[CLEANUP] Restored player-list entries={restored_players}")
+
                     logger.log_info("[CLEANUP] Reinitialized database after deletion")
                 except Exception as exc:
                     logger.log_error(f"[CLEANUP] Database reinitialize failed: {exc}")
