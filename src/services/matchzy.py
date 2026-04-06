@@ -83,6 +83,67 @@ class MatchZy:
         except (TypeError, ValueError):
             return 0
 
+    @staticmethod
+    def _clean_team_token(value):
+        return str(value or "").strip().lower().replace("_", "").replace("-", "").replace(" ", "")
+
+    def _build_team_name_map(self, team1_name=None, team2_name=None, player_rows=None):
+        """Build a per-match mapping from raw labels to canonical TeamA / TeamB."""
+        mapping = {}
+
+        def _register(raw, canonical):
+            txt = str(raw or "").strip()
+            if not txt:
+                return
+            mapping[txt] = canonical
+            mapping[txt.lower()] = canonical
+
+        # Canonical aliases always supported.
+        for alias in ["TeamA", "teama", "A", "CT", "CT_SIDE", "CounterTerrorist", "Counter-Terrorist"]:
+            _register(alias, "TeamA")
+        for alias in ["TeamB", "teamb", "B", "T", "T_SIDE", "Terrorist", "Terrorists"]:
+            _register(alias, "TeamB")
+
+        t1 = str(team1_name or "").strip()
+        t2 = str(team2_name or "").strip()
+        if t1:
+            _register(t1, "TeamA")
+        if t2:
+            _register(t2, "TeamB")
+
+        # Fallback: infer from first-seen distinct team labels in player rows.
+        if (not t1 or not t2) and player_rows:
+            ordered = []
+            for p in player_rows:
+                raw_team = str(p[3] or "").strip() if len(p) > 3 else ""
+                if not raw_team:
+                    continue
+                token = self._clean_team_token(raw_team)
+                if token in {"", "all"}:
+                    continue
+                if raw_team not in ordered:
+                    ordered.append(raw_team)
+
+            if ordered:
+                _register(ordered[0], "TeamA")
+            if len(ordered) > 1:
+                _register(ordered[1], "TeamB")
+
+        return mapping
+
+    def _canonical_team_label(self, raw_value, team_name_map):
+        txt = str(raw_value or "").strip()
+        if not txt:
+            return txt
+
+        token = self._clean_team_token(txt)
+        if token in {"teama", "a", "ct", "ctside", "counter", "counterterrorist", "counterterrorists"}:
+            return "TeamA"
+        if token in {"teamb", "b", "t", "tside", "terrorist", "terrorists"}:
+            return "TeamB"
+
+        return team_name_map.get(txt) or team_name_map.get(txt.lower()) or txt
+
     def close(self):
         if self.conn and self.conn.is_connected():
             self.conn.close()
@@ -141,17 +202,26 @@ class MatchZy:
                     logger.log(f"[MATCHZY] Processing match={matchid} map={mapname}", level="INFO")
 
                     match_data = matches_by_id.get(matchid)
+                    player_rows_for_map = players_by_match_map.get((matchid, mapnumber), [])
+
+                    team_name_map = self._build_team_name_map(
+                        team1_name=(match_data[5] if match_data and len(match_data) > 5 else None),
+                        team2_name=(match_data[7] if match_data and len(match_data) > 7 else None),
+                        player_rows=player_rows_for_map,
+                    )
+
+                    canonical_map_winner = self._canonical_team_label(winner, team_name_map)
 
                     if match_data:
                         match_db.insert_match({
                             "match_id": matchid,
                             "start_time": match_data[1],
                             "end_time": match_data[2],
-                            "winner": match_data[3],
+                            "winner": self._canonical_team_label(match_data[3], team_name_map),
                             "series_type": match_data[4],
-                            "team1_name": match_data[5],
+                            "team1_name": "TeamA",
                             "team1_score": self._to_int(match_data[6]),
-                            "team2_name": match_data[7],
+                            "team2_name": "TeamB",
                             "team2_score": self._to_int(match_data[8]),
                             "server_ip": match_data[9],
                         }, conn=local_conn)
@@ -164,21 +234,20 @@ class MatchZy:
                         "map_name": mapname,
                         "start_time": start_time,
                         "end_time": end_time,
-                        "winner": winner,
+                        "winner": canonical_map_winner,
                         "team1_score": team1_score,
                         "team2_score": team2_score,
                     }, conn=local_conn)
 
                     total_maps += 1
 
-                    key = (matchid, mapnumber)
                     map_player_payloads = []
-                    for p in players_by_match_map.get(key, []):
+                    for p in player_rows_for_map:
                         player_payload = {
                             "steamid64": str(p[2]),
                             "match_id": matchid,
                             "map_number": mapnumber,
-                            "team": p[3],
+                            "team": self._canonical_team_label(p[3], team_name_map),
                             "name": p[4],
                             "kills": self._to_int(p[5]),
                             "deaths": self._to_int(p[6]),
