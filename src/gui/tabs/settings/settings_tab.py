@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtCore import Qt, QTimer, QUrl, QDate
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QMessageBox,
     QDialog,
+    QDateEdit,
 )
 from core.settings.settings import settings
 from core.settings import service as settings_service
@@ -35,6 +36,7 @@ from PySide6.QtCore import QObject, Signal
 from gui.tabs.settings.log_window import open_log_window
 from gui.widgets.pipeline_progress_dialog import PipelineProgressDialog
 import json
+from datetime import datetime, timedelta
 from pathlib import Path
 import shutil
 from db.connection_db import DB_FILE, get_conn
@@ -56,7 +58,7 @@ class SettingsDispatcher(QObject):
 # SETTINGS TAB
 def build_settings_tab(parent, on_players_updated=None, on_update_players=None, on_update_players_only=None, on_data_updated=None, on_players_data_updated=None):
 
-    section_order = ["Settings", "MatchZy", "Demos", "Maintenance"]
+    section_order = ["Settings", "Elo", "MatchZy", "Demos", "Maintenance"]
 
     root_layout = QHBoxLayout(parent)
     root_layout.setContentsMargins(20, 20, 20, 20)
@@ -434,6 +436,402 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
     settings_button_row.addStretch()
     settings_layout.addLayout(settings_button_row)
 
+    # ELO SETTINGS
+    elo_frame, elo_layout = create_section("Elo")
+
+    elo_info = QLabel(
+        "Season ranges are edited as dates (masked input). "
+        "A new season cannot be started until the previous one has an explicit end date."
+    )
+    elo_info.setWordWrap(True)
+    elo_info.setStyleSheet("""
+        QLabel {
+            font-size: 12px;
+            color: #5A6B7C;
+            padding-bottom: 6px;
+        }
+    """)
+    elo_layout.addWidget(elo_info)
+
+    season_rows_layout = QVBoxLayout()
+    season_rows_layout.setSpacing(8)
+    elo_layout.addLayout(season_rows_layout)
+    season_rows = []
+    season_edit_unlocked = {"value": False}
+
+    def mark_dirty(*_args):
+        settings_dirty["value"] = True
+        save_settings_button.setEnabled(True)
+
+    def _date_from_str(value):
+        txt = str(value or "").strip()
+        if not txt:
+            return None
+        try:
+            return datetime.fromisoformat(txt[:10]).date()
+        except Exception:
+            return None
+
+    def _to_qdate(value):
+        if value is None:
+            return QDate.currentDate()
+        return QDate(value.year, value.month, value.day)
+
+    def _clear_layout(layout_obj):
+        while layout_obj.count():
+            item = layout_obj.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+    def _build_season_rows(seasons_data):
+        season_rows.clear()
+        _clear_layout(season_rows_layout)
+
+        if not seasons_data:
+            seasons_data = [{"season": 0, "start": None, "end": None}]
+
+        for idx, item in enumerate(seasons_data):
+            row_wrap = QWidget()
+            row = QHBoxLayout(row_wrap)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(8)
+
+            lbl = QLabel(f"Season {idx}")
+            lbl.setMinimumWidth(80)
+
+            start_edit = QDateEdit()
+            start_edit.setDisplayFormat("yyyy-MM-dd")
+            start_edit.setCalendarPopup(True)
+            start_edit.setDate(_to_qdate(item.get("start")))
+
+            end_edit = QDateEdit()
+            end_edit.setDisplayFormat("yyyy-MM-dd")
+            end_edit.setCalendarPopup(True)
+            end_edit.setDate(_to_qdate(item.get("end")))
+
+            open_end = QCheckBox("Open end")
+            open_end.setChecked(item.get("end") is None)
+
+            if idx == 0:
+                # Season 0 is the baseline; start date is intentionally omitted.
+                start_edit.setEnabled(False)
+
+            def _toggle_end(checked, edit=end_edit):
+                edit.setEnabled(not checked)
+                mark_dirty()
+
+            open_end.toggled.connect(_toggle_end)
+            _toggle_end(open_end.isChecked())
+
+            start_edit.dateChanged.connect(mark_dirty)
+            end_edit.dateChanged.connect(mark_dirty)
+
+            row.addWidget(lbl)
+            row.addWidget(QLabel("Start"))
+            row.addWidget(start_edit)
+            row.addWidget(QLabel("End"))
+            row.addWidget(end_edit)
+            row.addWidget(open_end)
+            row.addStretch()
+
+            season_rows_layout.addWidget(row_wrap)
+            season_rows.append({
+                "start": start_edit,
+                "end": end_edit,
+                "open": open_end,
+            })
+
+        _apply_season_lock_state(season_edit_unlocked["value"])
+
+    def _serialize_seasons_or_error(show_popup=True):
+        out = []
+        prev_end = None
+        for idx, row in enumerate(season_rows):
+            start_date = row["start"].date().toPython() if row["start"].isEnabled() else None
+            end_date = None if row["open"].isChecked() else row["end"].date().toPython()
+
+            if idx > 0 and start_date is None:
+                if show_popup:
+                    QMessageBox.warning(parent, "Invalid season setup", f"Season {idx} requires a start date.")
+                return None
+
+            if start_date and end_date and end_date < start_date:
+                if show_popup:
+                    QMessageBox.warning(parent, "Invalid season setup", f"Season {idx}: end date cannot be before start date.")
+                return None
+
+            if idx > 0:
+                if prev_end is None:
+                    if show_popup:
+                        QMessageBox.warning(parent, "Invalid season setup", "You cannot start a new season while the previous one is open-ended.")
+                    return None
+                if start_date <= prev_end:
+                    if show_popup:
+                        QMessageBox.warning(
+                            parent,
+                            "Invalid season setup",
+                            f"Season {idx} starts inside or before Season {idx - 1}. "
+                            f"It must be after {prev_end.isoformat()}.",
+                        )
+                    return None
+
+            item = {"season": idx}
+            if start_date is not None:
+                item["start"] = start_date.isoformat()
+            if end_date is not None:
+                item["end"] = end_date.isoformat()
+            out.append(item)
+            prev_end = end_date
+
+        if not out:
+            out = [{"season": 0}]
+
+        return out
+
+    def _season_for_date(date_obj, seasons_payload):
+        if date_obj is None:
+            return None
+        for item in seasons_payload:
+            sid = int(item.get("season", 0))
+            s = _date_from_str(item.get("start"))
+            e = _date_from_str(item.get("end"))
+            start_ok = s is None or date_obj >= s
+            end_ok = e is None or date_obj <= e
+            if start_ok and end_ok:
+                return sid
+        return None
+
+    def _count_matches_for_season(season_idx, seasons_payload):
+        count = 0
+        with get_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT TRIM(COALESCE(NULLIF(end_time, ''), NULLIF(start_time, ''), NULLIF(created_at, ''), '')) AS played_at
+                FROM matches
+                """
+            ).fetchall()
+
+        for r in rows:
+            raw = str(r["played_at"] or "").strip()
+            if not raw:
+                continue
+            try:
+                d = datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
+            except Exception:
+                try:
+                    d = datetime.fromisoformat(raw[:10]).date()
+                except Exception:
+                    continue
+            resolved = _season_for_date(d, seasons_payload)
+            if resolved == season_idx:
+                count += 1
+        return count
+
+    def _add_season_row_action():
+        if not season_edit_unlocked["value"]:
+            return
+        seasons = _serialize_seasons_or_error(show_popup=True)
+        if seasons is None:
+            return
+        last = seasons[-1]
+        if "end" not in last:
+            QMessageBox.warning(parent, "Cannot add season", "Close the current last season with an end date before adding a new one.")
+            return
+        next_start = _date_from_str(last.get("end")) + timedelta(days=1)
+        seasons.append({
+            "season": len(seasons),
+            "start": next_start.isoformat(),
+            "end": None,
+        })
+        parsed = []
+        for s in seasons:
+            parsed.append({
+                "season": int(s["season"]),
+                "start": _date_from_str(s.get("start")),
+                "end": _date_from_str(s.get("end")),
+            })
+        _build_season_rows(parsed)
+        mark_dirty()
+
+    def _remove_last_season_row_action():
+        if not season_edit_unlocked["value"]:
+            return
+        seasons = _serialize_seasons_or_error(show_popup=False)
+        if seasons is None or len(seasons) <= 1:
+            return
+
+        last_idx = len(seasons) - 1
+        existing = _count_matches_for_season(last_idx, seasons)
+        if existing > 0:
+            QMessageBox.warning(
+                parent,
+                "Cannot remove season",
+                f"Season {last_idx} has {existing} stored match(es). "
+                "Removing it would invalidate historical assignments.",
+            )
+            return
+
+        seasons = seasons[:-1]
+        parsed = []
+        for s in seasons:
+            parsed.append({
+                "season": int(s["season"]),
+                "start": _date_from_str(s.get("start")),
+                "end": _date_from_str(s.get("end")),
+            })
+        _build_season_rows(parsed)
+        mark_dirty()
+
+    season_btn_row = QHBoxLayout()
+    btn_add_season = small_button("Add Season")
+    btn_remove_season = danger_button("Remove Last")
+    season_btn_row.addWidget(btn_add_season)
+    season_btn_row.addWidget(btn_remove_season)
+    season_btn_row.addStretch()
+    elo_layout.addLayout(season_btn_row)
+
+    season_warning = QLabel(
+        "Season editing is locked. Unlock only for boundary planning.\n"
+        "All previous seasons stay read-only."
+    )
+    season_warning.setWordWrap(True)
+    season_warning.setStyleSheet("font-size: 12px; color: #A33A3A; font-weight: 700;")
+    elo_layout.addWidget(season_warning)
+
+    unlock_seasons_checkbox = QCheckBox("Unlock season editing")
+    unlock_seasons_checkbox.setChecked(False)
+    elo_layout.addWidget(unlock_seasons_checkbox)
+
+    def _apply_season_lock_state(checked):
+        season_edit_unlocked["value"] = bool(checked)
+        last_idx = len(season_rows) - 1
+
+        for idx, row in enumerate(season_rows):
+            editable = bool(checked) and idx == last_idx
+            row["start"].setEnabled(editable and idx > 0)
+            row["open"].setEnabled(editable)
+            if row["open"].isChecked():
+                row["end"].setEnabled(False)
+            else:
+                row["end"].setEnabled(editable)
+
+        btn_add_season.setEnabled(bool(checked))
+        btn_remove_season.setEnabled(bool(checked))
+
+    unlock_seasons_checkbox.toggled.connect(_apply_season_lock_state)
+
+    btn_add_season.clicked.connect(_add_season_row_action)
+    btn_remove_season.clicked.connect(_remove_last_season_row_action)
+
+    try:
+        raw_seasons = str(getattr(settings, "elo_seasons_json", "[]") or "[]")
+        loaded = json.loads(raw_seasons)
+        parsed_rows = []
+        if isinstance(loaded, list):
+            loaded = sorted(
+                [x for x in loaded if isinstance(x, dict)],
+                key=lambda x: int(x.get("season", 0)),
+            )
+            for i, item in enumerate(loaded):
+                parsed_rows.append({
+                    "season": i,
+                    "start": _date_from_str(item.get("start")),
+                    "end": _date_from_str(item.get("end")),
+                })
+        _build_season_rows(parsed_rows)
+    except Exception:
+        _build_season_rows([])
+
+    _apply_season_lock_state(False)
+
+    # Elo tuning controls (production values)
+    spin_elo_k = QDoubleSpinBox()
+    spin_elo_k.setRange(0.0, 200.0)
+    spin_elo_k.setDecimals(2)
+    spin_elo_k.setSingleStep(1.0)
+    spin_elo_k.setValue(float(getattr(settings, "elo_k_factor", 24.0)))
+    elo_layout.addLayout(create_setting_row("K factor:", spin_elo_k, "elo_k_factor", "Rating swing per match."))
+
+    spin_elo_base = QDoubleSpinBox()
+    spin_elo_base.setRange(0.0, 5000.0)
+    spin_elo_base.setDecimals(1)
+    spin_elo_base.setSingleStep(10.0)
+    spin_elo_base.setValue(float(getattr(settings, "elo_base_rating", 1500.0)))
+    elo_layout.addLayout(create_setting_row("Base rating:", spin_elo_base, "elo_base_rating", "Starting Elo for new players."))
+
+    spin_elo_alpha = QDoubleSpinBox()
+    spin_elo_alpha.setRange(0.0, 2.0)
+    spin_elo_alpha.setDecimals(3)
+    spin_elo_alpha.setSingleStep(0.01)
+    spin_elo_alpha.setValue(float(getattr(settings, "elo_adr_alpha", 0.20)))
+    elo_layout.addLayout(create_setting_row("ADR alpha:", spin_elo_alpha, "elo_adr_alpha", "ADR influence strength."))
+
+    spin_elo_spread = QDoubleSpinBox()
+    spin_elo_spread.setRange(0.1, 200.0)
+    spin_elo_spread.setDecimals(2)
+    spin_elo_spread.setSingleStep(1.0)
+    spin_elo_spread.setValue(float(getattr(settings, "elo_adr_spread", 22.0)))
+    elo_layout.addLayout(create_setting_row("ADR spread:", spin_elo_spread, "elo_adr_spread", "Z-score denominator for ADR delta."))
+
+    spin_elo_min_mult = QDoubleSpinBox()
+    spin_elo_min_mult.setRange(0.01, 5.0)
+    spin_elo_min_mult.setDecimals(3)
+    spin_elo_min_mult.setSingleStep(0.01)
+    spin_elo_min_mult.setValue(float(getattr(settings, "elo_adr_min_mult", 0.85)))
+    elo_layout.addLayout(create_setting_row("ADR min multiplier:", spin_elo_min_mult, "elo_adr_min_mult", "Lower clamp for ADR multiplier."))
+
+    spin_elo_max_mult = QDoubleSpinBox()
+    spin_elo_max_mult.setRange(0.01, 5.0)
+    spin_elo_max_mult.setDecimals(3)
+    spin_elo_max_mult.setSingleStep(0.01)
+    spin_elo_max_mult.setValue(float(getattr(settings, "elo_adr_max_mult", 1.15)))
+    elo_layout.addLayout(create_setting_row("ADR max multiplier:", spin_elo_max_mult, "elo_adr_max_mult", "Upper clamp for ADR multiplier."))
+
+    spin_elo_prior = QDoubleSpinBox()
+    spin_elo_prior.setRange(0.0, 100.0)
+    spin_elo_prior.setDecimals(2)
+    spin_elo_prior.setSingleStep(0.5)
+    spin_elo_prior.setValue(float(getattr(settings, "elo_adr_prior_matches", 5.0)))
+    elo_layout.addLayout(create_setting_row("ADR prior matches:", spin_elo_prior, "elo_adr_prior_matches", "Bayesian smoothing prior weight."))
+
+    spin_elo_anchor = QDoubleSpinBox()
+    spin_elo_anchor.setRange(0.0, 500.0)
+    spin_elo_anchor.setDecimals(2)
+    spin_elo_anchor.setSingleStep(1.0)
+    spin_elo_anchor.setValue(float(getattr(settings, "elo_initial_global_anchor", 80.0)))
+    elo_layout.addLayout(create_setting_row("Initial global anchor:", spin_elo_anchor, "elo_initial_global_anchor", "Fallback ADR expectation before data exists."))
+
+    tuning_warning = QLabel(
+        "Warning: changing tuning during an active season will invalidate comparability.\n"
+        "Use only between seasons."
+    )
+    tuning_warning.setWordWrap(True)
+    tuning_warning.setStyleSheet("font-size: 12px; color: #A33A3A; font-weight: 700;")
+    elo_layout.addWidget(tuning_warning)
+
+    unlock_tuning_checkbox = QCheckBox("Unlock advanced Elo tuning")
+    unlock_tuning_checkbox.setChecked(False)
+    elo_layout.addWidget(unlock_tuning_checkbox)
+
+    tuning_widgets = [
+        spin_elo_k,
+        spin_elo_base,
+        spin_elo_alpha,
+        spin_elo_spread,
+        spin_elo_min_mult,
+        spin_elo_max_mult,
+        spin_elo_prior,
+        spin_elo_anchor,
+    ]
+
+    def _apply_tuning_lock_state(checked):
+        for w in tuning_widgets:
+            w.setEnabled(bool(checked))
+
+    unlock_tuning_checkbox.toggled.connect(_apply_tuning_lock_state)
+    _apply_tuning_lock_state(False)
+
     # MATCHZY SETTINGS
     matchzy_frame, matchzy_layout = create_section("MatchZy Database")
 
@@ -582,6 +980,7 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
 
     sections_by_key = {
         "Settings": settings_frame,
+        "Elo": elo_frame,
         "MatchZy": matchzy_frame,
         "Demos": demos_frame,
         "Maintenance": maintenance_frame,
@@ -629,6 +1028,26 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
             elif isinstance(widget, QDoubleSpinBox):
                 widget.setValue(float(value))
 
+        if "elo_seasons_json" in payload:
+            try:
+                loaded = json.loads(str(payload.get("elo_seasons_json") or "[]"))
+            except Exception:
+                loaded = []
+
+            parsed_rows = []
+            if isinstance(loaded, list):
+                loaded = sorted(
+                    [x for x in loaded if isinstance(x, dict)],
+                    key=lambda x: int(x.get("season", 0)),
+                )
+                for i, item in enumerate(loaded):
+                    parsed_rows.append({
+                        "season": i,
+                        "start": _date_from_str(item.get("start")),
+                        "end": _date_from_str(item.get("end")),
+                    })
+            _build_season_rows(parsed_rows)
+
     def export_settings_action():
         path, _ = QFileDialog.getSaveFileName(
             parent,
@@ -640,6 +1059,10 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
             return
 
         payload = {attr_name: read_widget_value(widget) for attr_name, widget in setting_bindings}
+        seasons = _serialize_seasons_or_error(show_popup=True)
+        if seasons is None:
+            return
+        payload["elo_seasons_json"] = json.dumps(seasons)
 
         try:
             settings_service.export_settings_payload(path, payload)
@@ -675,7 +1098,8 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
 
             apply_settings_payload_to_form(payload)
 
-            apply_form_to_settings(save=True)
+            if not apply_form_to_settings(save=True):
+                return
             logger.set_log_export_enabled(bool(getattr(settings, "log_export_enabled", True)))
             settings_dirty["value"] = False
             save_settings_button.setEnabled(False)
@@ -700,11 +1124,70 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         for attr_name, widget in setting_bindings:
             setattr(settings, attr_name, read_widget_value(widget))
 
+        seasons = _serialize_seasons_or_error(show_popup=True)
+        if seasons is None:
+            return False
+        settings.elo_seasons_json = json.dumps(seasons)
+
         if save:
             settings.save()
+        return True
 
     def save_settings_action():
-        apply_form_to_settings(save=True)
+        if float(spin_elo_min_mult.value()) > float(spin_elo_max_mult.value()):
+            QMessageBox.warning(
+                parent,
+                "Invalid Elo tuning",
+                "ADR min multiplier cannot be greater than ADR max multiplier.",
+            )
+            return
+
+        if float(spin_elo_spread.value()) <= 0:
+            QMessageBox.warning(
+                parent,
+                "Invalid Elo tuning",
+                "ADR spread must be greater than 0.",
+            )
+            return
+
+        tuning_changed = (
+            float(spin_elo_k.value()) != float(getattr(settings, "elo_k_factor", 24.0))
+            or float(spin_elo_base.value()) != float(getattr(settings, "elo_base_rating", 1500.0))
+            or float(spin_elo_alpha.value()) != float(getattr(settings, "elo_adr_alpha", 0.20))
+            or float(spin_elo_spread.value()) != float(getattr(settings, "elo_adr_spread", 22.0))
+            or float(spin_elo_min_mult.value()) != float(getattr(settings, "elo_adr_min_mult", 0.85))
+            or float(spin_elo_max_mult.value()) != float(getattr(settings, "elo_adr_max_mult", 1.15))
+            or float(spin_elo_prior.value()) != float(getattr(settings, "elo_adr_prior_matches", 5.0))
+            or float(spin_elo_anchor.value()) != float(getattr(settings, "elo_initial_global_anchor", 80.0))
+        )
+
+        if tuning_changed and not unlock_tuning_checkbox.isChecked():
+            QMessageBox.warning(
+                parent,
+                "Tuning locked",
+                "Unlock advanced Elo tuning first before changing parameters.",
+            )
+            return
+
+        if tuning_changed:
+            seasons_now = _serialize_seasons_or_error(show_popup=True)
+            if seasons_now is None:
+                return
+            today = datetime.now().date()
+            active = _season_for_date(today, seasons_now)
+            if active is not None:
+                matches_in_active = _count_matches_for_season(active, seasons_now)
+                if matches_in_active > 0:
+                    QMessageBox.warning(
+                        parent,
+                        "Blocked: active season has matches",
+                        f"Season {active} already has {matches_in_active} match(es). "
+                        "Do not change Elo tuning inside an active season.",
+                    )
+                    return
+
+        if not apply_form_to_settings(save=True):
+            return
         logger.set_log_export_enabled(bool(getattr(settings, "log_export_enabled", True)))
         settings_dirty["value"] = False
         save_settings_button.setEnabled(False)
@@ -714,7 +1197,8 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         if not sync_matchzy_button.isEnabled():
             return
 
-        apply_form_to_settings(save=False)
+        if not apply_form_to_settings(save=False):
+            return
         sync_matchzy_button.setEnabled(False)
 
         def worker():
@@ -928,7 +1412,8 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         if not sync_demos_button.isEnabled():
             return
 
-        apply_form_to_settings(save=False)
+        if not apply_form_to_settings(save=False):
+            return
         sync_demos_button.clearFocus()
         sync_demos_button.setEnabled(False)
 

@@ -29,6 +29,15 @@ _SETTINGS_DEFAULTS = {
     "demo_ftp_user":                    (str,      ""),
     "demo_ftp_password":                (str,      ""),
     "demo_remote_path":                 (str,      "/cs2/game/csgo/MatchZy"),
+    "elo_seasons_json":                  (str,      "[]"),
+    "elo_k_factor":                     (float,    24.0),
+    "elo_base_rating":                  (float,    1500.0),
+    "elo_adr_alpha":                    (float,    0.20),
+    "elo_adr_spread":                   (float,    22.0),
+    "elo_adr_min_mult":                 (float,    0.85),
+    "elo_adr_max_mult":                 (float,    1.15),
+    "elo_adr_prior_matches":            (float,    5.0),
+    "elo_initial_global_anchor":        (float,    80.0),
 }
 
 

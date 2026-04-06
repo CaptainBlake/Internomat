@@ -1,4 +1,5 @@
 from .connection_db import get_conn
+from .elo_db import init_elo_tables
 from .weapon_catalog import iter_seed_alias_rows, iter_seed_weapon_rows
 import services.logger as logger
 
@@ -511,6 +512,9 @@ def init_db():
             )
             """
         )
+
+        # --- ELO TABLES ---
+        init_elo_tables(conn)
 
         # --- DEFAULT MAPS ---
         cur = conn.execute("SELECT COUNT(*) FROM maps")

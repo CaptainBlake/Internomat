@@ -32,6 +32,15 @@ SETTINGS_SCHEMA = {
     "demo_ftp_user": str,
     "demo_ftp_password": str,
     "demo_remote_path": str,
+    "elo_seasons_json": str,
+    "elo_k_factor": float,
+    "elo_base_rating": float,
+    "elo_adr_alpha": float,
+    "elo_adr_spread": float,
+    "elo_adr_min_mult": float,
+    "elo_adr_max_mult": float,
+    "elo_adr_prior_matches": float,
+    "elo_initial_global_anchor": float,
 }
 
 
