@@ -130,7 +130,28 @@ def check_latest_release(timeout_seconds: float = 8.0) -> UpdateCheckResult:
         headers={"Accept": "application/vnd.github+json"},
         timeout=timeout_seconds,
     )
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.HTTPError:
+        # GitHub returns 404 for /releases/latest when there is no published stable release
+        # (for example, prereleases only). Treat this as "no update available".
+        if response.status_code == 404:
+            return UpdateCheckResult(
+                current_version=APP_VERSION,
+                latest_version=APP_VERSION,
+                update_available=False,
+                comparison_basis="semver-no-latest-stable",
+                release_url="",
+                installer_download_url="",
+                tag_name="",
+                release_name="",
+                published_at="",
+                release_id=0,
+                installer_asset_name="",
+                checksums_asset_name="",
+                checksums_download_url="",
+            )
+        raise
 
     payload = response.json()
     tag_name = str(payload.get("tag_name") or "").strip()

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from .connection_db import execute_write, executemany_write, get_conn, optional_conn
 import services.logger as logger
 
@@ -241,6 +243,133 @@ def get_next_local_match_id(conn=None, start_from=1):
 
     next_id = max(max_id + 1, int(start_from))
     return str(next_id)
+
+
+def _parse_sortable_datetime(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    normalized = text.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized)
+    except Exception:
+        return None
+
+
+def _table_has_column(conn, table_name, column_name):
+    try:
+        rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    except Exception:
+        return False
+
+    return any(str(r[1]) == str(column_name) for r in rows)
+
+
+def _table_exists(conn, table_name):
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+        (str(table_name),),
+    ).fetchone()
+    return row is not None
+
+
+def reindex_local_match_ids_by_datetime(conn=None):
+    """Reindex positive integer match IDs so oldest played match gets ID 1.
+
+    This keeps existing semantic links intact by rewriting all known match_id-
+    carrying tables in one pass. Only positive integer match IDs are remapped;
+    non-numeric/external IDs remain untouched.
+    """
+    with optional_conn(conn, commit=True) as c:
+        rows = c.execute(
+            """
+            SELECT
+                m.match_id,
+                m.start_time,
+                m.end_time,
+                m.created_at,
+                MIN(mm.start_time) AS min_map_start_time,
+                MIN(mm.end_time) AS min_map_end_time
+            FROM matches m
+            LEFT JOIN match_maps mm ON mm.match_id = m.match_id
+            WHERE m.match_id GLOB '[0-9]*'
+              AND CAST(m.match_id AS INTEGER) > 0
+            GROUP BY m.match_id, m.start_time, m.end_time, m.created_at
+            """
+        ).fetchall()
+
+        ranked = []
+        for row in rows:
+            raw_match_id = str(row["match_id"])
+            try:
+                match_id_int = int(raw_match_id)
+            except Exception:
+                continue
+
+            candidates = [
+                row["min_map_start_time"],
+                row["start_time"],
+                row["min_map_end_time"],
+                row["end_time"],
+                row["created_at"],
+            ]
+            best_dt = None
+            for candidate in candidates:
+                parsed = _parse_sortable_datetime(candidate)
+                if parsed is None:
+                    continue
+                if best_dt is None or parsed < best_dt:
+                    best_dt = parsed
+
+            ranked.append((match_id_int, best_dt))
+
+        ranked.sort(key=lambda item: (item[1] is None, item[1] or datetime.max, item[0]))
+
+        remap = {old_id: idx + 1 for idx, (old_id, _dt) in enumerate(ranked)}
+        changed = {old: new for old, new in remap.items() if old != new}
+        if not changed:
+            return 0
+
+        # Two-pass remap (tmp marker -> final) avoids UNIQUE conflicts while rewriting ids.
+        id_columns = [
+            ("matches", "match_id"),
+            ("match_maps", "match_id"),
+            ("match_player_stats", "match_id"),
+            ("player_map_weapon_stats", "match_id"),
+            ("player_round_weapon_stats", "match_id"),
+            ("player_map_movement_stats", "match_id"),
+            ("player_round_movement_stats", "match_id"),
+            ("player_round_timeline_bins", "match_id"),
+            ("player_round_events", "match_id"),
+            ("cache_restore_state", "canonical_match_id"),
+        ]
+
+        for table_name, column_name in id_columns:
+            if not _table_exists(c, table_name) or not _table_has_column(c, table_name, column_name):
+                continue
+            for old_id, new_id in changed.items():
+                execute_write(
+                    c,
+                    f"UPDATE {table_name} SET {column_name} = ? WHERE {column_name} = ?",
+                    (f"__RID__{new_id}", str(old_id)),
+                )
+
+        for table_name, column_name in id_columns:
+            if not _table_exists(c, table_name) or not _table_has_column(c, table_name, column_name):
+                continue
+            for _old_id, new_id in changed.items():
+                execute_write(
+                    c,
+                    f"UPDATE {table_name} SET {column_name} = ? WHERE {column_name} = ?",
+                    (str(new_id), f"__RID__{new_id}"),
+                )
+
+    logger.log(
+        f"[DB] Reindexed local match_ids by datetime remapped={len(changed)}",
+        level="INFO",
+    )
+    return len(changed)
 
 
 def get_next_map_number_for_match(match_id, conn=None, start_from=0):

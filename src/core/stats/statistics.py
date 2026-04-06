@@ -107,7 +107,7 @@ def get_overview():
     return result
 
 
-def get_recent_maps(limit=10):
+def get_recent_maps(limit=None):
     rows = statistics_repo.fetch_recent_maps(limit)
     cache_rows = demo_cache.list_existing_cached_demos_default()
     cache_by_key = _build_cache_manifest_map(cache_rows)

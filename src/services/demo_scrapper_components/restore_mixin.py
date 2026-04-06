@@ -14,6 +14,7 @@ from db.matches_db import (
     insert_match_map,
     insert_match_player_stats_many,
     match_map_has_player_stats,
+    reindex_local_match_ids_by_datetime,
     set_match_has_demo,
 )
 from db.stattracker_db import (
@@ -1405,6 +1406,16 @@ class DemoScrapperRestoreMixin:
                         f"FAILED orphaned match={match_id} map={map_number}: {e}",
                         level="ERROR",
                     )
+
+            # Keep local numeric match_ids chronological after every restore run:
+            # oldest played match -> 1, newest -> X.
+            remapped = reindex_local_match_ids_by_datetime(conn=conn)
+            if remapped:
+                self._log_stage(
+                    "RESTORE",
+                    f"Reindexed local match ids by played datetime remapped={remapped}",
+                    level="INFO",
+                )
 
         if progress_start is not None and progress_end is not None:
             self._emit_progress(int(progress_end), "Database updated", stage="database")
