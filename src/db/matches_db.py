@@ -187,6 +187,29 @@ def set_match_has_demo(match_id, has_demo=True, conn=None):
     logger.log(f"[DB] Match demo={1 if has_demo else 0} match={match_id}", level="DEBUG")
 
 
+def set_match_winner_if_missing(match_id, winner, conn=None):
+    winner_txt = str(winner or "").strip()
+    if not winner_txt:
+        return
+
+    with optional_conn(conn, commit=True) as c:
+        execute_write(
+            c,
+            """
+            UPDATE matches
+            SET winner = ?
+            WHERE match_id = ?
+              AND (winner IS NULL OR TRIM(winner) = '')
+            """,
+            (winner_txt, str(match_id)),
+        )
+
+    logger.log(
+        f"[DB] Backfilled missing match winner match={match_id} winner={winner_txt}",
+        level="DEBUG",
+    )
+
+
 def set_demo_flags_by_match_ids(match_ids, conn=None):
     ids = [str(mid) for mid in (match_ids or []) if str(mid).strip()]
 
