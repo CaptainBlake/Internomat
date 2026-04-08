@@ -463,6 +463,29 @@ class DemoScrapperRestoreMixin:
                     existing_map_name = str(existing_map["map_name"] or "")
                     if not existing_map_name or existing_map_name == str(map_name):
                         return str(parsed_mid), int(parsed_map_number_normalized)
+
+                    # Source cache row uses an existing positive id/map slot but points to a
+                    # different map payload (legacy alias drift). Never remap this by fuzzy
+                    # equivalence onto another existing match, otherwise unrelated matches can
+                    # collapse (e.g. parsed 11 -> canonical 16).
+                    target_match_id = str(next_local_match_id)
+                    target_map_number = self._resolve_map_number_conflict(
+                        match_id=target_match_id,
+                        map_number=parsed_map_number_normalized,
+                        map_name=map_name,
+                        conn=conn,
+                    )
+                    self._log_stage(
+                        "RESTORE",
+                        (
+                            "Detected source id collision; assigned fresh canonical id "
+                            f"parsed=({parsed_match_id},{parsed_map_number_normalized}) "
+                            f"existing_map={existing_map_name} incoming_map={map_name} "
+                            f"target=({target_match_id},{target_map_number})"
+                        ),
+                        level="WARNING",
+                    )
+                    return target_match_id, int(target_map_number)
         except Exception:
             pass
 

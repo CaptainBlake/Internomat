@@ -132,6 +132,8 @@ def insert_match_map(data, conn=None):
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(match_id, map_number) DO UPDATE SET
+            map_name=excluded.map_name,
+            start_time=excluded.start_time,
             end_time=excluded.end_time,
             winner=excluded.winner,
             team1_score=excluded.team1_score,

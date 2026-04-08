@@ -33,6 +33,46 @@ def load_parsed_demo_default(match_id, map_number):
     return load_parsed_demo(_default_cache_dir(), match_id, map_number)
 
 
+def _norm_map_name(value):
+    return str(value or "").strip().lower()
+
+
+def payload_map_name(parsed_payload):
+    if not isinstance(parsed_payload, dict):
+        return ""
+    header = parsed_payload.get("header") if isinstance(parsed_payload.get("header"), dict) else {}
+    return str(header.get("map_name") or "").strip()
+
+
+def is_payload_compatible_with_map(parsed_payload, expected_map_name):
+    expected = _norm_map_name(expected_map_name)
+    if not expected:
+        return True
+
+    payload_map = _norm_map_name(payload_map_name(parsed_payload))
+    if not payload_map:
+        # Legacy payloads without map header remain acceptable.
+        return True
+
+    return payload_map == expected
+
+
+def load_parsed_demo_default_validated(match_id, map_number, expected_map_name=None):
+    payload = load_parsed_demo_default(match_id, map_number)
+    if payload is None:
+        return None
+
+    if not is_payload_compatible_with_map(payload, expected_map_name):
+        logger.log_warning(
+            "[CACHE] Ignoring mismatched payload "
+            f"match={match_id} map={map_number} "
+            f"expected_map={expected_map_name} payload_map={payload_map_name(payload)}"
+        )
+        return None
+
+    return payload
+
+
 def list_cached_demos_default():
     return list_cached_demos(_default_cache_dir())
 

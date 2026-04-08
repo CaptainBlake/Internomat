@@ -65,6 +65,34 @@ def _get_cached_payload(match_id, map_number, manifest):
     return payload, False
 
 
+def _get_cached_payload_validated(match_id, map_number, manifest, expected_map_name):
+    key = (str(match_id), int(map_number))
+    fingerprint = _manifest_fingerprint(manifest)
+
+    with _CACHE_LOCK:
+        cached = _PARSED_PAYLOAD_CACHE.get(key)
+        if cached and cached.get("fingerprint") == fingerprint:
+            payload = cached.get("payload")
+            if demo_cache.is_payload_compatible_with_map(payload, expected_map_name):
+                return payload, True
+
+    payload = demo_cache.load_parsed_demo_default_validated(
+        match_id,
+        map_number,
+        expected_map_name=expected_map_name,
+    )
+
+    with _CACHE_LOCK:
+        if len(_PARSED_PAYLOAD_CACHE) >= _CACHE_MAX_SIZE:
+            _PARSED_PAYLOAD_CACHE.pop(next(iter(_PARSED_PAYLOAD_CACHE)), None)
+        _PARSED_PAYLOAD_CACHE[key] = {
+            "fingerprint": fingerprint,
+            "payload": payload,
+        }
+
+    return payload, False
+
+
 def _extract_demo_metrics(parsed_payload):
     if not isinstance(parsed_payload, dict):
         return {
@@ -131,7 +159,12 @@ def get_recent_maps(limit=None):
         }
 
         if demo_cached:
-            parsed_payload, reused = _get_cached_payload(match_id, map_number, manifest)
+            parsed_payload, reused = _get_cached_payload_validated(
+                match_id,
+                map_number,
+                manifest,
+                expected_map_name=r["map_name"],
+            )
             if reused:
                 cache_reused += 1
             else:

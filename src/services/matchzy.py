@@ -1,5 +1,6 @@
 import mysql.connector
 from mysql.connector import Error
+from datetime import datetime
 
 from db.connection_db import write_transaction
 import db.matches_db as match_db
@@ -114,6 +115,36 @@ class MatchZy:
 
         return default
 
+    @staticmethod
+    def _normalize_map_name(value):
+        return str(value or "").strip().lower()
+
+    @staticmethod
+    def _parse_time_value(value):
+        if isinstance(value, datetime):
+            return value
+
+        txt = str(value or "").strip()
+        if not txt:
+            return None
+
+        # MatchZy may return either ISO-like strings or DB datetime strings.
+        normalized = txt.replace(" ", "T").replace("Z", "+00:00")
+        try:
+            return datetime.fromisoformat(normalized)
+        except Exception:
+            return None
+
+    def _team_pair_token(self, match_row):
+        team1 = self._clean_team_token(self._row_get(match_row, idx=5, keys=["team1_name", "team_a_name", "team1"], default=""))
+        team2 = self._clean_team_token(self._row_get(match_row, idx=7, keys=["team2_name", "team_b_name", "team2"], default=""))
+
+        tokens = [t for t in [team1, team2] if t]
+        if not tokens:
+            return ""
+
+        return "|".join(sorted(tokens))
+
     def _build_team_name_map(self, team1_name=None, team2_name=None, player_rows=None):
         """Build a per-match mapping from raw labels to canonical TeamA / TeamB."""
         mapping = {}
@@ -171,6 +202,14 @@ class MatchZy:
 
         return team_name_map.get(txt) or team_name_map.get(txt.lower()) or txt
 
+    def _extract_player_ids(self, player_rows):
+        ids = set()
+        for row in player_rows or []:
+            sid = str(self._row_get(row, idx=2, keys=["steamid64", "steamid", "steam_id"], default="") or "").strip()
+            if sid:
+                ids.add(sid)
+        return ids
+
     def close(self):
         if self.conn and self.conn.is_connected():
             self.conn.close()
@@ -212,17 +251,102 @@ class MatchZy:
             players_for_pool_import = []
 
             with write_transaction() as local_conn:
+                remote_to_local_match = {}
+                next_local_match_id = int(match_db.get_next_local_match_id(conn=local_conn, start_from=1))
+
+                # Some providers emit an unfinished pending row and then a finished row
+                # for effectively the same map shortly after. Collect finished rows
+                # keyed by normalized map name so we can skip stale pending duplicates.
+                # Key insight: end_time is often NULL in MatchZy; use start_time for proximity.
+                finished_rows_by_map: dict[str, list[dict]] = {}
+                for row in maps:
+                    end_time = self._row_get(row, idx=3, keys=["end_time", "ended_at", "finished_at"], default=None)
+                    if not end_time:
+                        continue
+
+                    mid = str(self._row_get(row, idx=0, keys=["match_id", "matchid", "id"], default=""))
+                    map_name = self._normalize_map_name(self._row_get(row, idx=5, keys=["map_name", "map", "mapname"], default=""))
+                    f_start = self._row_get(row, idx=2, keys=["start_time", "started_at"], default=None)
+                    if not map_name:
+                        continue
+
+                    finished_rows_by_map.setdefault(map_name, []).append({
+                        "match_id": mid,
+                        "start_time": self._parse_time_value(f_start),
+                        "end_time": self._parse_time_value(end_time),
+                    })
+
                 for map_row in maps:
 
                     matchid = str(self._row_get(map_row, idx=0, keys=["match_id", "matchid", "id"], default=""))
                     mapnumber = self._to_int(self._row_get(map_row, idx=1, keys=["map_number", "mapnumber", "map_no"], default=0))
+                    mapname = self._row_get(map_row, idx=5, keys=["map_name", "map", "mapname"], default="")
 
                     start_time = self._row_get(map_row, idx=2, keys=["start_time", "started_at"], default=None)
                     end_time = self._row_get(map_row, idx=3, keys=["end_time", "ended_at", "finished_at"], default=None)
+                    is_finished = bool(end_time)
+                    if not is_finished:
+                        norm_map = self._normalize_map_name(mapname)
+                        pending_start = self._parse_time_value(start_time)
+                        finished_candidates = finished_rows_by_map.get(norm_map, [])
 
-                    if not end_time:
-                        logger.log(f"[MATCHZY] Skipping unfinished match {matchid}", level="DEBUG")
-                        continue
+                        skip_reason = None
+
+                        logger.log(
+                            f"[MATCHZY] Pending check match={matchid} map={mapname} "
+                            f"start_time={start_time} candidates={len(finished_candidates)}",
+                            level="DEBUG",
+                        )
+
+                        # Strategy 1: start_time proximity — a finished row for the same map
+                        # whose start_time is within 10 minutes of this pending row's start_time.
+                        # This is the most reliable signal since end_time is often NULL in MatchZy.
+                        if pending_start is not None:
+                            for fc in finished_candidates:
+                                if fc["start_time"] is None:
+                                    continue
+                                diff = abs((fc["start_time"] - pending_start).total_seconds())
+                                if diff <= 10 * 60:
+                                    skip_reason = (
+                                        f"start_time_proximity finished_match={fc['match_id']} "
+                                        f"diff_seconds={int(diff)}"
+                                    )
+                                    break
+
+                        # Strategy 2: ID-adjacency — a finished row for the same map
+                        # with a MatchZy match_id within ±1 of this pending row's id.
+                        if skip_reason is None:
+                            try:
+                                pending_id_int = int(matchid)
+                            except Exception:
+                                pending_id_int = None
+
+                            if pending_id_int is not None:
+                                for fc in finished_candidates:
+                                    try:
+                                        cand_id_int = int(fc["match_id"])
+                                    except Exception:
+                                        continue
+                                    if abs(cand_id_int - pending_id_int) <= 1:
+                                        skip_reason = (
+                                            f"id_adjacent finished_match={fc['match_id']} "
+                                            f"pending_id={pending_id_int} finished_id={cand_id_int}"
+                                        )
+                                        break
+
+                        if skip_reason:
+                            logger.log(
+                                f"[MATCHZY] Skip pending duplicate match={matchid} map={mapname} reason={skip_reason}",
+                                level="INFO",
+                            )
+                            continue
+
+                        logger.log(
+                            f"[MATCHZY] Ingest unfinished match as pending match={matchid} "
+                            f"map={mapname} start_time={start_time} "
+                            f"finished_candidates_for_map={len(finished_candidates)}",
+                            level="DEBUG",
+                        )
 
                     winner = self._row_get(
                         map_row,
@@ -230,7 +354,6 @@ class MatchZy:
                         keys=["winner", "winner_team", "winning_team", "winner_team_name", "winning_team_name"],
                         default="",
                     )
-                    mapname = self._row_get(map_row, idx=5, keys=["map_name", "map", "mapname"], default="")
                     team1_score = self._to_int(self._row_get(map_row, idx=6, keys=["team1_score", "score_team1", "team_a_score"], default=0))
                     team2_score = self._to_int(self._row_get(map_row, idx=7, keys=["team2_score", "score_team2", "team_b_score"], default=0))
 
@@ -238,6 +361,7 @@ class MatchZy:
 
                     match_data = matches_by_id.get(matchid)
                     player_rows_for_map = players_by_match_map.get((matchid, mapnumber), [])
+                    player_ids = self._extract_player_ids(player_rows_for_map)
 
                     team_name_map = self._build_team_name_map(
                         team1_name=self._row_get(match_data, idx=5, keys=["team1_name", "team_a_name", "team1"], default=None),
@@ -246,17 +370,6 @@ class MatchZy:
                     )
 
                     canonical_map_winner = self._canonical_team_label(winner, team_name_map)
-
-                    if match_db.match_exists(matchid):
-                        # Existing rows are skipped for map/player insert, but we still backfill
-                        # matches.winner when it's missing.
-                        match_db.set_match_winner_if_missing(
-                            matchid,
-                            canonical_map_winner,
-                            conn=local_conn,
-                        )
-                        logger.log(f"[MATCHZY] Skipping existing match {matchid}", level="DEBUG")
-                        continue
 
                     canonical_match_winner = self._canonical_team_label(
                         self._row_get(
@@ -271,9 +384,24 @@ class MatchZy:
                     if not str(canonical_match_winner or "").strip():
                         canonical_match_winner = canonical_map_winner
 
+                    local_match_id = remote_to_local_match.get(matchid)
+                    local_map_number = int(mapnumber)
+
+                    if local_match_id is None:
+                        # MatchZy match_id is authoritative for MatchZy rows.
+                        # Do not fuzzy-remap to a different local id here, otherwise
+                        # distinct upstream matches (e.g. 9 and 10) can collapse.
+                        remote_id_exists = match_db.match_exists(matchid)
+                        if not remote_id_exists:
+                            local_match_id = matchid
+                        else:
+                            local_match_id = matchid
+
+                        remote_to_local_match[matchid] = str(local_match_id)
+
                     if match_data:
                         match_db.insert_match({
-                            "match_id": matchid,
+                            "match_id": local_match_id,
                             "start_time": self._row_get(match_data, idx=1, keys=["start_time", "started_at"], default=None),
                             "end_time": self._row_get(match_data, idx=2, keys=["end_time", "ended_at", "finished_at"], default=None),
                             "winner": canonical_match_winner,
@@ -285,11 +413,17 @@ class MatchZy:
                             "server_ip": self._row_get(match_data, idx=9, keys=["server_ip", "server", "server_address"], default=None),
                         }, conn=local_conn)
                     else:
-                        match_db.insert_match({"match_id": matchid}, conn=local_conn)
+                        match_db.insert_match({"match_id": local_match_id}, conn=local_conn)
+
+                    match_db.set_match_winner_if_missing(
+                        local_match_id,
+                        canonical_map_winner,
+                        conn=local_conn,
+                    )
 
                     match_db.insert_match_map({
-                        "match_id": matchid,
-                        "map_number": mapnumber,
+                        "match_id": local_match_id,
+                        "map_number": local_map_number,
                         "map_name": mapname,
                         "start_time": start_time,
                         "end_time": end_time,
@@ -304,8 +438,8 @@ class MatchZy:
                     for p in player_rows_for_map:
                         player_payload = {
                             "steamid64": str(self._row_get(p, idx=2, keys=["steamid64", "steamid", "steam_id"], default="")),
-                            "match_id": matchid,
-                            "map_number": mapnumber,
+                            "match_id": local_match_id,
+                            "map_number": local_map_number,
                             "team": self._canonical_team_label(
                                 self._row_get(p, idx=3, keys=["team", "team_name"], default=""),
                                 team_name_map,

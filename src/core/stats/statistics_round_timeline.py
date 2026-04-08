@@ -82,7 +82,11 @@ def build_round_timeline(summary):
     team1_name = str(summary.get("team1_name") or "")
     team2_name = str(summary.get("team2_name") or "")
 
-    payload = demo_cache.load_parsed_demo_default(match_id, map_number)
+    payload = demo_cache.load_parsed_demo_default_validated(
+        match_id,
+        map_number,
+        expected_map_name=summary.get("map_name"),
+    )
     if not isinstance(payload, dict):
         return None
 
