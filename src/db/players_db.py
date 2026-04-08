@@ -138,6 +138,34 @@ def get_players():
         ORDER BY 3 DESC
         """).fetchall()
 
+
+def get_players_by_rating_source(source="prime"):
+    source_key = str(source or "prime").strip().lower()
+    with get_conn() as conn:
+        if source_key == "elo":
+            return conn.execute(
+                """
+                SELECT
+                    p.steam64_id,
+                    COALESCE(NULLIF(p.name, ''), p.steam64_id) AS name,
+                    CAST(ROUND(COALESCE(er.elo, 1500.0), 0) AS INTEGER) AS rating
+                FROM players p
+                LEFT JOIN elo_ratings er ON er.steamid64 = p.steam64_id
+                ORDER BY rating DESC, name COLLATE NOCASE ASC
+                """
+            ).fetchall()
+
+        return conn.execute(
+            """
+            SELECT
+                steam64_id,
+                name,
+                COALESCE(premier_rating, CAST(leetify_rating * 10000 AS INTEGER), 0) AS rating
+            FROM players
+            ORDER BY rating DESC, name COLLATE NOCASE ASC
+            """
+        ).fetchall()
+
 def update_player_name(player):
     now = datetime.utcnow().isoformat()
 

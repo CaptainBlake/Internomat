@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QMessageBox,
     QSlider,
+    QComboBox,
     QTableWidget,
     QTableWidgetItem,
     QHeaderView,
@@ -274,10 +275,17 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
     remove_button = QPushButton("Remove Player")
     update_button = QPushButton("Update")
 
+    ranking_mode_combo = QComboBox()
+    ranking_mode_combo.addItem("Prime Ranking", "prime")
+    ranking_mode_combo.addItem("Elo Ranking", "elo")
+    ranking_mode_combo.setMinimumWidth(170)
+
     top_layout.addWidget(entry, 1)
     top_layout.addWidget(add_button)
     top_layout.addWidget(remove_button)
     top_layout.addWidget(update_button)
+    top_layout.addWidget(QLabel("Ranking:"))
+    top_layout.addWidget(ranking_mode_combo)
     layout.addWidget(top_frame)
 
     lists_frame = QFrame()
@@ -526,8 +534,12 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
         QMessageBox.information(parent, title, text)
 
     def refresh_players():
-        players = player_service.get_players()
+        rating_source = str(ranking_mode_combo.currentData() or "prime")
+        players = player_service.get_players_for_teambuilder(rating_source)
         _fill_player_table(db_tree, players)
+
+    def _on_ranking_mode_changed(_idx):
+        refresh_players()
 
     def add_player():
         url = entry.text().strip()
@@ -778,6 +790,7 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
     generate_button.clicked.connect(run_balancer)
     db_tree.itemDoubleClicked.connect(lambda _: add_to_pool())
     pool_tree.itemDoubleClicked.connect(lambda _: remove_from_pool())
+    ranking_mode_combo.currentIndexChanged.connect(_on_ranking_mode_changed)
     dispatcher.balance_finished.connect(on_balance_finished)
     dispatcher.balance_error.connect(on_balance_error)
     dispatcher.update_progress.connect(on_progress)

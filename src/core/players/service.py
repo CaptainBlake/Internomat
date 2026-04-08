@@ -12,6 +12,10 @@ def get_players():
     return player_db.get_players()
 
 
+def get_players_for_teambuilder(rating_source="prime"):
+    return player_db.get_players_by_rating_source(rating_source)
+
+
 def get_players_to_update():
     return player_db.get_players_to_update(settings.update_cooldown_minutes)
 

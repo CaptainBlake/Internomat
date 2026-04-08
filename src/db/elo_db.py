@@ -75,6 +75,32 @@ def init_elo_tables(conn):
         )
     """)
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS elo_match_season (
+            match_id         TEXT PRIMARY KEY,
+            season           INTEGER NOT NULL,
+            played_at        TEXT,
+            source           TEXT NOT NULL DEFAULT 'elo_recalc',
+            updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS elo_season_tuning (
+            season                  INTEGER PRIMARY KEY,
+            k_factor                REAL NOT NULL,
+            base_rating             REAL NOT NULL,
+            adr_alpha               REAL NOT NULL,
+            adr_spread              REAL NOT NULL,
+            adr_min_mult            REAL NOT NULL,
+            adr_max_mult            REAL NOT NULL,
+            adr_prior_matches       REAL NOT NULL,
+            initial_global_anchor   REAL NOT NULL,
+            source                  TEXT NOT NULL DEFAULT 'settings',
+            updated_at              TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_elo_history_match "
         "ON elo_history(match_id)"
@@ -90,6 +116,10 @@ def init_elo_tables(conn):
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_elo_ratings_season_elo "
         "ON elo_ratings_season(season, elo DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_elo_match_season_season "
+        "ON elo_match_season(season)"
     )
 
 
@@ -163,6 +193,36 @@ _UPSERT_RATING_SEASON = """
         updated_at      = excluded.updated_at
 """
 
+_UPSERT_MATCH_SEASON = """
+    INSERT INTO elo_match_season (match_id, season, played_at, source, updated_at)
+    VALUES (?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(match_id) DO UPDATE SET
+        season     = excluded.season,
+        played_at  = excluded.played_at,
+        source     = excluded.source,
+        updated_at = excluded.updated_at
+"""
+
+_UPSERT_SEASON_TUNING = """
+    INSERT INTO elo_season_tuning (
+        season, k_factor, base_rating,
+        adr_alpha, adr_spread, adr_min_mult, adr_max_mult,
+        adr_prior_matches, initial_global_anchor,
+        source, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(season) DO UPDATE SET
+        k_factor              = excluded.k_factor,
+        base_rating           = excluded.base_rating,
+        adr_alpha             = excluded.adr_alpha,
+        adr_spread            = excluded.adr_spread,
+        adr_min_mult          = excluded.adr_min_mult,
+        adr_max_mult          = excluded.adr_max_mult,
+        adr_prior_matches     = excluded.adr_prior_matches,
+        initial_global_anchor = excluded.initial_global_anchor,
+        source                = excluded.source,
+        updated_at            = excluded.updated_at
+"""
+
 
 #  Writes 
 
@@ -228,12 +288,47 @@ def upsert_elo_ratings_season_many(rows, conn=None):
         executemany_write(c, _UPSERT_RATING_SEASON, params)
 
 
+def upsert_elo_match_season_many(rows, *, source="elo_recalc", conn=None):
+    with optional_conn(conn) as c:
+        params = [
+            (
+                r["match_id"],
+                int(r.get("season", 0)),
+                r.get("played_at"),
+                str(r.get("source", source) or source),
+            )
+            for r in rows
+        ]
+        executemany_write(c, _UPSERT_MATCH_SEASON, params)
+
+
+def upsert_elo_season_tuning(season, tune, *, source="settings", conn=None):
+    with optional_conn(conn) as c:
+        execute_write(
+            c,
+            _UPSERT_SEASON_TUNING,
+            (
+                int(season),
+                float(tune["K_FACTOR"]),
+                float(tune["BASE_RATING"]),
+                float(tune["ADR_ALPHA"]),
+                float(tune["ADR_SPREAD"]),
+                float(tune["ADR_MIN_MULT"]),
+                float(tune["ADR_MAX_MULT"]),
+                float(tune["ADR_PRIOR_MATCHES"]),
+                float(tune["INITIAL_GLOBAL_ANCHOR"]),
+                str(source or "settings"),
+            ),
+        )
+
+
 def clear_elo_tables(conn=None):
     """Delete all Elo rows before a full recomputation."""
     with optional_conn(conn) as c:
         execute_write(c, "DELETE FROM elo_history")
         execute_write(c, "DELETE FROM elo_ratings")
         execute_write(c, "DELETE FROM elo_ratings_season")
+        execute_write(c, "DELETE FROM elo_match_season")
 
 
 def clear_elo_seasons(conn=None):
@@ -298,4 +393,20 @@ def get_elo_ratings_for_season(season, conn=None):
         return c.execute(
             "SELECT * FROM elo_ratings_season WHERE season = ? ORDER BY elo DESC",
             (int(season),),
+        ).fetchall()
+
+
+def get_match_ids_for_season(season, conn=None):
+    with optional_conn(conn) as c:
+        rows = c.execute(
+            "SELECT match_id FROM elo_match_season WHERE season = ? ORDER BY played_at ASC, match_id ASC",
+            (int(season),),
+        ).fetchall()
+        return [str(r["match_id"]) for r in rows]
+
+
+def get_elo_season_tunings(conn=None):
+    with optional_conn(conn) as c:
+        return c.execute(
+            "SELECT * FROM elo_season_tuning ORDER BY season ASC"
         ).fetchall()

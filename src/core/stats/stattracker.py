@@ -1,4 +1,5 @@
 from db import stattracker_db as stattracker_repo
+from db import elo_db
 from core.stats import metrics as M
 import services.logger as logger
 from datetime import datetime
@@ -58,12 +59,17 @@ def get_player_options():
     return options
 
 
-def get_player_weapon_categories(steamid64):
+def get_season_options():
+    rows = elo_db.get_elo_seasons()
+    return [int(r["season"]) for r in rows]
+
+
+def get_player_weapon_categories(steamid64, seasons=None):
     sid = str(steamid64 or "").strip()
     if not sid:
         return ["all"]
 
-    rows = stattracker_repo.fetch_player_weapon_categories(sid)
+    rows = stattracker_repo.fetch_player_weapon_categories(sid, seasons=seasons)
     def _to_category_key(raw):
         value = str(raw or "unknown").strip().lower() or "unknown"
         if value in {"all", "unknown"}:
@@ -85,7 +91,7 @@ def get_player_weapon_categories(steamid64):
     return categories
 
 
-def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
+def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all", seasons=None):
     sid = str(steamid64 or "").strip()
     if not sid:
         return {
@@ -101,13 +107,14 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
             "worst_map": "-",
         }
 
-    overall = stattracker_repo.fetch_player_overall_metrics(sid)
-    movement_overall = stattracker_repo.fetch_player_overall_movement_metrics(sid)
-    map_rows_raw = stattracker_repo.fetch_player_map_stats(sid)
+    overall = stattracker_repo.fetch_player_overall_metrics(sid, seasons=seasons)
+    movement_overall = stattracker_repo.fetch_player_overall_movement_metrics(sid, seasons=seasons)
+    map_rows_raw = stattracker_repo.fetch_player_map_stats(sid, seasons=seasons)
     weapon_rows_raw = stattracker_repo.fetch_player_weapon_stats(
         sid,
         min_shots=max(1, int(min_weapon_shots)),
         weapon_category=str(weapon_category or "all").strip().lower(),
+        seasons=seasons,
     )
 
     maps_played = int((overall["maps_played"] if overall else 0) or 0)
@@ -199,7 +206,7 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
     unattributed_kills = int(max(0, total_kills - weapon_kills_total))
 
     if unattributed_kills > 0:
-        deltas = stattracker_repo.fetch_player_weapon_kill_attribution_deltas(sid)
+        deltas = stattracker_repo.fetch_player_weapon_kill_attribution_deltas(sid, seasons=seasons)
         logger.log(
             "[STATTRACKER] "
             f"kill attribution filtered steamid={sid[:8]} total={total_kills} "
@@ -421,13 +428,13 @@ def _build_round_series(rows, metric_fn, series_key_fn, log_tag):
     return round_keys, x_labels, series
 
 
-def get_weapon_match_series(steamid64, weapons=None, metric="accuracy", map_name=None):
+def get_weapon_match_series(steamid64, weapons=None, metric="accuracy", map_name=None, seasons=None):
     sid = str(steamid64 or "").strip()
     if not sid:
         return {"metric_label": "", "x_labels": [], "series": {}, "match_keys": []}
 
     metric_def = PLOT_METRICS.get(metric, PLOT_METRICS["accuracy"])
-    rows = stattracker_repo.fetch_player_weapon_match_series(sid, weapons=weapons, map_name=map_name)
+    rows = stattracker_repo.fetch_player_weapon_match_series(sid, weapons=weapons, map_name=map_name, seasons=seasons)
     match_keys, x_labels, series = _build_match_series(
         rows, metric_def["fn"], lambda r: str(r["weapon"]), "weapon",
     )
@@ -445,13 +452,13 @@ def get_weapon_match_series(steamid64, weapons=None, metric="accuracy", map_name
     }
 
 
-def get_weapon_round_series(steamid64, weapons=None, metric="accuracy", map_name=None):
+def get_weapon_round_series(steamid64, weapons=None, metric="accuracy", map_name=None, seasons=None):
     sid = str(steamid64 or "").strip()
     if not sid:
         return {"metric_label": "", "x_labels": [], "series": {}, "match_keys": []}
 
     metric_def = PLOT_METRICS.get(metric, PLOT_METRICS["accuracy"])
-    rows = stattracker_repo.fetch_player_weapon_round_series(sid, weapons=weapons, map_name=map_name)
+    rows = stattracker_repo.fetch_player_weapon_round_series(sid, weapons=weapons, map_name=map_name, seasons=seasons)
     round_keys, x_labels, series = _build_round_series(
         rows, metric_def["fn"], lambda r: str(r["weapon"]), "weapon-round",
     )
@@ -469,13 +476,13 @@ def get_weapon_round_series(steamid64, weapons=None, metric="accuracy", map_name
     }
 
 
-def get_map_match_series(steamid64, maps=None, metric="kd_ratio"):
+def get_map_match_series(steamid64, maps=None, metric="kd_ratio", seasons=None):
     sid = str(steamid64 or "").strip()
     if not sid:
         return {"metric_label": "", "x_labels": [], "series": {}, "match_keys": []}
 
     metric_def = MAP_PLOT_METRICS.get(metric, MAP_PLOT_METRICS["kd_ratio"])
-    rows = stattracker_repo.fetch_player_map_match_series(sid, maps=maps)
+    rows = stattracker_repo.fetch_player_map_match_series(sid, maps=maps, seasons=seasons)
     match_keys, x_labels, series = _build_match_series(
         rows, metric_def["fn"], lambda r: str(r["map_name"] or "unknown"), "map",
     )
@@ -493,13 +500,13 @@ def get_map_match_series(steamid64, maps=None, metric="kd_ratio"):
     }
 
 
-def get_movement_match_series(steamid64, maps=None, metric="avg_speed_m_s"):
+def get_movement_match_series(steamid64, maps=None, metric="avg_speed_m_s", seasons=None):
     sid = str(steamid64 or "").strip()
     if not sid:
         return {"metric_label": "", "x_labels": [], "series": {}, "match_keys": []}
 
     metric_def = MOVEMENT_PLOT_METRICS.get(metric, MOVEMENT_PLOT_METRICS["avg_speed_m_s"])
-    rows = stattracker_repo.fetch_player_movement_match_series(sid, maps=maps)
+    rows = stattracker_repo.fetch_player_movement_match_series(sid, maps=maps, seasons=seasons)
     match_keys, x_labels, series = _build_match_series(
         rows, metric_def["fn"], lambda r: "Movement", "movement",
     )
@@ -517,13 +524,13 @@ def get_movement_match_series(steamid64, maps=None, metric="avg_speed_m_s"):
     }
 
 
-def get_movement_round_series(steamid64, maps=None, metric="avg_speed_m_s"):
+def get_movement_round_series(steamid64, maps=None, metric="avg_speed_m_s", seasons=None):
     sid = str(steamid64 or "").strip()
     if not sid:
         return {"metric_label": "", "x_labels": [], "series": {}, "match_keys": []}
 
     metric_def = MOVEMENT_PLOT_METRICS.get(metric, MOVEMENT_PLOT_METRICS["avg_speed_m_s"])
-    rows = stattracker_repo.fetch_player_movement_round_series(sid, maps=maps)
+    rows = stattracker_repo.fetch_player_movement_round_series(sid, maps=maps, seasons=seasons)
     round_keys, x_labels, series = _build_round_series(
         rows, metric_def["fn"], lambda r: "Movement", "movement-round",
     )

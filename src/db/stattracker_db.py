@@ -7,6 +7,35 @@ _WEAPON_FROM = """
 """
 
 
+def _normalize_seasons(seasons):
+    if seasons is None:
+        return None
+    out = []
+    for s in seasons:
+        try:
+            out.append(int(s))
+        except Exception:
+            continue
+    return sorted(set(out))
+
+
+def _season_filter_clause(match_expr, seasons):
+    normalized = _normalize_seasons(seasons)
+    if normalized is None:
+        return "", []
+    if not normalized:
+        return " AND 1=0 ", []
+
+    placeholders = ",".join("?" for _ in normalized)
+    return (
+        " AND EXISTS ("
+        "SELECT 1 FROM elo_match_season ems "
+        f"WHERE ems.match_id = {match_expr} AND ems.season IN ({placeholders})"
+        ") ",
+        normalized,
+    )
+
+
 def fetch_player_overview():
     with get_conn() as conn:
         row = conn.execute(
@@ -501,7 +530,7 @@ def upsert_player_round_events_many(rows, conn=None):
         executemany_write(c, query, params)
 
 
-def fetch_player_movement_match_series(steamid64, maps=None):
+def fetch_player_movement_match_series(steamid64, maps=None, seasons=None):
     sid = str(steamid64 or "").strip()
     if not sid:
         return []
@@ -516,6 +545,9 @@ def fetch_player_movement_match_series(steamid64, maps=None):
         placeholders = ",".join("?" for _ in maps)
         conditions.append(f"COALESCE(mm.map_name, 'unknown') IN ({placeholders})")
         params.extend([str(m) for m in maps])
+
+    season_sql, season_params = _season_filter_clause("pmms.match_id", seasons)
+    params.extend(season_params)
 
     where = " AND ".join(conditions)
 
@@ -593,6 +625,7 @@ def fetch_player_movement_match_series(steamid64, maps=None):
               ON mm.match_id = pmms.match_id AND mm.map_number = pmms.map_number
             LEFT JOIN matches m ON m.match_id = pmms.match_id
             WHERE {where}
+                            {season_sql}
             ORDER BY COALESCE(mm.start_time, m.start_time, pmms.match_id) ASC,
                      pmms.map_number ASC
             """,
@@ -600,7 +633,7 @@ def fetch_player_movement_match_series(steamid64, maps=None):
         ).fetchall()
 
 
-def fetch_player_movement_round_series(steamid64, maps=None):
+def fetch_player_movement_round_series(steamid64, maps=None, seasons=None):
     sid = str(steamid64 or "").strip()
     if not sid:
         return []
@@ -615,6 +648,9 @@ def fetch_player_movement_round_series(steamid64, maps=None):
         placeholders = ",".join("?" for _ in maps)
         conditions.append(f"COALESCE(mm.map_name, 'unknown') IN ({placeholders})")
         params.extend([str(m) for m in maps])
+
+    season_sql, season_params = _season_filter_clause("prms.match_id", seasons)
+    params.extend(season_params)
 
     where = " AND ".join(conditions)
 
@@ -703,6 +739,7 @@ def fetch_player_movement_round_series(steamid64, maps=None):
               ON mm.match_id = prms.match_id AND mm.map_number = prms.map_number
             LEFT JOIN matches m ON m.match_id = prms.match_id
             WHERE {where}
+                            {season_sql}
             ORDER BY COALESCE(mm.start_time, m.start_time, prms.match_id) ASC,
                      prms.map_number ASC,
                      prms.round_num ASC
@@ -711,7 +748,7 @@ def fetch_player_movement_round_series(steamid64, maps=None):
         ).fetchall()
 
 
-def fetch_player_weapon_round_series(steamid64, weapons=None, map_name=None):
+def fetch_player_weapon_round_series(steamid64, weapons=None, map_name=None, seasons=None):
     sid = str(steamid64 or "").strip()
     if not sid:
         return []
@@ -730,6 +767,9 @@ def fetch_player_weapon_round_series(steamid64, weapons=None, map_name=None):
         placeholders = ",".join("?" for _ in weapons)
         conditions.append(f"COALESCE(wa.canonical_weapon, prws.weapon) IN ({placeholders})")
         params.extend([str(w) for w in weapons])
+
+    season_sql, season_params = _season_filter_clause("prws.match_id", seasons)
+    params.extend(season_params)
 
     where = " AND ".join(conditions)
 
@@ -756,6 +796,7 @@ def fetch_player_weapon_round_series(steamid64, weapons=None, map_name=None):
               ON mm.match_id = prws.match_id AND mm.map_number = prws.map_number
             LEFT JOIN matches m ON m.match_id = prws.match_id
             WHERE {where}
+                            {season_sql}
             ORDER BY COALESCE(mm.start_time, m.start_time, prws.match_id) ASC,
                      prws.map_number ASC,
                      prws.round_num ASC,
@@ -780,10 +821,11 @@ def fetch_player_filter_options():
         ).fetchall()
 
 
-def fetch_player_overall_metrics(steamid64):
+def fetch_player_overall_metrics(steamid64, seasons=None):
+    season_sql, season_params = _season_filter_clause("mps.match_id", seasons)
     with get_conn() as conn:
         return conn.execute(
-            """
+            f"""
             SELECT
                 COUNT(*) AS maps_played,
                 SUM(COALESCE(mps.kills, 0)) AS total_kills,
@@ -801,15 +843,17 @@ def fetch_player_overall_metrics(steamid64):
               ON mm.match_id = mps.match_id
              AND mm.map_number = mps.map_number
             WHERE mps.steamid64 = ?
+                            {season_sql}
             """,
-            (str(steamid64),),
+                        (str(steamid64), *season_params),
         ).fetchone()
 
 
-def fetch_player_overall_movement_metrics(steamid64):
+def fetch_player_overall_movement_metrics(steamid64, seasons=None):
+    season_sql, season_params = _season_filter_clause("pmms.match_id", seasons)
     with get_conn() as conn:
         return conn.execute(
-            """
+            f"""
             SELECT
                 SUM(COALESCE(pmms.total_distance_units, 0)) AS total_distance_units,
                 SUM(COALESCE(pmms.strafe_distance_units, 0)) AS strafe_distance_units,
@@ -837,15 +881,17 @@ def fetch_player_overall_movement_metrics(steamid64):
                 ) AS camp_time_s
             FROM player_map_movement_stats pmms
             WHERE pmms.steamid64 = ?
+                            {season_sql}
             """,
-            (str(steamid64),),
+                        (str(steamid64), *season_params),
         ).fetchone()
 
 
-def fetch_player_map_stats(steamid64):
+def fetch_player_map_stats(steamid64, seasons=None):
+    season_sql, season_params = _season_filter_clause("mps.match_id", seasons)
     with get_conn() as conn:
         return conn.execute(
-            """
+            f"""
             SELECT
                 COALESCE(mm.map_name, 'unknown') AS map_name,
                 COUNT(*) AS maps_played,
@@ -859,14 +905,16 @@ def fetch_player_map_stats(steamid64):
               ON mm.match_id = mps.match_id
              AND mm.map_number = mps.map_number
             WHERE mps.steamid64 = ?
+                            {season_sql}
             GROUP BY COALESCE(mm.map_name, 'unknown')
             ORDER BY maps_played DESC, map_name COLLATE NOCASE ASC
             """,
-            (str(steamid64),),
+                        (str(steamid64), *season_params),
         ).fetchall()
 
 
-def fetch_player_weapon_categories(steamid64):
+def fetch_player_weapon_categories(steamid64, seasons=None):
+    season_sql, season_params = _season_filter_clause("pmws.match_id", seasons)
     with get_conn() as conn:
         return conn.execute(
             f"""
@@ -875,14 +923,15 @@ def fetch_player_weapon_categories(steamid64):
                 COUNT(*) AS rows_count
             {_WEAPON_FROM}
             WHERE pmws.steamid64 = ?
+              {season_sql}
             GROUP BY COALESCE(NULLIF(wd.category, ''), 'unknown')
             ORDER BY category COLLATE NOCASE ASC
             """,
-            (str(steamid64),),
+            (str(steamid64), *season_params),
         ).fetchall()
 
 
-def fetch_player_weapon_stats(steamid64, min_shots=1, weapon_category=None):
+def fetch_player_weapon_stats(steamid64, min_shots=1, weapon_category=None, seasons=None):
     category_sql = ""
     params = [str(steamid64)]
     selected_category = str(weapon_category or "").strip().lower()
@@ -892,6 +941,8 @@ def fetch_player_weapon_stats(steamid64, min_shots=1, weapon_category=None):
         plural = selected_category if selected_category.endswith("s") else f"{selected_category}s"
         category_sql = "AND LOWER(COALESCE(NULLIF(wd.category, ''), 'unknown')) IN (?, ?)"
         params.extend([selected_category, plural])
+    season_sql, season_params = _season_filter_clause("pmws.match_id", seasons)
+    params.extend(season_params)
     params.append(int(min_shots))
 
     with get_conn() as conn:
@@ -909,6 +960,7 @@ def fetch_player_weapon_stats(steamid64, min_shots=1, weapon_category=None):
             {_WEAPON_FROM}
             WHERE pmws.steamid64 = ?
               {category_sql}
+                            {season_sql}
             GROUP BY COALESCE(wa.canonical_weapon, pmws.weapon), COALESCE(NULLIF(wd.category, ''), 'unknown')
             HAVING SUM(COALESCE(shots_fired, 0)) >= ?
             ORDER BY shots_fired DESC, weapon COLLATE NOCASE ASC
@@ -917,10 +969,11 @@ def fetch_player_weapon_stats(steamid64, min_shots=1, weapon_category=None):
         ).fetchall()
 
 
-def fetch_player_weapon_kill_attribution_deltas(steamid64):
+def fetch_player_weapon_kill_attribution_deltas(steamid64, seasons=None):
+    season_sql, season_params = _season_filter_clause("mps.match_id", seasons)
     with get_conn() as conn:
         return conn.execute(
-            """
+            f"""
             SELECT
                 mps.match_id,
                 mps.map_number,
@@ -945,14 +998,15 @@ def fetch_player_weapon_kill_attribution_deltas(steamid64):
              AND w.match_id = mps.match_id
              AND w.map_number = mps.map_number
             WHERE mps.steamid64 = ?
+                            {season_sql}
               AND (COALESCE(mps.kills, 0) - COALESCE(w.weapon_kills, 0)) > 0
             ORDER BY mps.match_id DESC, mps.map_number ASC
             """,
-            (str(steamid64),),
+                        (str(steamid64), *season_params),
         ).fetchall()
 
 
-def fetch_player_weapon_match_series(steamid64, weapons=None, map_name=None):
+def fetch_player_weapon_match_series(steamid64, weapons=None, map_name=None, seasons=None):
     """Return per-match, per-weapon rows for a player ordered chronologically.
 
     Each row contains: match_id, map_number, map_name, start_time,
@@ -983,6 +1037,9 @@ def fetch_player_weapon_match_series(steamid64, weapons=None, map_name=None):
         conditions.append(f"COALESCE(wa.canonical_weapon, pmws.weapon) IN ({placeholders})")
         params.extend([str(w) for w in weapons])
 
+    season_sql, season_params = _season_filter_clause("pmws.match_id", seasons)
+    params.extend(season_params)
+
     where = " AND ".join(conditions)
 
     with get_conn() as conn:
@@ -1007,6 +1064,7 @@ def fetch_player_weapon_match_series(steamid64, weapons=None, map_name=None):
               ON mm.match_id = pmws.match_id AND mm.map_number = pmws.map_number
             LEFT JOIN matches m ON m.match_id = pmws.match_id
             WHERE {where}
+                            {season_sql}
             ORDER BY COALESCE(mm.start_time, m.start_time, pmws.match_id) ASC,
                      pmws.map_number ASC,
                      weapon ASC
@@ -1015,7 +1073,7 @@ def fetch_player_weapon_match_series(steamid64, weapons=None, map_name=None):
         ).fetchall()
 
 
-def fetch_player_map_match_series(steamid64, maps=None):
+def fetch_player_map_match_series(steamid64, maps=None, seasons=None):
     """Return per-match rows for a player's map performances, ordered chronologically.
 
     Each row: match_id, map_number, map_name, start_time, kills, deaths,
@@ -1040,6 +1098,9 @@ def fetch_player_map_match_series(steamid64, maps=None):
         conditions.append(f"COALESCE(mm.map_name, 'unknown') IN ({placeholders})")
         params.extend([str(m) for m in maps])
 
+    season_sql, season_params = _season_filter_clause("mps.match_id", seasons)
+    params.extend(season_params)
+
     where = " AND ".join(conditions)
 
     with get_conn() as conn:
@@ -1062,6 +1123,7 @@ def fetch_player_map_match_series(steamid64, maps=None):
               ON mm.match_id = mps.match_id AND mm.map_number = mps.map_number
             LEFT JOIN matches m ON m.match_id = mps.match_id
             WHERE {where}
+                            {season_sql}
             ORDER BY COALESCE(mm.start_time, m.start_time, mps.match_id) ASC,
                      mps.map_number ASC
             """,

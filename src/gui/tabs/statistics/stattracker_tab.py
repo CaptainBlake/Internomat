@@ -700,7 +700,7 @@ def _refresh_plot_only(parent):
             metrics = [str(getattr(parent, "_stattracker_plot_metric", "accuracy") or "accuracy")]
 
     if not metrics:
-        if main_view == "maps":
+        if main_view in {"maps", "players"}:
             fallback_metric = "kd_ratio"
         elif main_view == "movement":
             fallback_metric = "avg_speed_m_s"
@@ -733,6 +733,7 @@ def _refresh_plot_only(parent):
     # Important: keep [] as "show none". Only None means "no filter / all".
     selected_items_filter = checked_items if checked_items is not None else None
     timeline_scale = str(getattr(parent, "_stattracker_timeline_scale", "match") or "match")
+    selected_seasons = getattr(parent, "_stattracker_selected_seasons", None)
     if main_view not in {"movement", "weapons"}:
         timeline_scale = "match"
         parent._stattracker_timeline_scale = "match"
@@ -797,6 +798,7 @@ def _refresh_plot_only(parent):
                 str(target_sid or ""),
                 min_weapon_shots=1,
                 weapon_category="all",
+                seasons=selected_seasons,
             )
             rows = dash.get("weapon_rows") or []
             return [
@@ -822,6 +824,7 @@ def _refresh_plot_only(parent):
             str(target_sid or ""),
             min_weapon_shots=1,
             weapon_category="all",
+            seasons=selected_seasons,
         )
         weapon_rows = dashboard.get("weapon_rows") or []
         weapon_to_category = {
@@ -863,17 +866,17 @@ def _refresh_plot_only(parent):
         if main_view == "maps":
             if len(metrics) == 1:
                 data = stattracker.get_map_match_series(
-                    target_sid, maps=selected_items_filter, metric=metrics[0],
+                    target_sid, maps=selected_items_filter, metric=metrics[0], seasons=selected_seasons,
                 )
                 data["series"] = _aggregate_map_series(data.get("series") or {}, metrics[0])
                 return data
-            first = stattracker.get_map_match_series(target_sid, maps=selected_items_filter, metric=metrics[0])
+            first = stattracker.get_map_match_series(target_sid, maps=selected_items_filter, metric=metrics[0], seasons=selected_seasons)
             multi = [{
                 "metric_label": first["metric_label"],
                 "series": _aggregate_map_series(first.get("series") or {}, metrics[0]),
             }]
             for m in metrics[1:]:
-                r = stattracker.get_map_match_series(target_sid, maps=selected_items_filter, metric=m)
+                r = stattracker.get_map_match_series(target_sid, maps=selected_items_filter, metric=m, seasons=selected_seasons)
                 multi.append({
                     "metric_label": r["metric_label"],
                     "series": _aggregate_map_series(r.get("series") or {}, m),
@@ -887,11 +890,13 @@ def _refresh_plot_only(parent):
                     target_sid,
                     maps=selected_items_filter,
                     metric=metrics[0],
+                    seasons=selected_seasons,
                 )
             first = fetch_fn(
                 target_sid,
                 maps=selected_items_filter,
                 metric=metrics[0],
+                seasons=selected_seasons,
             )
             multi = [{"metric_label": first["metric_label"], "series": first["series"]}]
             for m in metrics[1:]:
@@ -899,9 +904,34 @@ def _refresh_plot_only(parent):
                     target_sid,
                     maps=selected_items_filter,
                     metric=m,
+                    seasons=selected_seasons,
                 )
                 multi.append({"metric_label": r["metric_label"], "series": r["series"]})
             return {"x_labels": first["x_labels"], "match_keys": first.get("match_keys") or [], "multi_series": multi}
+
+        if main_view == "players":
+            if len(metrics) == 1:
+                data = stattracker.get_map_match_series(
+                    target_sid,
+                    maps=None,
+                    metric=metrics[0],
+                    seasons=selected_seasons,
+                )
+                data["series"] = _aggregate_map_series(data.get("series") or {}, metrics[0])
+                return data
+
+            first = stattracker.get_map_match_series(target_sid, maps=None, metric=metrics[0], seasons=selected_seasons)
+            multi = [{
+                "metric_label": first["metric_label"],
+                "series": _aggregate_map_series(first.get("series") or {}, metrics[0]),
+            }]
+            for m in metrics[1:]:
+                r = stattracker.get_map_match_series(target_sid, maps=None, metric=m, seasons=selected_seasons)
+                multi.append({
+                    "metric_label": r["metric_label"],
+                    "series": _aggregate_map_series(r.get("series") or {}, m),
+                })
+            return {"x_labels": first["x_labels"], "multi_series": multi}
 
         selected_map = str(getattr(parent, "_stattracker_selected_map", "all") or "all")
         map_name = selected_map if selected_map != "all" else None
@@ -910,7 +940,7 @@ def _refresh_plot_only(parent):
         fetch_weapon_fn = stattracker.get_weapon_round_series if timeline_scale == "round" else stattracker.get_weapon_match_series
         if len(metrics) == 1:
             result = fetch_weapon_fn(
-                target_sid, weapons=weapon_filter, metric=metrics[0], map_name=map_name,
+                target_sid, weapons=weapon_filter, metric=metrics[0], map_name=map_name, seasons=selected_seasons,
             )
             if group_mode == "category":
                 result["series"] = _aggregate_weapon_series_by_category(
@@ -919,13 +949,13 @@ def _refresh_plot_only(parent):
                     metrics[0],
                 )
             return result
-        first = fetch_weapon_fn(target_sid, weapons=weapon_filter, metric=metrics[0], map_name=map_name)
+        first = fetch_weapon_fn(target_sid, weapons=weapon_filter, metric=metrics[0], map_name=map_name, seasons=selected_seasons)
         first_series = first["series"]
         if group_mode == "category":
             first_series = _aggregate_weapon_series_by_category(first_series, target_sid, metrics[0])
         multi = [{"metric_label": first["metric_label"], "series": first_series}]
         for m in metrics[1:]:
-            r = fetch_weapon_fn(target_sid, weapons=weapon_filter, metric=m, map_name=map_name)
+            r = fetch_weapon_fn(target_sid, weapons=weapon_filter, metric=m, map_name=map_name, seasons=selected_seasons)
             metric_series = r["series"]
             if group_mode == "category":
                 metric_series = _aggregate_weapon_series_by_category(metric_series, target_sid, m)
@@ -1343,6 +1373,7 @@ def build_stattracker_tab(parent):
     parent._stattracker_compare_player = ""
     parent._stattracker_compare_players = []
     parent._stattracker_selected_timeline_items = []
+    parent._stattracker_selected_seasons = None
     parent._stattracker_selected_plot_metrics = []
     parent._stattracker_timeline_scale = "match"
     parent._stattracker_timeline_window_mode = "all"
@@ -1362,6 +1393,7 @@ def build_stattracker_tab(parent):
     parent._stattracker_range_match_label = None
     parent._stattracker_plot_container = None
     parent._stattracker_timeline_combo = None
+    parent._stattracker_season_combo = None
     parent._stattracker_compare_combo = None
     parent._stattracker_initial_focus_applied = False
     parent._stattracker_on_update = lambda: on_stattracker_data_updated(parent)
@@ -1457,6 +1489,7 @@ def refresh_stattracker(parent):
         selected_sid,
         min_weapon_shots=1,
         weapon_category="all",
+        seasons=getattr(parent, "_stattracker_selected_seasons", None),
     )
 
     # First open defaults: rifles category with one focused weapon to avoid clutter.

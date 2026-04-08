@@ -57,20 +57,24 @@ def recalculate_elo(*, season: int | None = None) -> dict:
 
     tune = _load_tune_from_settings()
 
-    history_rows, rating_rows, season_rating_rows, global_anchor, current_season = _compute_elo(
-        match_outcomes, adr_lookup, tune, all_players, current_season_hint
-    )
-
     season_dim_rows = _build_season_dimension_rows(season_ranges)
+    season_match_rows = _build_match_season_rows(match_outcomes)
 
     with write_transaction() as conn:
         elo_db.init_elo_tables(conn)
+        season_tune_map = _load_or_seed_season_tuning_map(conn, season_ranges, tune)
+
+        history_rows, rating_rows, season_rating_rows, global_anchor, current_season = _compute_elo(
+            match_outcomes, adr_lookup, season_tune_map, all_players, current_season_hint
+        )
+
         elo_db.clear_elo_tables(conn=conn)
         elo_db.clear_elo_seasons(conn=conn)
         elo_db.upsert_elo_history_many(history_rows, conn=conn)
         elo_db.upsert_elo_ratings_many(rating_rows, conn=conn)
         elo_db.upsert_elo_ratings_season_many(season_rating_rows, conn=conn)
         elo_db.upsert_elo_seasons_many(season_dim_rows, conn=conn)
+        elo_db.upsert_elo_match_season_many(season_match_rows, conn=conn)
         elo_db.upsert_elo_state("global_anchor", str(global_anchor), conn=conn)
         elo_db.upsert_elo_state("season", str(current_season), conn=conn)
 
@@ -86,6 +90,14 @@ def recalculate_elo(*, season: int | None = None) -> dict:
         "season": current_season,
         "global_anchor": global_anchor,
     }
+
+
+def bind_current_settings_tuning_to_season(season: int, *, source: str = "settings_ui") -> None:
+    """Persist current settings tuning as the locked tuning profile for one season."""
+    tune = _load_tune_from_settings()
+    with write_transaction() as conn:
+        elo_db.init_elo_tables(conn)
+        elo_db.upsert_elo_season_tuning(int(season), tune, source=source, conn=conn)
 
 
 # ── Data loading ──────────────────────────────────────────────────────
@@ -208,7 +220,7 @@ def _assign_seasons(outcomes, forced_season=None):
 
     season_ranges = _load_season_ranges_from_settings()
     if not season_ranges:
-        season_ranges = [{"season": 0, "start": None, "end": None}]
+        season_ranges = [{"season": 0, "start": _infer_first_match_datetime(outcomes), "end": None}]
     for row in outcomes:
         row["season"] = _resolve_season(row.get("played_at"), season_ranges)
     return season_ranges
@@ -227,6 +239,57 @@ def _build_season_dimension_rows(season_ranges):
             "source": "settings",
         })
     return rows
+
+
+def _build_match_season_rows(outcomes):
+    rows_by_match = {}
+    for row in outcomes:
+        match_id = str(row.get("match_id") or "").strip()
+        if not match_id:
+            continue
+        if match_id not in rows_by_match:
+            rows_by_match[match_id] = {
+                "match_id": match_id,
+                "season": int(row.get("season", 0)),
+                "played_at": str(row.get("played_at") or "").strip() or None,
+                "source": "elo_recalc",
+            }
+
+    return [rows_by_match[mid] for mid in sorted(rows_by_match, key=_match_sort_key)]
+
+
+def _infer_first_match_datetime(outcomes):
+    first = None
+    for row in outcomes:
+        dt = _parse_datetime(row.get("played_at"))
+        if dt is None:
+            continue
+        if first is None or dt < first:
+            first = dt
+    return first
+
+
+def _load_or_seed_season_tuning_map(conn, season_ranges, default_tune):
+    out = {}
+    for row in elo_db.get_elo_season_tunings(conn=conn):
+        out[int(row["season"])] = {
+            "K_FACTOR": float(row["k_factor"]),
+            "BASE_RATING": float(row["base_rating"]),
+            "ADR_ALPHA": float(row["adr_alpha"]),
+            "ADR_SPREAD": float(row["adr_spread"]),
+            "ADR_MIN_MULT": float(row["adr_min_mult"]),
+            "ADR_MAX_MULT": float(row["adr_max_mult"]),
+            "ADR_PRIOR_MATCHES": float(row["adr_prior_matches"]),
+            "INITIAL_GLOBAL_ANCHOR": float(row["initial_global_anchor"]),
+        }
+
+    for item in season_ranges or [{"season": 0}]:
+        sid = int(item.get("season", 0))
+        if sid not in out:
+            elo_db.upsert_elo_season_tuning(sid, default_tune, source="settings", conn=conn)
+            out[sid] = dict(default_tune)
+
+    return out
 
 
 def _load_season_ranges_from_settings():
@@ -511,19 +574,12 @@ def _split_teams(players):
     )
 
 
-def _compute_elo(outcomes, adr_lookup, tune, all_players, current_season_hint=None):
+def _compute_elo(outcomes, adr_lookup, season_tune_map, all_players, current_season_hint=None):
     """Run strict-timeline ADR-Elo over chronological match outcomes.
 
     Returns ``(history_rows, rating_rows, season_rating_rows, final_global_anchor, current_season)``.
     """
-    k       = float(tune["K_FACTOR"])
-    base    = float(tune["BASE_RATING"])
-    alpha   = float(tune["ADR_ALPHA"])
-    spread  = float(tune["ADR_SPREAD"])
-    min_m   = float(tune["ADR_MIN_MULT"])
-    max_m   = float(tune["ADR_MAX_MULT"])
-    prior   = float(tune["ADR_PRIOR_MATCHES"])
-    anchor0 = float(tune["INITIAL_GLOBAL_ANCHOR"])
+    default_tune = dict(TUNE)
 
     # Keep only matches with a known result
     outcomes = [o for o in outcomes if o["result"] in ("win", "loss")]
@@ -554,6 +610,16 @@ def _compute_elo(outcomes, adr_lookup, tune, all_players, current_season_hint=No
     season_anchor: dict[int, float] = {}
 
     for season in sorted(ordered_by_season.keys()):
+        season_tune = season_tune_map.get(season, default_tune)
+        k = float(season_tune["K_FACTOR"])
+        base = float(season_tune["BASE_RATING"])
+        alpha = float(season_tune["ADR_ALPHA"])
+        spread = float(season_tune["ADR_SPREAD"])
+        min_m = float(season_tune["ADR_MIN_MULT"])
+        max_m = float(season_tune["ADR_MAX_MULT"])
+        prior = float(season_tune["ADR_PRIOR_MATCHES"])
+        anchor0 = float(season_tune["INITIAL_GLOBAL_ANCHOR"])
+
         # Reset state at season boundary.
         ratings: dict[str, float] = {}
         player_adr_sum: dict[str, float] = {}
@@ -690,6 +756,9 @@ def _compute_elo(outcomes, adr_lookup, tune, all_players, current_season_hint=No
     else:
         current_season = int(current_season_hint)
     current_rows = season_rating_rows.get(current_season, {})
+    current_tune = season_tune_map.get(current_season, default_tune)
+    current_base = float(current_tune["BASE_RATING"])
+    current_anchor0 = float(current_tune["INITIAL_GLOBAL_ANCHOR"])
 
     # Ensure players with no matches this season still read as 1500.
     rating_rows: list[dict] = []
@@ -699,7 +768,7 @@ def _compute_elo(outcomes, adr_lookup, tune, all_players, current_season_hint=No
             rating_rows.append({
                 "steamid64": sid,
                 "season": current_season,
-                "elo": round(base, 2),
+                "elo": round(current_base, 2),
                 "matches_played": 0,
                 "wins": 0,
                 "losses": 0,
@@ -707,7 +776,7 @@ def _compute_elo(outcomes, adr_lookup, tune, all_players, current_season_hint=No
         else:
             rating_rows.append(row)
 
-    final_anchor = season_anchor.get(current_season, anchor0)
+    final_anchor = season_anchor.get(current_season, current_anchor0)
 
     season_rating_rows_flat: list[dict] = []
     for s in sorted(season_rating_rows.keys()):

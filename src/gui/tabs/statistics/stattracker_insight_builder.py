@@ -88,6 +88,28 @@ def _on_map_selected_changed(parent, combo):
     refresh_stattracker(parent)
 
 
+def _on_season_single_changed(parent, combo):
+    value = combo.currentData()
+    if value is None:
+        parent._stattracker_selected_seasons = None
+    else:
+        parent._stattracker_selected_seasons = [int(value)]
+    from .stattracker_tab import refresh_stattracker
+    refresh_stattracker(parent)
+
+
+def _on_season_multi_changed(parent):
+    season_combo = getattr(parent, "_stattracker_season_combo", None)
+    if season_combo is None or not hasattr(season_combo, "checked_data"):
+        parent._stattracker_selected_seasons = None
+    else:
+        checked = [int(s) for s in (season_combo.checked_data() or [])]
+        all_known = [int(s) for s in stattracker.get_season_options()]
+        parent._stattracker_selected_seasons = None if set(checked) == set(all_known) else checked
+    from .stattracker_tab import refresh_stattracker
+    refresh_stattracker(parent)
+
+
 def _on_weapon_selected_changed(parent, combo):
     parent._stattracker_selected_weapon = str(combo.currentData() or "all")
     from .stattracker_tab import refresh_stattracker
@@ -381,6 +403,7 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
     view_combo.addItem("Weapons", "weapons")
     view_combo.addItem("Maps", "maps")
     view_combo.addItem("Movement", "movement")
+    view_combo.addItem("Players", "players")
     idx = view_combo.findData(main_view)
     if idx < 0:
         idx = 0
@@ -394,7 +417,10 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
     # [2] Category filter (weapons only, both modes)
     if main_view == "weapons":
         category_combo = QComboBox()
-        categories = stattracker.get_player_weapon_categories(selected_sid) if selected_sid else ["all"]
+        categories = stattracker.get_player_weapon_categories(
+            selected_sid,
+            seasons=getattr(parent, "_stattracker_selected_seasons", None),
+        ) if selected_sid else ["all"]
         for category in categories:
             label = _category_display_label(category)
             category_combo.addItem(label, category)
@@ -412,8 +438,40 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
     stored_timeline_items = list(getattr(parent, "_stattracker_selected_timeline_items", []) or [])
     timeline_multi = bool(getattr(parent, "_stattracker_timeline_multi", False))
 
+    season_options = [int(s) for s in stattracker.get_season_options()]
+    selected_seasons = getattr(parent, "_stattracker_selected_seasons", None)
+    if is_timeline and timeline_multi:
+        season_multi = _CheckableCombo(label_plural="Seasons")
+        season_multi.setMinimumWidth(160)
+        for sid in season_options:
+            checked = True if selected_seasons is None else (sid in selected_seasons)
+            season_multi.add_checkable_item(f"Season {sid}", data=sid, checked=checked)
+        season_multi._update_display_text()
+        season_multi._model.dataChanged.connect(lambda *_: _on_season_multi_changed(parent))
+        parent._stattracker_season_combo = season_multi
+        insight_row.addWidget(QLabel("Seasons:"))
+        insight_row.addWidget(season_multi)
+    else:
+        season_single = QComboBox()
+        season_single.setMinimumWidth(160)
+        season_single.addItem("ALL Seasons", None)
+        for sid in season_options:
+            season_single.addItem(f"Season {sid}", sid)
+        if selected_seasons and len(selected_seasons) == 1:
+            idx_season = season_single.findData(int(selected_seasons[0]))
+            if idx_season >= 0:
+                season_single.setCurrentIndex(idx_season)
+        else:
+            season_single.setCurrentIndex(0)
+        season_single.currentIndexChanged.connect(lambda _i: _on_season_single_changed(parent, season_single))
+        parent._stattracker_season_combo = season_single
+        insight_row.addWidget(QLabel("Season:"))
+        insight_row.addWidget(season_single)
+
     if is_timeline:
-        if timeline_multi:
+        if main_view == "players":
+            parent._stattracker_timeline_combo = None
+        elif timeline_multi:
             item_label = "Maps" if main_view in ("maps", "movement") else "Weapons"
             item_multi = _CheckableCombo(label_plural=item_label)
             item_multi.setMinimumWidth(200)
@@ -448,6 +506,8 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
                     name = str(mr.get("map_name", "?"))
                     item_single.addItem(name, name)
                 preferred = stored_timeline_items[0] if stored_timeline_items else selected_map
+            elif main_view == "players":
+                preferred = "all"
             else:
                 filtered = _filter_weapons_by_category(weapon_rows, selected_category)
                 for wr in filtered:
@@ -479,7 +539,7 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
             insight_row.addWidget(QLabel("Weapon:"))
             insight_row.addWidget(weapon_combo)
             parent._stattracker_weapon_combo = weapon_combo
-        else:
+        elif main_view in {"maps", "movement"}:
             map_combo = QComboBox()
             map_combo.addItem("All Maps", "all")
             for mr in map_rows:
@@ -492,10 +552,13 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
             insight_row.addWidget(QLabel("Map:"))
             insight_row.addWidget(map_combo)
             parent._stattracker_map_combo = map_combo
+        else:
+            parent._stattracker_map_combo = None
+            parent._stattracker_weapon_combo = None
 
     # [4] Metric selector (timeline only) – multi-select _CheckableCombo
     if is_timeline:
-        if main_view == "maps":
+        if main_view in {"maps", "players"}:
             opts = stattracker.get_map_plot_metric_options()
             default_metric = "kd_ratio"
         elif main_view == "movement":
@@ -786,6 +849,8 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
             main_title_text = "Map Performance Timeline"
         elif main_view == "movement":
             main_title_text = "Movement Timeline"
+        elif main_view == "players":
+            main_title_text = "Player Timeline"
         else:
             cat_label = "All" if selected_category == "all" else selected_category.title()
             main_title_text = f"{cat_label} Weapon Timeline"
@@ -856,16 +921,17 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
     elif main_view == "movement":
         selected_map_local = str(getattr(parent, "_stattracker_selected_map", "all") or "all")
         map_filter = None if selected_map_local == "all" else [selected_map_local]
+        selected_seasons = getattr(parent, "_stattracker_selected_seasons", None)
         metric_series = {
-            "avg_speed_m_s": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="avg_speed_m_s"),
-            "max_speed_units_s": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="max_speed_units_s"),
-            "total_distance_m": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="total_distance_m"),
-            "alive_seconds": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="alive_seconds"),
-            "strafe_ratio": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="strafe_ratio"),
-            "stationary_ratio": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="stationary_ratio"),
-            "sprint_ratio": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="sprint_ratio"),
-            "strafe_distance_m": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="strafe_distance_m"),
-            "camp_time_s": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="camp_time_s"),
+            "avg_speed_m_s": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="avg_speed_m_s", seasons=selected_seasons),
+            "max_speed_units_s": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="max_speed_units_s", seasons=selected_seasons),
+            "total_distance_m": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="total_distance_m", seasons=selected_seasons),
+            "alive_seconds": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="alive_seconds", seasons=selected_seasons),
+            "strafe_ratio": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="strafe_ratio", seasons=selected_seasons),
+            "stationary_ratio": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="stationary_ratio", seasons=selected_seasons),
+            "sprint_ratio": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="sprint_ratio", seasons=selected_seasons),
+            "strafe_distance_m": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="strafe_distance_m", seasons=selected_seasons),
+            "camp_time_s": stattracker.get_movement_match_series(selected_sid, maps=map_filter, metric="camp_time_s", seasons=selected_seasons),
         }
 
         labels = list((metric_series.get("avg_speed_m_s") or {}).get("x_labels") or [])
@@ -919,6 +985,27 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
             hint = QLabel("No movement data available for the selected filters.")
             hint.setStyleSheet("font-size: 12px; color: #5B7A72;")
             layout.addWidget(hint)
+
+    elif main_view == "players":
+        kpis = dashboard.get("kpis") or {}
+        player_statboard = _build_statboard_section(
+            "Player Profile",
+            {
+                "Maps Played": int(kpis.get("maps_played") or 0),
+                "Win Rate": _fmt_pct(kpis.get("win_rate") or 0.0),
+                "K/D": f"{float(kpis.get('kdr') or 0.0):.2f}",
+                "ADR": f"{float(kpis.get('adr') or 0.0):.1f}",
+                "Avg Kills": f"{float(kpis.get('avg_kills') or 0.0):.2f}",
+                "Avg Deaths": f"{float(kpis.get('avg_deaths') or 0.0):.2f}",
+                "Avg Assists": f"{float(kpis.get('avg_assists') or 0.0):.2f}",
+                "HS%": _fmt_pct(kpis.get("hs_pct") or 0.0),
+                "Avg KAST": "-" if kpis.get("avg_kast") is None else _fmt_pct(kpis.get("avg_kast") * 100.0),
+                "Avg Impact": "-" if kpis.get("avg_impact") is None else f"{float(kpis.get('avg_impact') or 0.0):.2f}",
+                "Avg Rating": "-" if kpis.get("avg_rating") is None else f"{float(kpis.get('avg_rating') or 0.0):.2f}",
+                "Performance": f"{float(kpis.get('performance_index') or 0.0):.1f}",
+            },
+        )
+        layout.addWidget(player_statboard)
 
     else:  # weapons (table or statboard)
         if selected_weapon != "all":

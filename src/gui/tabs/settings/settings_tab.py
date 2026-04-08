@@ -43,6 +43,7 @@ from db.connection_db import DB_FILE, get_conn
 from db.init_db import init_db
 import db.settings_db as settings_db
 from core.pathing import data_path
+from core.stats.elo import recalculate_elo, bind_current_settings_tuning_to_season
 
 class SettingsDispatcher(QObject):
     sync_finished = Signal()
@@ -453,6 +454,17 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
     """)
     elo_layout.addWidget(elo_info)
 
+    season_warning = QLabel(
+        "Season editing is locked. Unlock only for boundary planning."
+    )
+    season_warning.setWordWrap(True)
+    season_warning.setStyleSheet("font-size: 12px; color: #A33A3A; font-weight: 700;")
+    elo_layout.addWidget(season_warning)
+
+    unlock_seasons_checkbox = QCheckBox("Unlock season editing")
+    unlock_seasons_checkbox.setChecked(False)
+    elo_layout.addWidget(unlock_seasons_checkbox)
+
     season_rows_layout = QVBoxLayout()
     season_rows_layout.setSpacing(8)
     elo_layout.addLayout(season_rows_layout)
@@ -484,12 +496,99 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
             if w is not None:
                 w.deleteLater()
 
+    def _set_date_if_changed(edit, new_date):
+        if edit.date() == new_date:
+            return
+        was_blocked = edit.blockSignals(True)
+        edit.setDate(new_date)
+        edit.blockSignals(was_blocked)
+
+    def _apply_live_season_constraints():
+        if not season_rows:
+            return
+
+        min_date = QDate(1900, 1, 1)
+        max_date = QDate(7999, 12, 31)
+
+        for idx, row in enumerate(season_rows):
+            start_edit = row["start"]
+            end_edit = row["end"]
+            open_box = row["open"]
+
+            prev_end = None
+            if idx > 0:
+                prev = season_rows[idx - 1]
+                if not prev["open"].isChecked():
+                    prev_end = prev["end"].date()
+
+            next_start = None
+            if idx + 1 < len(season_rows):
+                next_start = season_rows[idx + 1]["start"].date()
+
+            if idx > 0:
+                start_min = prev_end.addDays(1) if prev_end is not None else min_date
+                start_max = next_start.addDays(-1) if next_start is not None else max_date
+                if start_max < start_min:
+                    start_max = start_min
+                start_edit.setDateRange(start_min, start_max)
+                if start_edit.date() < start_min:
+                    _set_date_if_changed(start_edit, start_min)
+                if start_edit.date() > start_max:
+                    _set_date_if_changed(start_edit, start_max)
+            else:
+                fixed_start = row.get("fixed_start")
+                if fixed_start is not None:
+                    start_qdate = _to_qdate(fixed_start)
+                    _set_date_if_changed(start_edit, start_qdate)
+
+            if idx == 0 and row.get("fixed_start") is not None:
+                end_min = _to_qdate(row["fixed_start"])
+            else:
+                end_min = start_edit.date() if idx > 0 else min_date
+
+            end_max = next_start.addDays(-1) if next_start is not None else max_date
+            if end_max < end_min:
+                end_max = end_min
+
+            end_edit.setDateRange(end_min, end_max)
+
+            if open_box.isChecked():
+                _set_date_if_changed(end_edit, end_edit.minimumDate())
+            else:
+                if end_edit.date() < end_min:
+                    _set_date_if_changed(end_edit, end_min)
+                if end_edit.date() > end_max:
+                    _set_date_if_changed(end_edit, end_max)
+
+    def _first_match_date_or_none():
+        with get_conn() as conn:
+            row = conn.execute(
+                """
+                SELECT TRIM(COALESCE(NULLIF(end_time, ''), NULLIF(start_time, ''), NULLIF(created_at, ''), '')) AS played_at
+                FROM matches
+                WHERE TRIM(COALESCE(NULLIF(end_time, ''), NULLIF(start_time, ''), NULLIF(created_at, ''), '')) <> ''
+                ORDER BY played_at ASC
+                LIMIT 1
+                """
+            ).fetchone()
+
+        raw = str((row["played_at"] if row else "") or "").strip()
+        if not raw:
+            return None
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
+        except Exception:
+            try:
+                return datetime.fromisoformat(raw[:10]).date()
+            except Exception:
+                return None
+
     def _build_season_rows(seasons_data):
         season_rows.clear()
         _clear_layout(season_rows_layout)
 
         if not seasons_data:
-            seasons_data = [{"season": 0, "start": None, "end": None}]
+            seasons_data = [{"season": 0, "start": _first_match_date_or_none(), "end": None}]
 
         for idx, item in enumerate(seasons_data):
             row_wrap = QWidget()
@@ -508,6 +607,8 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
             end_edit = QDateEdit()
             end_edit.setDisplayFormat("yyyy-MM-dd")
             end_edit.setCalendarPopup(True)
+            end_edit.setMinimumDate(QDate(1900, 1, 1))
+            end_edit.setSpecialValueText("-")
             end_edit.setDate(_to_qdate(item.get("end")))
 
             open_end = QCheckBox("Open end")
@@ -517,15 +618,33 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
                 # Season 0 is the baseline; start date is intentionally omitted.
                 start_edit.setEnabled(False)
 
-            def _toggle_end(checked, edit=end_edit):
-                edit.setEnabled(not checked)
+            def _toggle_end(checked, edit=end_edit, open_widget=open_end, row_idx=idx):
+                if checked and row_idx < len(season_rows) - 1:
+                    QMessageBox.warning(
+                        parent,
+                        "Invalid season setup",
+                        "Only the last season can be open-ended. Close this season before creating a following one.",
+                    )
+                    was_blocked = open_widget.blockSignals(True)
+                    open_widget.setChecked(False)
+                    open_widget.blockSignals(was_blocked)
+                    checked = False
+
+                if checked:
+                    edit.setDate(edit.minimumDate())
+                    edit.setEnabled(False)
+                else:
+                    if edit.date() == edit.minimumDate():
+                        edit.setDate(QDate.currentDate())
+                    edit.setEnabled(True)
+                _apply_live_season_constraints()
                 mark_dirty()
 
             open_end.toggled.connect(_toggle_end)
             _toggle_end(open_end.isChecked())
 
-            start_edit.dateChanged.connect(mark_dirty)
-            end_edit.dateChanged.connect(mark_dirty)
+            start_edit.dateChanged.connect(lambda *_args: (_apply_live_season_constraints(), mark_dirty()))
+            end_edit.dateChanged.connect(lambda *_args: (_apply_live_season_constraints(), mark_dirty()))
 
             row.addWidget(lbl)
             row.addWidget(QLabel("Start"))
@@ -540,15 +659,17 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
                 "start": start_edit,
                 "end": end_edit,
                 "open": open_end,
+                "fixed_start": item.get("start") if idx == 0 else None,
             })
 
         _apply_season_lock_state(season_edit_unlocked["value"])
+        _apply_live_season_constraints()
 
     def _serialize_seasons_or_error(show_popup=True):
         out = []
         prev_end = None
         for idx, row in enumerate(season_rows):
-            start_date = row["start"].date().toPython() if row["start"].isEnabled() else None
+            start_date = row["start"].date().toPython() if row["start"].isEnabled() else row.get("fixed_start")
             end_date = None if row["open"].isChecked() else row["end"].date().toPython()
 
             if idx > 0 and start_date is None:
@@ -628,6 +749,37 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
                 count += 1
         return count
 
+    def _resolve_tuning_target_season(today_date, seasons_payload):
+        active = _season_for_date(today_date, seasons_payload)
+        if active is not None:
+            return int(active)
+
+        for item in seasons_payload:
+            sid = int(item.get("season", 0))
+            start = _date_from_str(item.get("start"))
+            if start is not None and start > today_date:
+                return sid
+
+        return int(seasons_payload[-1].get("season", 0)) if seasons_payload else 0
+
+    def _recalculate_elo_safe(context_label, show_popup=False):
+        try:
+            result = recalculate_elo()
+            logger.log_info(
+                f"[ELO] Recalculated after {context_label}: "
+                f"players={result.get('players_rated', 0)} matches={result.get('matches_processed', 0)} season={result.get('season', 0)}"
+            )
+            return True
+        except Exception as exc:
+            logger.log_error(f"[ELO] Recalculation failed after {context_label}: {exc}", exc=exc)
+            if show_popup:
+                QMessageBox.warning(
+                    parent,
+                    "Elo recalculation failed",
+                    f"Settings were saved, but Elo recalculation failed:\n{exc}",
+                )
+            return False
+
     def _add_season_row_action():
         if not season_edit_unlocked["value"]:
             return
@@ -686,43 +838,57 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
     season_btn_row = QHBoxLayout()
     btn_add_season = small_button("Add Season")
     btn_remove_season = danger_button("Remove Last")
+    btn_save_seasons = small_button("Save Seasons")
     season_btn_row.addWidget(btn_add_season)
     season_btn_row.addWidget(btn_remove_season)
+    season_btn_row.addWidget(btn_save_seasons)
     season_btn_row.addStretch()
     elo_layout.addLayout(season_btn_row)
 
-    season_warning = QLabel(
-        "Season editing is locked. Unlock only for boundary planning.\n"
-        "All previous seasons stay read-only."
-    )
-    season_warning.setWordWrap(True)
-    season_warning.setStyleSheet("font-size: 12px; color: #A33A3A; font-weight: 700;")
-    elo_layout.addWidget(season_warning)
+    def _save_seasons_action():
+        if not season_edit_unlocked["value"]:
+            return
 
-    unlock_seasons_checkbox = QCheckBox("Unlock season editing")
-    unlock_seasons_checkbox.setChecked(False)
-    elo_layout.addWidget(unlock_seasons_checkbox)
+        seasons = _serialize_seasons_or_error(show_popup=True)
+        if seasons is None:
+            return
+
+        payload = json.dumps(seasons)
+        settings_db.set("elo_seasons_json", payload)
+        settings.elo_seasons_json = payload
+
+        _recalculate_elo_safe("season save", show_popup=True)
+
+        if callable(on_data_updated):
+            on_data_updated()
+
+        QMessageBox.information(parent, "Seasons saved", "Season ranges were saved and applied.")
 
     def _apply_season_lock_state(checked):
         season_edit_unlocked["value"] = bool(checked)
-        last_idx = len(season_rows) - 1
 
         for idx, row in enumerate(season_rows):
-            editable = bool(checked) and idx == last_idx
+            editable = bool(checked)
             row["start"].setEnabled(editable and idx > 0)
             row["open"].setEnabled(editable)
             if row["open"].isChecked():
                 row["end"].setEnabled(False)
+                row["end"].setDate(row["end"].minimumDate())
             else:
                 row["end"].setEnabled(editable)
 
         btn_add_season.setEnabled(bool(checked))
         btn_remove_season.setEnabled(bool(checked))
+        btn_save_seasons.setVisible(bool(checked))
+        btn_save_seasons.setEnabled(bool(checked))
+        season_warning.setVisible(not bool(checked))
+        _apply_live_season_constraints()
 
     unlock_seasons_checkbox.toggled.connect(_apply_season_lock_state)
 
     btn_add_season.clicked.connect(_add_season_row_action)
     btn_remove_season.clicked.connect(_remove_last_season_row_action)
+    btn_save_seasons.clicked.connect(_save_seasons_action)
 
     try:
         raw_seasons = str(getattr(settings, "elo_seasons_json", "[]") or "[]")
@@ -744,6 +910,14 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         _build_season_rows([])
 
     _apply_season_lock_state(False)
+
+    tuning_warning = QLabel(
+        "Warning: changing tuning during an active season will invalidate comparability.\n"
+        "Use only between seasons."
+    )
+    tuning_warning.setWordWrap(True)
+    tuning_warning.setStyleSheet("font-size: 12px; color: #A33A3A; font-weight: 700;")
+    elo_layout.addWidget(tuning_warning)
 
     # Elo tuning controls (production values)
     spin_elo_k = QDoubleSpinBox()
@@ -802,17 +976,8 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
     spin_elo_anchor.setValue(float(getattr(settings, "elo_initial_global_anchor", 80.0)))
     elo_layout.addLayout(create_setting_row("Initial global anchor:", spin_elo_anchor, "elo_initial_global_anchor", "Fallback ADR expectation before data exists."))
 
-    tuning_warning = QLabel(
-        "Warning: changing tuning during an active season will invalidate comparability.\n"
-        "Use only between seasons."
-    )
-    tuning_warning.setWordWrap(True)
-    tuning_warning.setStyleSheet("font-size: 12px; color: #A33A3A; font-weight: 700;")
-    elo_layout.addWidget(tuning_warning)
-
-    unlock_tuning_checkbox = QCheckBox("Unlock advanced Elo tuning")
-    unlock_tuning_checkbox.setChecked(False)
-    elo_layout.addWidget(unlock_tuning_checkbox)
+    btn_save_tuning = small_button("Save Elo Balancing")
+    elo_layout.addWidget(btn_save_tuning)
 
     tuning_widgets = [
         spin_elo_k,
@@ -824,13 +989,6 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         spin_elo_prior,
         spin_elo_anchor,
     ]
-
-    def _apply_tuning_lock_state(checked):
-        for w in tuning_widgets:
-            w.setEnabled(bool(checked))
-
-    unlock_tuning_checkbox.toggled.connect(_apply_tuning_lock_state)
-    _apply_tuning_lock_state(False)
 
     # MATCHZY SETTINGS
     matchzy_frame, matchzy_layout = create_section("MatchZy Database")
@@ -1120,8 +1278,21 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
             return widget.currentText()
         return widget.value()
 
-    def apply_form_to_settings(save=False):
+    tuning_setting_keys = {
+        "elo_k_factor",
+        "elo_base_rating",
+        "elo_adr_alpha",
+        "elo_adr_spread",
+        "elo_adr_min_mult",
+        "elo_adr_max_mult",
+        "elo_adr_prior_matches",
+        "elo_initial_global_anchor",
+    }
+
+    def apply_form_to_settings(save=False, include_tuning=True):
         for attr_name, widget in setting_bindings:
+            if not include_tuning and attr_name in tuning_setting_keys:
+                continue
             setattr(settings, attr_name, read_widget_value(widget))
 
         seasons = _serialize_seasons_or_error(show_popup=True)
@@ -1132,6 +1303,69 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         if save:
             settings.save()
         return True
+
+    def save_tuning_action():
+        if float(spin_elo_min_mult.value()) > float(spin_elo_max_mult.value()):
+            QMessageBox.warning(
+                parent,
+                "Invalid Elo tuning",
+                "ADR min multiplier cannot be greater than ADR max multiplier.",
+            )
+            return
+
+        if float(spin_elo_spread.value()) <= 0:
+            QMessageBox.warning(
+                parent,
+                "Invalid Elo tuning",
+                "ADR spread must be greater than 0.",
+            )
+            return
+
+        seasons_now = _serialize_seasons_or_error(show_popup=True)
+        if seasons_now is None:
+            return
+
+        today = datetime.now().date()
+        active = _season_for_date(today, seasons_now)
+        if active is not None:
+            matches_in_active = _count_matches_for_season(active, seasons_now)
+            if matches_in_active > 0:
+                QMessageBox.warning(
+                    parent,
+                    "Blocked: active season has matches",
+                    f"Season {active} already has {matches_in_active} match(es). "
+                    "Do not change Elo balancing inside an active season.",
+                )
+                return
+
+        tuning_payload = {
+            "elo_k_factor": float(spin_elo_k.value()),
+            "elo_base_rating": float(spin_elo_base.value()),
+            "elo_adr_alpha": float(spin_elo_alpha.value()),
+            "elo_adr_spread": float(spin_elo_spread.value()),
+            "elo_adr_min_mult": float(spin_elo_min_mult.value()),
+            "elo_adr_max_mult": float(spin_elo_max_mult.value()),
+            "elo_adr_prior_matches": float(spin_elo_prior.value()),
+            "elo_initial_global_anchor": float(spin_elo_anchor.value()),
+        }
+
+        try:
+            for key, value in tuning_payload.items():
+                settings_db.set(key, value)
+                setattr(settings, key, value)
+
+            target_season = _resolve_tuning_target_season(today, seasons_now)
+            bind_current_settings_tuning_to_season(target_season, source="settings_ui")
+            _recalculate_elo_safe("tuning save", show_popup=True)
+
+            QMessageBox.information(
+                parent,
+                "Elo balancing saved",
+                f"Balancing parameters were saved for season {target_season} and applied.",
+            )
+        except Exception as exc:
+            logger.log_error(f"[ELO] Failed to save tuning: {exc}", exc=exc)
+            QMessageBox.warning(parent, "Elo tuning save failed", str(exc))
 
     def save_settings_action():
         if float(spin_elo_min_mult.value()) > float(spin_elo_max_mult.value()):
@@ -1161,36 +1395,36 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
             or float(spin_elo_anchor.value()) != float(getattr(settings, "elo_initial_global_anchor", 80.0))
         )
 
-        if tuning_changed and not unlock_tuning_checkbox.isChecked():
-            QMessageBox.warning(
-                parent,
-                "Tuning locked",
-                "Unlock advanced Elo tuning first before changing parameters.",
-            )
+        seasons_before_raw = str(getattr(settings, "elo_seasons_json", "[]") or "[]")
+        try:
+            seasons_before = json.loads(seasons_before_raw)
+        except Exception:
+            seasons_before = []
+
+        seasons_now = _serialize_seasons_or_error(show_popup=True)
+        if seasons_now is None:
             return
 
-        if tuning_changed:
-            seasons_now = _serialize_seasons_or_error(show_popup=True)
-            if seasons_now is None:
-                return
-            today = datetime.now().date()
-            active = _season_for_date(today, seasons_now)
-            if active is not None:
-                matches_in_active = _count_matches_for_season(active, seasons_now)
-                if matches_in_active > 0:
-                    QMessageBox.warning(
-                        parent,
-                        "Blocked: active season has matches",
-                        f"Season {active} already has {matches_in_active} match(es). "
-                        "Do not change Elo tuning inside an active season.",
-                    )
-                    return
+        seasons_changed = seasons_now != seasons_before
 
-        if not apply_form_to_settings(save=True):
+        if not apply_form_to_settings(save=True, include_tuning=False):
             return
+
+        if seasons_changed:
+            _recalculate_elo_safe("settings save", show_popup=True)
+
         logger.set_log_export_enabled(bool(getattr(settings, "log_export_enabled", True)))
-        settings_dirty["value"] = False
-        save_settings_button.setEnabled(False)
+        if tuning_changed:
+            QMessageBox.information(
+                parent,
+                "Tuning not saved",
+                "General settings were saved. Use 'Save Elo Balancing' to persist tuning changes.",
+            )
+            settings_dirty["value"] = True
+            save_settings_button.setEnabled(True)
+        else:
+            settings_dirty["value"] = False
+            save_settings_button.setEnabled(False)
         logger.log("[SETTINGS] Saved", level="INFO")
 
     def sync_matchzy_action():
@@ -1475,6 +1709,8 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         sync_matchzy_button.setEnabled(True)
         logger.log("[MATCHZY] Sync completed", level="INFO")
 
+        executor.submit(lambda: _recalculate_elo_safe("MatchZy sync", show_popup=False))
+
         if callable(on_update_players):
             logger.log("[UI] Trigger Team Builder update after MatchZy sync", level="DEBUG")
             on_update_players()
@@ -1514,6 +1750,8 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
             QTimer.singleShot(700, _close_dialog_later)
 
         def _run_post_sync_updates():
+            executor.submit(lambda: _recalculate_elo_safe("demo sync", show_popup=False))
+
             if callable(on_data_updated):
                 on_data_updated()
 
@@ -1636,6 +1874,7 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
     open_logs_button.clicked.connect(open_logs)
     import_settings_button.clicked.connect(import_settings_action)
     export_settings_button.clicked.connect(export_settings_action)
+    btn_save_tuning.clicked.connect(save_tuning_action)
     save_settings_button.clicked.connect(save_settings_action)
     sync_matchzy_button.clicked.connect(sync_matchzy_action)
     sync_demos_button.clicked.connect(sync_demos_action)
