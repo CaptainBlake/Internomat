@@ -454,6 +454,15 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
     """)
     elo_layout.addWidget(elo_info)
 
+    checkbox_use_elo_in_season = QCheckBox()
+    checkbox_use_elo_in_season.setChecked(bool(getattr(settings, "use_elo_when_in_season", True)))
+    elo_layout.addLayout(create_setting_row(
+        "Use Elo in active season:",
+        checkbox_use_elo_in_season,
+        "use_elo_when_in_season",
+        "When enabled, TeamBuilder auto-switches to Elo while today is inside a configured season.",
+    ))
+
     season_warning = QLabel(
         "Season editing is locked. Unlock only for boundary planning."
     )
@@ -470,6 +479,9 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
     elo_layout.addLayout(season_rows_layout)
     season_rows = []
     season_edit_unlocked = {"value": False}
+    tuning_widgets = []
+    btn_save_tuning_ref = {"widget": None}
+    tuning_warning_ref = {"widget": None}
 
     def mark_dirty(*_args):
         settings_dirty["value"] = True
@@ -502,6 +514,67 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         was_blocked = edit.blockSignals(True)
         edit.setDate(new_date)
         edit.blockSignals(was_blocked)
+
+    def _seasons_payload_compact(show_popup=False):
+        seasons = _serialize_seasons_or_error(show_popup=show_popup)
+        if seasons is None:
+            return None
+        return json.dumps(seasons)
+
+    def _tuning_changed_from_settings():
+        try:
+            return (
+                float(spin_elo_k.value()) != float(getattr(settings, "elo_k_factor", 24.0))
+                or float(spin_elo_base.value()) != float(getattr(settings, "elo_base_rating", 1500.0))
+                or float(spin_elo_alpha.value()) != float(getattr(settings, "elo_adr_alpha", 0.20))
+                or float(spin_elo_spread.value()) != float(getattr(settings, "elo_adr_spread", 22.0))
+                or float(spin_elo_min_mult.value()) != float(getattr(settings, "elo_adr_min_mult", 0.85))
+                or float(spin_elo_max_mult.value()) != float(getattr(settings, "elo_adr_max_mult", 1.15))
+                or float(spin_elo_prior.value()) != float(getattr(settings, "elo_adr_prior_matches", 5.0))
+                or float(spin_elo_anchor.value()) != float(getattr(settings, "elo_initial_global_anchor", 80.0))
+            )
+        except NameError:
+            return False
+
+    def _is_today_in_any_season(seasons_payload):
+        today = datetime.now().date()
+        return _season_for_date(today, seasons_payload or []) is not None
+
+    def _refresh_season_save_state():
+        payload = _seasons_payload_compact(show_popup=False)
+        unchanged = payload is not None and payload == str(getattr(settings, "elo_seasons_json", "[]") or "[]")
+        btn_save_seasons.setEnabled(bool(season_edit_unlocked["value"]) and payload is not None and not unchanged)
+
+    def _refresh_tuning_state():
+        payload = _serialize_seasons_or_error(show_popup=False)
+        in_season = _is_today_in_any_season(payload or [])
+        unlocked = bool(season_edit_unlocked["value"])
+        can_edit = unlocked and not in_season
+        tuning_changed = _tuning_changed_from_settings()
+
+        for widget in tuning_widgets:
+            widget.setEnabled(can_edit)
+
+        btn_save_tuning_widget = btn_save_tuning_ref.get("widget")
+        if btn_save_tuning_widget is not None:
+            btn_save_tuning_widget.setEnabled(can_edit and tuning_changed)
+
+        tuning_warning = tuning_warning_ref.get("widget")
+        if tuning_warning is None:
+            return
+
+        if not unlocked:
+            tuning_warning.setText("Balancing is locked. Unlock season editing to edit Elo parameters.")
+            tuning_warning.setStyleSheet("font-size: 12px; color: #A33A3A; font-weight: 700;")
+        elif in_season:
+            tuning_warning.setText("Balancing is locked during active season. Edit only in off-season.")
+            tuning_warning.setStyleSheet("font-size: 12px; color: #A33A3A; font-weight: 700;")
+        elif not tuning_changed:
+            tuning_warning.setText("Balancing is editable (off-season). No unsaved parameter changes.")
+            tuning_warning.setStyleSheet("font-size: 12px; color: #5A6B7C; font-weight: 700;")
+        else:
+            tuning_warning.setText("Balancing is editable (off-season). Unsaved parameter changes detected.")
+            tuning_warning.setStyleSheet("font-size: 12px; color: #2E4C69; font-weight: 700;")
 
     def _apply_live_season_constraints():
         if not season_rows:
@@ -602,7 +675,14 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
             start_edit = QDateEdit()
             start_edit.setDisplayFormat("yyyy-MM-dd")
             start_edit.setCalendarPopup(True)
+            start_edit.setMinimumDate(QDate(1900, 1, 1))
             start_edit.setDate(_to_qdate(item.get("start")))
+            if idx == 0:
+                start_edit.setSpecialValueText("-")
+                if item.get("start") is None:
+                    start_edit.setDate(start_edit.minimumDate())
+            else:
+                start_edit.setSpecialValueText("")
 
             end_edit = QDateEdit()
             end_edit.setDisplayFormat("yyyy-MM-dd")
@@ -643,8 +723,8 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
             open_end.toggled.connect(_toggle_end)
             _toggle_end(open_end.isChecked())
 
-            start_edit.dateChanged.connect(lambda *_args: (_apply_live_season_constraints(), mark_dirty()))
-            end_edit.dateChanged.connect(lambda *_args: (_apply_live_season_constraints(), mark_dirty()))
+            start_edit.dateChanged.connect(lambda *_args: (_apply_live_season_constraints(), mark_dirty(), _refresh_season_save_state(), _refresh_tuning_state()))
+            end_edit.dateChanged.connect(lambda *_args: (_apply_live_season_constraints(), mark_dirty(), _refresh_season_save_state(), _refresh_tuning_state()))
 
             row.addWidget(lbl)
             row.addWidget(QLabel("Start"))
@@ -664,12 +744,21 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
 
         _apply_season_lock_state(season_edit_unlocked["value"])
         _apply_live_season_constraints()
+        _refresh_season_save_state()
+        _refresh_tuning_state()
 
     def _serialize_seasons_or_error(show_popup=True):
         out = []
         prev_end = None
         for idx, row in enumerate(season_rows):
-            start_date = row["start"].date().toPython() if row["start"].isEnabled() else row.get("fixed_start")
+            if idx == 0 and row.get("fixed_start") is not None:
+                start_date = row.get("fixed_start")
+            elif idx == 0:
+                # No historical matches yet: Season 0 is open to the past.
+                start_date = None
+            else:
+                # Read the actual widget value regardless of enabled/locked state.
+                start_date = row["start"].date().toPython()
             end_date = None if row["open"].isChecked() else row["end"].date().toPython()
 
             if idx > 0 and start_date is None:
@@ -854,15 +943,29 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
             return
 
         payload = json.dumps(seasons)
+        existing_payload = str(getattr(settings, "elo_seasons_json", "[]") or "[]")
+        seasons_changed = payload != existing_payload
+
         settings_db.set("elo_seasons_json", payload)
         settings.elo_seasons_json = payload
 
-        _recalculate_elo_safe("season save", show_popup=True)
+        if seasons_changed:
+            _recalculate_elo_safe("season save", show_popup=True)
+            if callable(on_players_updated):
+                logger.log("[UI] Refresh Team Builder player view after season save", level="DEBUG")
+                on_players_updated()
+            if callable(on_players_data_updated):
+                on_players_data_updated()
 
         if callable(on_data_updated):
             on_data_updated()
 
-        QMessageBox.information(parent, "Seasons saved", "Season ranges were saved and applied.")
+        if seasons_changed:
+            QMessageBox.information(parent, "Seasons saved", "Season ranges were saved and applied.")
+
+        _lock_seasons_without_sidebar_jump()
+        _refresh_season_save_state()
+        _refresh_tuning_state()
 
     def _apply_season_lock_state(checked):
         season_edit_unlocked["value"] = bool(checked)
@@ -881,8 +984,15 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         btn_remove_season.setEnabled(bool(checked))
         btn_save_seasons.setVisible(bool(checked))
         btn_save_seasons.setEnabled(bool(checked))
+
+        btn_save_tuning_widget = btn_save_tuning_ref.get("widget")
+        if btn_save_tuning_widget is not None:
+            btn_save_tuning_widget.setVisible(True)
+
         season_warning.setVisible(not bool(checked))
         _apply_live_season_constraints()
+        _refresh_season_save_state()
+        _refresh_tuning_state()
 
     unlock_seasons_checkbox.toggled.connect(_apply_season_lock_state)
 
@@ -912,12 +1022,12 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
     _apply_season_lock_state(False)
 
     tuning_warning = QLabel(
-        "Warning: changing tuning during an active season will invalidate comparability.\n"
-        "Use only between seasons."
+        "Balancing lock status is evaluated live."
     )
     tuning_warning.setWordWrap(True)
     tuning_warning.setStyleSheet("font-size: 12px; color: #A33A3A; font-weight: 700;")
     elo_layout.addWidget(tuning_warning)
+    tuning_warning_ref["widget"] = tuning_warning
 
     # Elo tuning controls (production values)
     spin_elo_k = QDoubleSpinBox()
@@ -977,9 +1087,11 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
     elo_layout.addLayout(create_setting_row("Initial global anchor:", spin_elo_anchor, "elo_initial_global_anchor", "Fallback ADR expectation before data exists."))
 
     btn_save_tuning = small_button("Save Elo Balancing")
-    elo_layout.addWidget(btn_save_tuning)
+    btn_save_tuning.setMaximumWidth(220)
+    elo_layout.addWidget(btn_save_tuning, alignment=Qt.AlignmentFlag.AlignLeft)
+    btn_save_tuning_ref["widget"] = btn_save_tuning
 
-    tuning_widgets = [
+    tuning_widgets.extend([
         spin_elo_k,
         spin_elo_base,
         spin_elo_alpha,
@@ -988,7 +1100,14 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         spin_elo_max_mult,
         spin_elo_prior,
         spin_elo_anchor,
-    ]
+    ])
+
+    for w in tuning_widgets:
+        w.valueChanged.connect(lambda *_args: _refresh_tuning_state())
+
+    _apply_season_lock_state(season_edit_unlocked["value"])
+    _refresh_season_save_state()
+    _refresh_tuning_state()
 
     # MATCHZY SETTINGS
     matchzy_frame, matchzy_layout = create_section("MatchZy Database")
@@ -1160,6 +1279,24 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
 
         target = section_frames[index]
         scroll.ensureWidgetVisible(target, 0, 16)
+
+    def _lock_seasons_without_sidebar_jump():
+        selected_row = sidebar.currentRow()
+        if unlock_seasons_checkbox.isChecked():
+            unlock_seasons_checkbox.setChecked(False)
+        if selected_row >= 0 and sidebar.currentRow() != selected_row:
+            blocked = sidebar.blockSignals(True)
+            sidebar.setCurrentRow(selected_row)
+            sidebar.blockSignals(blocked)
+            go_to_section(selected_row)
+
+        # Prevent Qt's default focus traversal from jumping to the next input
+        # when currently focused season editors get disabled during relock.
+        def _focus_lock_toggle():
+            if unlock_seasons_checkbox.isVisible() and unlock_seasons_checkbox.isEnabled():
+                unlock_seasons_checkbox.setFocus(Qt.FocusReason.OtherFocusReason)
+
+        QTimer.singleShot(0, _focus_lock_toggle)
     
     # ACTIONS
 
@@ -1305,6 +1442,9 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         return True
 
     def save_tuning_action():
+        if not season_edit_unlocked["value"]:
+            return
+
         if float(spin_elo_min_mult.value()) > float(spin_elo_max_mult.value()):
             QMessageBox.warning(
                 parent,
@@ -1328,15 +1468,13 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         today = datetime.now().date()
         active = _season_for_date(today, seasons_now)
         if active is not None:
-            matches_in_active = _count_matches_for_season(active, seasons_now)
-            if matches_in_active > 0:
-                QMessageBox.warning(
-                    parent,
-                    "Blocked: active season has matches",
-                    f"Season {active} already has {matches_in_active} match(es). "
-                    "Do not change Elo balancing inside an active season.",
-                )
-                return
+            QMessageBox.warning(
+                parent,
+                "Blocked: active season",
+                f"Today is inside Season {active}. Edit Elo balancing only during off-season.",
+            )
+            _refresh_tuning_state()
+            return
 
         tuning_payload = {
             "elo_k_factor": float(spin_elo_k.value()),
@@ -1363,6 +1501,7 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
                 "Elo balancing saved",
                 f"Balancing parameters were saved for season {target_season} and applied.",
             )
+            _refresh_tuning_state()
         except Exception as exc:
             logger.log_error(f"[ELO] Failed to save tuning: {exc}", exc=exc)
             QMessageBox.warning(parent, "Elo tuning save failed", str(exc))
@@ -1412,6 +1551,14 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
 
         if seasons_changed:
             _recalculate_elo_safe("settings save", show_popup=True)
+            if callable(on_players_updated):
+                logger.log("[UI] Refresh Team Builder player view after season change in settings save", level="DEBUG")
+                on_players_updated()
+            if callable(on_players_data_updated):
+                on_players_data_updated()
+
+        if callable(on_players_updated):
+            on_players_updated()
 
         logger.set_log_export_enabled(bool(getattr(settings, "log_export_enabled", True)))
         if tuning_changed:
@@ -1425,6 +1572,9 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         else:
             settings_dirty["value"] = False
             save_settings_button.setEnabled(False)
+        _lock_seasons_without_sidebar_jump()
+        _refresh_season_save_state()
+        _refresh_tuning_state()
         logger.log("[SETTINGS] Saved", level="INFO")
 
     def sync_matchzy_action():

@@ -16,6 +16,7 @@ _SETTINGS_DEFAULTS = {
     "dist_weight":                      (float,    0.25),
     "default_rating":                   (int,      10000),
     "allow_uneven_teams":               (_to_bool, False),
+    "use_elo_when_in_season":          (_to_bool, True),
     "maproulette_use_history":          (_to_bool, False),
     "matchzy_host":                     (str,      ""),
     "matchzy_port":                     (int,      3306),

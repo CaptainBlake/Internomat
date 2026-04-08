@@ -100,6 +100,26 @@ def bind_current_settings_tuning_to_season(season: int, *, source: str = "settin
         elo_db.upsert_elo_season_tuning(int(season), tune, source=source, conn=conn)
 
 
+def is_date_in_configured_season(date_obj=None) -> bool:
+    """Return True when the given date falls into any configured Elo season range."""
+    if date_obj is None:
+        date_obj = datetime.now().date()
+
+    season_ranges = _load_season_ranges_from_settings()
+    if not season_ranges:
+        return False
+
+    for item in season_ranges:
+        start = item.get("start")
+        end = item.get("end")
+        start_ok = start is None or date_obj >= start.date()
+        end_ok = end is None or date_obj <= end.date()
+        if start_ok and end_ok:
+            return True
+
+    return False
+
+
 # ── Data loading ──────────────────────────────────────────────────────
 
 def _load_match_outcomes(conn):

@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QMessageBox,
     QSlider,
-    QComboBox,
     QTableWidget,
     QTableWidgetItem,
     QHeaderView,
@@ -18,6 +17,7 @@ from PySide6.QtWidgets import (
 
 import core.teams.service as team_service
 import core.players.service as player_service
+from core.stats.elo import recalculate_elo, is_date_in_configured_season
 from core.settings.settings import settings
 
 from services import executor
@@ -258,6 +258,7 @@ def _fill_team_table(table, team):
 def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, update_trigger=None):
     dispatcher = UiDispatcher(parent)
     update_progress_dialog = {"dialog": None}
+    last_generated = {"team_a": [], "team_b": []}
 
     layout = QVBoxLayout(parent)
     layout.setContentsMargins(20, 20, 20, 20)
@@ -275,17 +276,30 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
     remove_button = QPushButton("Remove Player")
     update_button = QPushButton("Update")
 
-    ranking_mode_combo = QComboBox()
-    ranking_mode_combo.addItem("Prime Ranking", "prime")
-    ranking_mode_combo.addItem("Elo Ranking", "elo")
-    ranking_mode_combo.setMinimumWidth(170)
+    ranking_mode_label = QLabel("Ranking: Auto")
+    ranking_mode_label.setStyleSheet("font-weight: 700; color: #2E4C69;")
+
+    def _is_today_in_season():
+        if not bool(getattr(settings, "use_elo_when_in_season", False)):
+            return False
+        return bool(is_date_in_configured_season())
+
+    def _current_rating_source():
+        return "elo" if _is_today_in_season() else "prime"
+
+    def _update_ranking_mode_label():
+        if not bool(getattr(settings, "use_elo_when_in_season", False)):
+            ranking_mode_label.setText("Ranking: Prime (auto-switch disabled)")
+            return
+        ranking_mode_label.setText(
+            "Ranking: Elo (in-season)" if _current_rating_source() == "elo" else "Ranking: Prime (off-season)"
+        )
 
     top_layout.addWidget(entry, 1)
     top_layout.addWidget(add_button)
     top_layout.addWidget(remove_button)
     top_layout.addWidget(update_button)
-    top_layout.addWidget(QLabel("Ranking:"))
-    top_layout.addWidget(ranking_mode_combo)
+    top_layout.addWidget(ranking_mode_label)
     layout.addWidget(top_frame)
 
     lists_frame = QFrame()
@@ -349,7 +363,7 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
     control_layout.setSpacing(10)
 
     tolerance_value = QLabel("1000")
-    tolerance_value.setFixedWidth(50)
+    tolerance_value.setFixedWidth(90)
     tolerance_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
     tolerance_slider = QSlider(Qt.Orientation.Horizontal)
@@ -357,8 +371,14 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
     tolerance_slider.setValue(1000)
     tolerance_slider.setFixedWidth(240)
 
+    def _effective_tolerance(raw_value):
+        if _current_rating_source() == "elo":
+            return int(round(raw_value / 10.0))
+        return int(raw_value)
+
     def update_tolerance_value(value):
-        tolerance_value.setText(str(value))
+        effective = _effective_tolerance(value)
+        tolerance_value.setText(str(effective))
 
     tolerance_slider.valueChanged.connect(update_tolerance_value)
     update_tolerance_value(tolerance_slider.value())
@@ -534,12 +554,54 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
         QMessageBox.information(parent, title, text)
 
     def refresh_players():
-        rating_source = str(ranking_mode_combo.currentData() or "prime")
+        _update_ranking_mode_label()
+        rating_source = _current_rating_source()
         players = player_service.get_players_for_teambuilder(rating_source)
         _fill_player_table(db_tree, players)
+        _refresh_pool_and_result_views(players)
 
-    def _on_ranking_mode_changed(_idx):
-        refresh_players()
+    def _refresh_pool_and_result_views(players_rows=None):
+        rows = players_rows
+        if rows is None:
+            rating_source = _current_rating_source()
+            rows = player_service.get_players_for_teambuilder(rating_source)
+
+        players_by_id = {
+            str(p[0]): (str(p[1]), int(p[2]))
+            for p in (rows or [])
+            if p and len(p) >= 3
+        }
+
+        for row in range(pool_tree.rowCount()):
+            pid = str(pool_tree.item(row, 0).data(Qt.ItemDataRole.UserRole))
+            current_name = pool_tree.item(row, 1).text()
+            current_rating = int(pool_tree.item(row, 2).text())
+
+            name, rating = players_by_id.get(pid, (current_name, current_rating))
+            pool_tree.item(row, 1).setText(str(name))
+            pool_tree.item(row, 2).setText(str(int(rating)))
+
+        if not last_generated["team_a"] and not last_generated["team_b"]:
+            return
+
+        def _remap_team(team):
+            remapped = []
+            for pid, name, rating in team:
+                mapped_name, mapped_rating = players_by_id.get(str(pid), (name, rating))
+                remapped.append((str(pid), str(mapped_name), int(mapped_rating)))
+            return remapped
+
+        remapped_a = _remap_team(last_generated["team_a"])
+        remapped_b = _remap_team(last_generated["team_b"])
+
+        last_generated["team_a"] = remapped_a
+        last_generated["team_b"] = remapped_b
+
+        sum_a = _fill_team_table(team_a_tree, remapped_a)
+        sum_b = _fill_team_table(team_b_tree, remapped_b)
+        ct_total.setText(f"Total: {sum_a}")
+        t_total.setText(f"Total: {sum_b}")
+        diff_label.setText(f"Rating Difference: {abs(sum_a - sum_b)}")
 
     def add_player():
         url = entry.text().strip()
@@ -647,6 +709,9 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
         refresh_pool_display()
 
     def _start_update_pipeline(include_demo_pull):
+        rating_source = _current_rating_source()
+        elo_mode = rating_source == "elo"
+
         def _emit_demo_progress(payload):
             source_percent = payload.get("percent") if isinstance(payload, dict) else None
             base_percent = int(source_percent) if isinstance(source_percent, (int, float)) else 0
@@ -698,17 +763,45 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
                         {"percent": 70, "stage": "pipeline", "message": "Skipped (already synced)"}
                     )
 
-                steam_ids = player_service.get_players_to_update() or []
-                total = len(steam_ids)
-                _emit_players_progress(0, total)
+                if elo_mode:
+                    dispatcher.update_pipeline_progress.emit(
+                        {
+                            "percent": 85,
+                            "stage": "players",
+                            "message": "Elo mode active: skipping Prime profile updates",
+                        }
+                    )
+                    dispatcher.update_pipeline_progress.emit(
+                        {"percent": 96, "stage": "elo", "message": "Recalculating Elo..."}
+                    )
+                    recalculate_elo()
+                    dispatcher.update_pipeline_progress.emit(
+                        {"percent": 100, "stage": "elo", "message": "Elo recalculation done"}
+                    )
+                else:
+                    steam_ids = player_service.get_players_to_update() or []
+                    total = len(steam_ids)
+                    _emit_players_progress(0, total)
 
-                player_service.update_players(
-                    steam_ids,
-                    on_progress=_emit_players_progress,
-                    on_player=lambda p: dispatcher.update_player_ready.emit(p),
-                    on_error=lambda e: dispatcher.update_error.emit(e),
-                    on_finish=lambda: dispatcher.update_finished.emit()
-                )
+                    player_service.update_players(
+                        steam_ids,
+                        on_progress=_emit_players_progress,
+                        on_player=lambda p: dispatcher.update_player_ready.emit(p),
+                        on_error=lambda e: dispatcher.update_error.emit(e),
+                        on_finish=None,
+                    )
+
+                    should_recalculate_elo = include_demo_pull or total > 0
+                    if should_recalculate_elo:
+                        dispatcher.update_pipeline_progress.emit(
+                            {"percent": 96, "stage": "elo", "message": "Recalculating Elo..."}
+                        )
+                        recalculate_elo()
+                        dispatcher.update_pipeline_progress.emit(
+                            {"percent": 100, "stage": "elo", "message": "Elo recalculation done"}
+                        )
+
+                dispatcher.update_finished.emit()
             except Exception as e:
                 dispatcher.update_error.emit(e)
 
@@ -728,9 +821,15 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
 
         update_button.setEnabled(False)
         if include_demo_pull:
-            update_button.setText("Syncing MatchZy...")
+            if elo_mode:
+                update_button.setText("Syncing demos + Elo...")
+            else:
+                update_button.setText("Syncing MatchZy...")
         else:
-            update_button.setText("Preparing player fetch...")
+            if elo_mode:
+                update_button.setText("Recalculating Elo...")
+            else:
+                update_button.setText("Preparing player fetch...")
 
     def update_players():
         _start_update_pipeline(include_demo_pull=True)
@@ -749,7 +848,7 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
             show_error_popup(parent, "Error", "Add players to pool first")
             return
 
-        tolerance = tolerance_slider.value()
+        tolerance = _effective_tolerance(tolerance_slider.value())
 
         generate_button.setEnabled(False)
         generate_button.setText("Generating...")
@@ -764,6 +863,9 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
         executor.submit(worker)
         
     def on_balance_finished(team_a, team_b, diff):
+        last_generated["team_a"] = [(str(p[0]), str(p[1]), int(p[2])) for p in (team_a or [])]
+        last_generated["team_b"] = [(str(p[0]), str(p[1]), int(p[2])) for p in (team_b or [])]
+
         sum_a = _fill_team_table(team_a_tree, team_a)
         sum_b = _fill_team_table(team_b_tree, team_b)
 
@@ -790,7 +892,6 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
     generate_button.clicked.connect(run_balancer)
     db_tree.itemDoubleClicked.connect(lambda _: add_to_pool())
     pool_tree.itemDoubleClicked.connect(lambda _: remove_from_pool())
-    ranking_mode_combo.currentIndexChanged.connect(_on_ranking_mode_changed)
     dispatcher.balance_finished.connect(on_balance_finished)
     dispatcher.balance_error.connect(on_balance_error)
     dispatcher.update_progress.connect(on_progress)
@@ -799,5 +900,6 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
     dispatcher.update_error.connect(on_error)
     dispatcher.update_finished.connect(finish)
 
+    _update_ranking_mode_label()
     refresh_players()
     return refresh_players

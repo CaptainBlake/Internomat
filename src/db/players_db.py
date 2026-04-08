@@ -195,7 +195,34 @@ def get_players_to_update(max_age_minutes=0):
             SELECT steam64_id FROM players
             WHERE last_updated IS NULL OR last_updated < ?
         """, (cutoff,))
-        result = [r[0] for r in cur.fetchall()]
+        cooldown_ids = {str(r[0]) for r in cur.fetchall() if r and r[0] is not None}
 
-    logger.log(f"[DB] Players to update count={len(result)}", level="DEBUG")
+        newer_stats_cur = conn.execute(
+            """
+            SELECT
+                p.steam64_id
+            FROM players p
+            JOIN match_player_stats mps
+              ON mps.steamid64 = p.steam64_id
+            LEFT JOIN match_maps mm
+              ON mm.match_id = mps.match_id
+             AND mm.map_number = mps.map_number
+            LEFT JOIN matches m
+              ON m.match_id = mps.match_id
+            GROUP BY p.steam64_id
+            HAVING p.last_updated IS NULL OR MAX(COALESCE(mm.end_time, mm.start_time, m.end_time, m.start_time)) > p.last_updated
+            """
+        )
+        newer_stats_ids = {str(r[0]) for r in newer_stats_cur.fetchall() if r and r[0] is not None}
+
+        result = sorted(cooldown_ids | newer_stats_ids)
+
+    logger.log(
+        (
+            "[DB] Players to update "
+            f"cooldown={len(cooldown_ids)} newer_stats={len(newer_stats_ids)} "
+            f"combined={len(result)}"
+        ),
+        level="DEBUG",
+    )
     return result

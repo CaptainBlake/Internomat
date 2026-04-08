@@ -235,6 +235,31 @@ def _render_stat_overview_content(layout, payload):
     layout.addLayout(content, 1)
 
 
+def _sync_season_combo(parent):
+    combo = getattr(parent, "_stat_overview_season_combo", None)
+    if combo is None:
+        return
+
+    selected = getattr(parent, "_stat_overview_selected_season", None)
+    options = [int(s) for s in (leaderboard.get_season_options() or [])]
+
+    was_blocked = combo.blockSignals(True)
+    combo.clear()
+    combo.addItem("ALL Seasons", None)
+    for season_id in options:
+        combo.addItem(f"Season {season_id}", int(season_id))
+
+    if selected is not None and int(selected) in options:
+        idx = combo.findData(int(selected))
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+        parent._stat_overview_selected_season = int(selected)
+    else:
+        combo.setCurrentIndex(0)
+        parent._stat_overview_selected_season = None
+
+    combo.blockSignals(was_blocked)
+
+
 def build_stat_overview_tab(parent):
     logger.log("[UI] Build Stat Overview tab", level="DEBUG")
 
@@ -272,6 +297,7 @@ def build_stat_overview_tab(parent):
     season_row.addWidget(season_combo)
     season_row.addStretch(1)
     layout.addLayout(season_row)
+    parent._stat_overview_season_combo = season_combo
 
     parent._stat_overview_cache_dirty = True
     parent._stat_overview_payload = None
@@ -287,6 +313,8 @@ def refresh_stat_overview(parent):
     layout = parent.layout()
     if layout is None:
         return
+
+    _sync_season_combo(parent)
 
     while layout.count() > 3:
         item = layout.takeAt(3)
@@ -317,4 +345,5 @@ def refresh_stat_overview(parent):
 def on_stat_overview_data_updated(parent):
     logger.log("[UI] Stat Overview data update triggered", level="DEBUG")
     parent._stat_overview_cache_dirty = True
+    _sync_season_combo(parent)
     refresh_stat_overview(parent)
