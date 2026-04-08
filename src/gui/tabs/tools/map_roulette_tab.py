@@ -785,7 +785,11 @@ def build_map_tab(parent):
         spinning = True
         result_label.setText("Spinning...")
 
-        winner = choose_map(maps, use_history=settings.maproulette_use_history)
+        winner = choose_map(
+            maps,
+            use_history=settings.maproulette_use_history,
+            use_season_history=getattr(settings, "maproulette_reset_weight_each_season", False),
+        )
         spin_machine.set_items(maps)
         spin_machine.start_spin(winner, lambda: finish_spin(winner))
 

@@ -18,6 +18,7 @@ _SETTINGS_DEFAULTS = {
     "allow_uneven_teams":               (_to_bool, False),
     "use_elo_when_in_season":          (_to_bool, True),
     "maproulette_use_history":          (_to_bool, False),
+    "maproulette_reset_weight_each_season": (_to_bool, False),
     "matchzy_host":                     (str,      ""),
     "matchzy_port":                     (int,      3306),
     "matchzy_user":                     (str,      ""),

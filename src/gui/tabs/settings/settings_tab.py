@@ -421,6 +421,18 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         "When enabled, map roulette uses match history percentages as map weights."
     ))
 
+    checkbox_maproulette_season_reset = QCheckBox()
+    checkbox_maproulette_season_reset.setChecked(
+        bool(getattr(settings, "maproulette_reset_weight_each_season", False))
+    )
+
+    settings_layout.addLayout(create_setting_row(
+        "Reset map weights each season:",
+        checkbox_maproulette_season_reset,
+        "maproulette_reset_weight_each_season",
+        "When enabled, history-based map roulette only uses matches from the currently active Elo season."
+    ))
+
     checkbox_log_export_enabled = QCheckBox()
     checkbox_log_export_enabled.setChecked(bool(getattr(settings, "log_export_enabled", True)))
 

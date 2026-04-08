@@ -528,3 +528,39 @@ def get_map_play_counts(conn=None):
         str(row["map_name"]): int(row["played_count"] or 0)
         for row in rows
     }
+
+
+def get_total_matches_count_for_season(season, conn=None):
+    with optional_conn(conn) as c:
+        row = c.execute(
+            """
+            SELECT COUNT(DISTINCT match_id) AS total
+            FROM elo_match_season
+            WHERE season = ?
+            """,
+            (int(season),),
+        ).fetchone()
+
+    return int(row["total"] or 0) if row else 0
+
+
+def get_map_play_counts_for_season(season, conn=None):
+    with optional_conn(conn) as c:
+        rows = c.execute(
+            """
+            SELECT mm.map_name, COUNT(*) AS played_count
+            FROM match_maps mm
+            INNER JOIN elo_match_season ems
+                ON ems.match_id = mm.match_id
+            WHERE ems.season = ?
+              AND mm.map_name IS NOT NULL
+              AND mm.map_name != ''
+            GROUP BY mm.map_name
+            """,
+            (int(season),),
+        ).fetchall()
+
+    return {
+        str(row["map_name"]): int(row["played_count"] or 0)
+        for row in rows
+    }

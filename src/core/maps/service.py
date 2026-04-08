@@ -1,6 +1,7 @@
 import services.logger as logger
 import db.matches_db as matches_db
 import db.maps_db as maps_db
+import db.elo_db as elo_db
 
 from .slot_machine import choose_random_map as _choose_random_map
 from .slot_machine import choose_weighted_map as _choose_weighted_map
@@ -22,12 +23,45 @@ def delete_map(name):
     maps_db.delete_map(name)
 
 
-def _build_history_weights(maps):
-    total_matches = matches_db.get_total_matches_count()
+def _resolve_current_season(use_season_history, season=None):
+    if not use_season_history:
+        return None
+
+    if season is not None:
+        try:
+            return int(season)
+        except Exception:
+            return None
+
+    raw = elo_db.get_elo_state("season")
+    if raw is None:
+        return None
+
+    try:
+        return int(raw)
+    except Exception:
+        return None
+
+
+def _build_history_weights(maps, season=None):
+    try:
+        if season is None:
+            total_matches = matches_db.get_total_matches_count()
+            map_play_counts = matches_db.get_map_play_counts()
+        else:
+            total_matches = matches_db.get_total_matches_count_for_season(season)
+            map_play_counts = matches_db.get_map_play_counts_for_season(season)
+    except Exception as exc:
+        logger.log(
+            f"[MAP] Season history lookup failed (season={season}); falling back to global history: {exc}",
+            level="WARNING",
+        )
+        total_matches = matches_db.get_total_matches_count()
+        map_play_counts = matches_db.get_map_play_counts()
+
     if total_matches <= 0:
         return {}, 0, {}
 
-    map_play_counts = matches_db.get_map_play_counts()
     min_weight = 0.01
 
     weights = {
@@ -126,7 +160,7 @@ def _log_chance_table(maps, choice, use_history, history_weights, total_matches=
     return selected_entry
 
 
-def choose_map(maps, use_history=False):
+def choose_map(maps, use_history=False, use_season_history=False, season=None):
 
     if not maps:
         logger.log_error("Map selection failed: empty pool")
@@ -135,8 +169,17 @@ def choose_map(maps, use_history=False):
     history_weights = {}
     total_matches = 0
     map_play_counts = {}
+    selected_season = None
+    mode_name = "history_inverse" if use_history else "uniform"
+
     if use_history:
-        history_weights, total_matches, map_play_counts = _build_history_weights(maps)
+        selected_season = _resolve_current_season(use_season_history, season=season)
+        history_weights, total_matches, map_play_counts = _build_history_weights(
+            maps,
+            season=selected_season,
+        )
+        if selected_season is not None:
+            mode_name = "history_inverse_season"
 
     choice = _choose_weighted_map(maps, history_weights) if use_history else _choose_random_map(maps)
 
@@ -146,7 +189,7 @@ def choose_map(maps, use_history=False):
         logger.log(
             (
                 "[MAP_SELECTED] "
-                f"selected={choice} pool_size={len(maps)} mode={'history_inverse' if use_history else 'uniform'} "
+                f"selected={choice} pool_size={len(maps)} mode={mode_name} "
                 f"chance={_pct(selected_entry['pick_chance'])} "
                 f"weight={float(selected_entry['raw_weight']):.4f} "
                 f"played_ratio={_pct(selected_entry['played_ratio'])}"
@@ -157,7 +200,7 @@ def choose_map(maps, use_history=False):
         logger.log(
             (
                 "[MAP_SELECTED] "
-                f"selected={choice} pool_size={len(maps)} mode={'history_inverse' if use_history else 'uniform'}"
+                f"selected={choice} pool_size={len(maps)} mode={mode_name}"
             ),
             level="INFO",
         )
