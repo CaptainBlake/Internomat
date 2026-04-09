@@ -921,14 +921,33 @@ def _refresh_plot_only(parent):
             season_param = None
             if selected_seasons and len(selected_seasons) == 1:
                 season_param = int(selected_seasons[0])
-            if len(metrics) == 1:
-                return stattracker.get_player_elo_history_series(
-                    target_sid, metric=metrics[0], season=season_param,
-                )
-            first = stattracker.get_player_elo_history_series(target_sid, metric=metrics[0], season=season_param)
+
+            def _fetch_player_metric(sid, metric, season):
+                if metric == "premier":
+                    return stattracker.get_player_premier_history_series(sid)
+                return stattracker.get_player_elo_history_series(sid, metric=metric, season=season)
+
+            # Premier uses a different data source (Leetify match history) than
+            # Elo metrics (local elo_history table), so their x-axes don't align.
+            # When multiple metrics are selected, only combine elo-family metrics.
+            # If premier is among them, show premier alone (first wins).
+            has_premier = "premier" in metrics
+            elo_metrics = [m for m in metrics if m != "premier"]
+
+            if has_premier and not elo_metrics:
+                return _fetch_player_metric(target_sid, "premier", season_param)
+
+            if has_premier and elo_metrics:
+                # Premier can't share x-axis with elo; show premier only
+                return _fetch_player_metric(target_sid, "premier", season_param)
+
+            if len(elo_metrics) == 1:
+                return _fetch_player_metric(target_sid, elo_metrics[0], season_param)
+
+            first = _fetch_player_metric(target_sid, elo_metrics[0], season_param)
             multi = [{"metric_label": first["metric_label"], "series": first["series"]}]
-            for m in metrics[1:]:
-                r = stattracker.get_player_elo_history_series(target_sid, metric=m, season=season_param)
+            for m in elo_metrics[1:]:
+                r = _fetch_player_metric(target_sid, m, season_param)
                 multi.append({"metric_label": r["metric_label"], "series": r["series"]})
             return {"x_labels": first["x_labels"], "match_keys": first.get("match_keys") or [], "multi_series": multi}
 

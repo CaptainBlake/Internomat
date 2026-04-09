@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from .connection_db import execute_write, get_conn, optional_conn
+from .connection_db import execute_write, executemany_write, get_conn, optional_conn
 import services.logger as logger
 
 
@@ -55,6 +55,84 @@ def update_player(player, conn=None):
         ))
 
     logger.log(f"[DB] Update player {logger.redact(player['steam64_id'])} source={player.get('rating_source')}", level="INFO")
+
+
+def record_premier_rating_history(player):
+    """Persist premier rating snapshots from a player update.
+
+    Handles two kinds of entries:
+    1. Per-match entries from ``rating_history`` (API ``recent_matches``).
+       Deduped by the unique index ``(steamid64, leetify_match_id)``.
+    2. A profile-level snapshot (current ``premier_rating``).
+       Skipped when the latest profile snapshot already has the same rating.
+    """
+    now = datetime.utcnow().isoformat()
+    sid = str(player.get("steam64_id") or "").strip()
+    rating = player.get("premier_rating")
+    source = player.get("rating_source") or "unknown"
+
+    if not sid or rating is None:
+        return
+
+    with get_conn() as conn:
+        # --- 1) match-level entries from API recent_matches ---
+        match_rows = player.get("rating_history") or []
+        if match_rows:
+            params = []
+            for mr in match_rows:
+                params.append((
+                    sid,
+                    int(mr["premier_rating"]),
+                    "api_match",
+                    player.get("rating_season"),
+                    mr.get("leetify_match_id"),
+                    mr.get("map_name"),
+                    mr.get("outcome"),
+                    mr.get("game_played_at"),
+                    now,
+                ))
+            executemany_write(conn, """
+                INSERT INTO premier_rating_history
+                    (steamid64, premier_rating, rating_source, rating_season,
+                     leetify_match_id, map_name, outcome, game_played_at, recorded_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(steamid64, leetify_match_id) DO NOTHING
+            """, params)
+            logger.log(
+                f"[DB] Premier history match entries player={logger.redact(sid)} "
+                f"attempted={len(params)}",
+                level="DEBUG",
+            )
+
+        # --- 2) profile-level snapshot ---
+        latest = conn.execute(
+            """
+            SELECT premier_rating FROM premier_rating_history
+            WHERE steamid64 = ? AND leetify_match_id IS NULL
+            ORDER BY recorded_at DESC LIMIT 1
+            """,
+            (sid,),
+        ).fetchone()
+
+        if latest is None or int(latest[0]) != int(rating):
+            execute_write(conn, """
+                INSERT INTO premier_rating_history
+                    (steamid64, premier_rating, rating_source, rating_season,
+                     leetify_match_id, map_name, outcome, game_played_at, recorded_at)
+                VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, ?)
+            """, (
+                sid,
+                int(rating),
+                source,
+                player.get("rating_season"),
+                now,
+            ))
+            logger.log(
+                f"[DB] Premier history profile snapshot player={logger.redact(sid)} "
+                f"rating={rating} source={source}",
+                level="DEBUG",
+            )
+
 
 def delete_player(steam_id):
     with get_conn() as conn:

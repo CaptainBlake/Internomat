@@ -201,6 +201,19 @@ def get_leetify_player(steam_id, auto_close=False):
         _api_consecutive_failures = 0  # reset on success
         logger.log(f"[FETCH_SUCCESS] API success {redacted}", level="DEBUG")
 
+        # Extract per-match premier ratings from recent_matches
+        rating_history = []
+        for rm in data.get("recent_matches") or []:
+            rank = rm.get("rank")
+            if rank and int(rank) > 0:
+                rating_history.append({
+                    "leetify_match_id": rm.get("id"),
+                    "premier_rating": int(rank),
+                    "map_name": rm.get("map_name"),
+                    "outcome": rm.get("outcome"),
+                    "game_played_at": rm.get("finished_at"),
+                })
+
         return {
             "steam64_id": steam_id,
             "leetify_id": data.get("id"),
@@ -211,6 +224,7 @@ def get_leetify_player(steam_id, auto_close=False):
             "winrate": data.get("winrate"),
             "rating_source": "api",
             "rating_season": None,
+            "rating_history": rating_history,
         }
     except Exception as e:
         logger.log(f"[FETCH_ERROR] API fetch failed {redacted}: {e}", level="INFO")
@@ -349,7 +363,9 @@ def _parse_leetify_profile(html, steam_id):
 
     season_map = {
         "One": 1, "Two": 2, "Three": 3, "Four": 4, "Five": 5,
-        "Six": 6, "Seven": 7, "Eight": 8, "Nine": 9, "Ten": 10
+        "Six": 6, "Seven": 7, "Eight": 8, "Nine": 9, "Ten": 10,
+        "Eleven": 11, "Twelve": 12, "Thirteen": 13, "Fourteen": 14, "Fifteen": 15,
+        "Sixteen": 16, "Seventeen": 17, "Eighteen": 18, "Nineteen": 19, "Twenty": 20,
     }
 
     name = steam_id
@@ -439,8 +455,6 @@ def fetch_players_bulk(steam_ids, delay=FETCH_DELAY, on_progress=None, on_player
         except Exception as e:
             logger.log(f"[FETCH_ERROR] Bulk failed {redacted}: {e}", level="INFO")
             results.append(None)
-        finally:
-            close_driver()
 
         if on_progress:
             on_progress(i, total)
@@ -448,6 +462,7 @@ def fetch_players_bulk(steam_ids, delay=FETCH_DELAY, on_progress=None, on_player
         if delay > 0:
             time.sleep(delay)
 
+    close_driver()
     logger.log(f"[FETCH] Bulk done success={sum(p is not None for p in results)} total={total}", level="INFO")
 
     return results

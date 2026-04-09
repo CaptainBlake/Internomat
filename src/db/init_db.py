@@ -570,6 +570,31 @@ def init_db():
         # --- ELO TABLES ---
         init_elo_tables(conn)
 
+        # --- PREMIER RATING HISTORY ---
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS premier_rating_history (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                steamid64       TEXT NOT NULL,
+                premier_rating  INTEGER NOT NULL,
+                rating_source   TEXT NOT NULL,
+                rating_season   INTEGER,
+                leetify_match_id TEXT,
+                map_name        TEXT,
+                outcome         TEXT,
+                game_played_at  TEXT,
+                recorded_at     TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_premier_history_player
+            ON premier_rating_history(steamid64, game_played_at)
+        """)
+        conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_premier_history_match
+            ON premier_rating_history(steamid64, leetify_match_id)
+            WHERE leetify_match_id IS NOT NULL
+        """)
+
         # --- DEFAULT MAPS ---
         cur = conn.execute("SELECT COUNT(*) FROM maps")
         if cur.fetchone()[0] == 0:

@@ -792,6 +792,31 @@ def fetch_player_elo_history(steamid64, season=None):
         ).fetchall()
 
 
+def fetch_player_premier_rating_history(steamid64):
+    """Return chronological premier rating snapshots for a player."""
+    sid = str(steamid64 or "").strip()
+    if not sid:
+        return []
+
+    with get_conn() as conn:
+        return conn.execute(
+            """
+            SELECT
+                premier_rating,
+                rating_source,
+                leetify_match_id,
+                map_name,
+                outcome,
+                game_played_at,
+                recorded_at
+            FROM premier_rating_history
+            WHERE steamid64 = ?
+            ORDER BY COALESCE(game_played_at, recorded_at) ASC
+            """,
+            (sid,),
+        ).fetchall()
+
+
 def fetch_player_movement_match_series(steamid64, maps=None, seasons=None):
     sid = str(steamid64 or "").strip()
     if not sid:

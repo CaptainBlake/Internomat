@@ -51,9 +51,8 @@ def fetch_top_ratings(limit, season=None):
                 SELECT
                     COALESCE(NULLIF(p.name, ''), p.steam64_id) AS name,
                     p.steam64_id AS steamid64,
-                    ROUND(COALESCE(er.elo, 1500.0), 2) AS rating
+                    COALESCE(p.premier_rating, 0) AS rating
                 FROM players p
-                LEFT JOIN elo_ratings er ON er.steamid64 = p.steam64_id
                 ORDER BY rating DESC, name COLLATE NOCASE ASC
                 LIMIT ?
                 """,

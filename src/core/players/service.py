@@ -49,6 +49,7 @@ def update_single_player(player):
         return
 
     player_db.update_player(player)
+    player_db.record_premier_rating_history(player)
 
 
 # --- DELETE ---

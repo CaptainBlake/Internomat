@@ -557,7 +557,7 @@ def get_movement_round_series(steamid64, maps=None, metric="avg_speed_m_s", seas
 PLAYERS_PLOT_METRICS = {
     "elo": {"label": "Elo Rating", "fn": lambda r: float(r["elo_after"])},
     "elo_delta": {"label": "Elo Delta", "fn": lambda r: float(r["elo_delta"])},
-    "adr": {"label": "ADR", "fn": lambda r: float(r["adr"]) if r["adr"] is not None else None},
+    "premier": {"label": "Premier Rating", "fn": None},
 }
 
 
@@ -659,7 +659,13 @@ def get_player_elo_history_series(steamid64, metric="elo", season=None):
     if not sid:
         return {"metric_label": "", "x_labels": [], "series": {}, "match_keys": []}
 
+    if metric == "premier":
+        return get_player_premier_history_series(sid)
+
     metric_def = PLAYERS_PLOT_METRICS.get(metric, PLAYERS_PLOT_METRICS["elo"])
+    if metric_def.get("fn") is None:
+        return {"metric_label": metric_def["label"], "x_labels": [], "series": {}, "match_keys": []}
+
     rows = stattracker_repo.fetch_player_elo_history(sid, season=season)
 
     match_keys = []
@@ -683,5 +689,36 @@ def get_player_elo_history_series(steamid64, metric="elo", season=None):
         "metric_label": metric_def["label"],
         "x_labels": x_labels,
         "series": {series_name: values},
+        "match_keys": match_keys,
+    }
+
+
+def get_player_premier_history_series(steamid64):
+    sid = str(steamid64 or "").strip()
+    if not sid:
+        return {"metric_label": "Premier Rating", "x_labels": [], "series": {}, "match_keys": []}
+
+    rows = stattracker_repo.fetch_player_premier_rating_history(sid)
+
+    x_labels = []
+    values = []
+    match_keys = []
+
+    for r in rows:
+        mk = str(r["leetify_match_id"] or "")
+        match_keys.append(mk)
+        map_name = str(r["map_name"] or "profile")
+        ts = r["game_played_at"] or r["recorded_at"]
+        subtitle = _format_match_time_subtitle(ts)
+        label = map_name
+        if subtitle:
+            label = f"{map_name}\n{subtitle}"
+        x_labels.append(label)
+        values.append(int(r["premier_rating"]))
+
+    return {
+        "metric_label": "Premier Rating",
+        "x_labels": x_labels,
+        "series": {"Premier": values},
         "match_keys": match_keys,
     }

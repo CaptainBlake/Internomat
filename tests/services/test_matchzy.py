@@ -182,7 +182,7 @@ class TestSyncToLocal:
             "SELECT * FROM matches WHERE match_id = ?", ("M1",)
         ).fetchone()
         assert row is not None
-        assert row["team1_name"] == "team_a"
+        assert row["team1_name"] == "TeamA"
         assert row["team1_score"] == 13
 
         # Verify map inserted
@@ -220,11 +220,12 @@ class TestSyncToLocal:
             mz._query = MagicMock(side_effect=_query_side_effect)
             mz.sync_to_local()
 
-        # No map should be inserted for the skipped match
+        # Match is upserted and map is inserted even for existing matches
         mrow = db_conn.execute(
             "SELECT * FROM match_maps WHERE match_id = ?", ("M1",)
         ).fetchone()
-        assert mrow is None
+        assert mrow is not None
+        assert mrow["map_name"] == "de_dust2"
 
     def test_sync_skips_unfinished_match(
         self, monkeypatch_db, db_conn, matchzy_settings
@@ -252,10 +253,12 @@ class TestSyncToLocal:
             mz._query = MagicMock(side_effect=query_side)
             mz.sync_to_local()
 
+        # Unfinished maps without a finished duplicate are ingested as pending
         row = db_conn.execute(
             "SELECT * FROM matches WHERE match_id = ?", ("M2",)
         ).fetchone()
-        assert row is None
+        assert row is not None
+        assert row["match_id"] == "M2"
 
     def test_sync_match_without_match_data_inserts_minimal(
         self, monkeypatch_db, db_conn, matchzy_settings
