@@ -543,13 +543,21 @@ def upsert_player_kill_matrix_many(rows, conn=None):
             kills,
             headshot_kills,
             teamkills,
+            damage,
+            assists,
+            flash_assists,
+            flashes,
             updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(attacker_steamid64, victim_steamid64, match_id, map_number) DO UPDATE SET
             kills = excluded.kills,
             headshot_kills = excluded.headshot_kills,
             teamkills = excluded.teamkills,
+            damage = excluded.damage,
+            assists = excluded.assists,
+            flash_assists = excluded.flash_assists,
+            flashes = excluded.flashes,
             updated_at = excluded.updated_at
     """
 
@@ -562,6 +570,10 @@ def upsert_player_kill_matrix_many(rows, conn=None):
             int(row.get("kills") or 0),
             int(row.get("headshot_kills") or 0),
             int(row.get("teamkills") or 0),
+            int(row.get("damage") or 0),
+            int(row.get("assists") or 0),
+            int(row.get("flash_assists") or 0),
+            int(row.get("flashes") or 0),
             str(row.get("updated_at") or ""),
         )
         for row in rows
@@ -583,7 +595,10 @@ def fetch_player_kill_relationships(steamid64, seasons=None):
 
     Returns a list of rows with columns:
         opponent_steamid64, opponent_name, kills_dealt, kills_received,
-        hs_dealt, hs_received, teamkills_dealt, teamkills_received
+        hs_dealt, hs_received, teamkills_dealt, teamkills_received,
+        damage_dealt, damage_received, assists_dealt, assists_received,
+        flash_assists_dealt, flash_assists_received,
+        flashes_dealt, flashes_received
     ordered by total interactions descending.
     """
     sid = str(steamid64 or "").strip()
@@ -604,7 +619,15 @@ def fetch_player_kill_relationships(steamid64, seasons=None):
                 COALESCE(SUM(hs_dealt), 0) AS hs_dealt,
                 COALESCE(SUM(hs_received), 0) AS hs_received,
                 COALESCE(SUM(tk_dealt), 0) AS teamkills_dealt,
-                COALESCE(SUM(tk_received), 0) AS teamkills_received
+                COALESCE(SUM(tk_received), 0) AS teamkills_received,
+                COALESCE(SUM(dmg_dealt), 0) AS damage_dealt,
+                COALESCE(SUM(dmg_received), 0) AS damage_received,
+                COALESCE(SUM(ast_dealt), 0) AS assists_dealt,
+                COALESCE(SUM(ast_received), 0) AS assists_received,
+                COALESCE(SUM(fa_dealt), 0) AS flash_assists_dealt,
+                COALESCE(SUM(fa_received), 0) AS flash_assists_received,
+                COALESCE(SUM(fl_dealt), 0) AS flashes_dealt,
+                COALESCE(SUM(fl_received), 0) AS flashes_received
             FROM (
                 SELECT
                     a.victim_steamid64 AS opponent,
@@ -613,7 +636,15 @@ def fetch_player_kill_relationships(steamid64, seasons=None):
                     SUM(a.headshot_kills) AS hs_dealt,
                     0 AS hs_received,
                     SUM(a.teamkills) AS tk_dealt,
-                    0 AS tk_received
+                    0 AS tk_received,
+                    SUM(a.damage) AS dmg_dealt,
+                    0 AS dmg_received,
+                    SUM(a.assists) AS ast_dealt,
+                    0 AS ast_received,
+                    SUM(a.flash_assists) AS fa_dealt,
+                    0 AS fa_received,
+                    SUM(a.flashes) AS fl_dealt,
+                    0 AS fl_received
                 FROM player_kill_matrix a
                 WHERE a.attacker_steamid64 = ?
                     {season_sql_a}
@@ -628,7 +659,15 @@ def fetch_player_kill_relationships(steamid64, seasons=None):
                     0 AS hs_dealt,
                     SUM(r.headshot_kills) AS hs_received,
                     0 AS tk_dealt,
-                    SUM(r.teamkills) AS tk_received
+                    SUM(r.teamkills) AS tk_received,
+                    0 AS dmg_dealt,
+                    SUM(r.damage) AS dmg_received,
+                    0 AS ast_dealt,
+                    SUM(r.assists) AS ast_received,
+                    0 AS fa_dealt,
+                    SUM(r.flash_assists) AS fa_received,
+                    0 AS fl_dealt,
+                    SUM(r.flashes) AS fl_received
                 FROM player_kill_matrix r
                 WHERE r.victim_steamid64 = ?
                     {season_sql_r}

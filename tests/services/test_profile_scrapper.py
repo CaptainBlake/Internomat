@@ -56,6 +56,9 @@ LEETIFY_API_NO_PREMIER = {
 def _mock_env_leetify_api(monkeypatch):
     """Ensure LEETIFY_API env var is set for all tests."""
     monkeypatch.setenv("LEETIFY_API", "fake-api-key-12345")
+    import services.profile_scrapper as ps
+    ps.reset_api_circuit_breaker()
+    ps._cached_leetify_api = None
 
 
 @pytest.fixture

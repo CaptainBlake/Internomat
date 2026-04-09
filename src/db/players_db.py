@@ -8,7 +8,7 @@ def insert_player(player, conn=None):
 
     with optional_conn(conn, commit=True) as c:
         execute_write(c, """
-            INSERT INTO players VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO players VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             player["steam64_id"],
             player.get("leetify_id"),
@@ -18,7 +18,9 @@ def insert_player(player, conn=None):
             player.get("total_matches"),
             player.get("winrate"),
             now,
-            now
+            now,
+            player.get("rating_source"),
+            player.get("rating_season"),
         ))
 
     logger.log(f"[DB] Insert player {logger.redact(player['steam64_id'])}", level="INFO")
@@ -35,7 +37,9 @@ def update_player(player, conn=None):
                 leetify_rating = ?,
                 total_matches = ?,
                 winrate = ?,
-                last_updated = ?
+                last_updated = ?,
+                rating_source = ?,
+                rating_season = ?
             WHERE steam64_id = ?
         """, (
             player.get("leetify_id"),
@@ -45,10 +49,12 @@ def update_player(player, conn=None):
             player.get("total_matches"),
             player.get("winrate"),
             now,
+            player.get("rating_source"),
+            player.get("rating_season"),
             player["steam64_id"]
         ))
 
-    logger.log(f"[DB] Update player {logger.redact(player['steam64_id'])}", level="INFO")
+    logger.log(f"[DB] Update player {logger.redact(player['steam64_id'])} source={player.get('rating_source')}", level="INFO")
 
 def delete_player(steam_id):
     with get_conn() as conn:
@@ -73,7 +79,7 @@ def upsert_player(player, mode="full", conn=None):
             ))
         else:
             execute_write(c, """
-                INSERT INTO players VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO players VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(steam64_id) DO UPDATE SET
                     leetify_id=excluded.leetify_id,
                     name=excluded.name,
@@ -81,7 +87,9 @@ def upsert_player(player, mode="full", conn=None):
                     leetify_rating=excluded.leetify_rating,
                     total_matches=excluded.total_matches,
                     winrate=excluded.winrate,
-                    last_updated=excluded.last_updated
+                    last_updated=excluded.last_updated,
+                    rating_source=excluded.rating_source,
+                    rating_season=excluded.rating_season
             """, (
                 player["steam64_id"],
                 player.get("leetify_id"),
@@ -91,7 +99,9 @@ def upsert_player(player, mode="full", conn=None):
                 player.get("total_matches"),
                 player.get("winrate"),
                 now,
-                now
+                now,
+                player.get("rating_source"),
+                player.get("rating_season"),
             ))
 
     logger.log(f"[DB] Upsert player {logger.redact(player['steam64_id'])}", level="DEBUG")

@@ -40,7 +40,8 @@ class DemoScrapperParserLayer:
     def parse_awpy_demo(self, file_path):
         """Convert local .dem file into awpy Demo object."""
         demo = Demo(str(file_path))
-        demo.parse()
+        custom_events = demo.default_events + ["player_blind"]
+        demo.parse(events=custom_events)
         return demo
 
     def _extract_restore_stats_from_parser_ticks(self, demo):

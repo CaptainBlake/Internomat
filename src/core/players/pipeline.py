@@ -50,7 +50,8 @@ def update_players_pipeline(
             if on_finish:
                 on_finish()
             return
-        
+
+        profile_scrapper.reset_api_circuit_breaker()
         total = len(steam_ids)
         seen = set()
 

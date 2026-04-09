@@ -998,36 +998,97 @@ class DemoScrapperRestoreMixin:
         return rows
 
     def _build_kill_matrix_rows(self, *, match_id, map_number, parsed_payload):
-        kills_table = self._iter_rows((parsed_payload or {}).get("kills"))
-        if not kills_table:
-            return []
+        payload = parsed_payload or {}
+        kills_table = self._iter_rows(payload.get("kills"))
 
         aggregated = {}
-        for row in kills_table:
-            attacker = self._to_steamid64_string(
-                self._pick_value(row, ["attacker_steamid", "attacker_steamid64", "attacker"])
-            )
-            victim = self._to_steamid64_string(
-                self._pick_value(row, ["victim_steamid", "victim_steamid64", "victim"])
-            )
-            if not attacker or not victim or attacker == victim:
-                continue
 
-            attacker_side = self._normalize_side_label(
-                self._pick_value(row, ["attacker_side", "attacker_team_name"])
-            )
-            victim_side = self._normalize_side_label(
-                self._pick_value(row, ["victim_side", "victim_team_name"])
-            )
-            is_teamkill = 1 if (attacker_side and victim_side and attacker_side == victim_side) else 0
-            is_headshot = 1 if self._pick_value(row, ["is_headshot", "headshot"]) else 0
-
-            key = (attacker, victim)
+        def _ensure_pair(a, v):
+            key = (a, v)
             if key not in aggregated:
-                aggregated[key] = {"kills": 0, "headshot_kills": 0, "teamkills": 0}
-            aggregated[key]["kills"] += 1
-            aggregated[key]["headshot_kills"] += is_headshot
-            aggregated[key]["teamkills"] += is_teamkill
+                aggregated[key] = {
+                    "kills": 0, "headshot_kills": 0, "teamkills": 0,
+                    "damage": 0, "assists": 0, "flash_assists": 0, "flashes": 0,
+                }
+            return aggregated[key]
+
+        # --- 1) kills table: kills, headshots, teamkills, assists, flash-assists ---
+        if kills_table:
+            for row in kills_table:
+                attacker = self._to_steamid64_string(
+                    self._pick_value(row, ["attacker_steamid", "attacker_steamid64", "attacker"])
+                )
+                victim = self._to_steamid64_string(
+                    self._pick_value(row, ["victim_steamid", "victim_steamid64", "victim"])
+                )
+                if not attacker or not victim or attacker == victim:
+                    continue
+
+                attacker_side = self._normalize_side_label(
+                    self._pick_value(row, ["attacker_side", "attacker_team_name"])
+                )
+                victim_side = self._normalize_side_label(
+                    self._pick_value(row, ["victim_side", "victim_team_name"])
+                )
+                is_teamkill = 1 if (attacker_side and victim_side and attacker_side == victim_side) else 0
+                is_headshot = 1 if self._pick_value(row, ["is_headshot", "headshot"]) else 0
+
+                bucket = _ensure_pair(attacker, victim)
+                bucket["kills"] += 1
+                bucket["headshot_kills"] += is_headshot
+                bucket["teamkills"] += is_teamkill
+
+                # Assist tracking (assister → victim)
+                assister = self._to_steamid64_string(
+                    self._pick_value(row, ["assister_steamid", "assister_steamid64", "assister"])
+                )
+                if assister and assister != victim:
+                    assist_bucket = _ensure_pair(assister, victim)
+                    assist_bucket["assists"] += 1
+                    is_flash_assist = self._pick_value(row, ["assistedflash", "assisted_flash"])
+                    if is_flash_assist in {True, 1, "1", "true", "True"}:
+                        assist_bucket["flash_assists"] += 1
+
+        # --- 2) damages table: damage dealt per pair ---
+        damages_table = self._iter_rows(payload.get("damages"))
+        if damages_table:
+            for row in damages_table:
+                attacker = self._to_steamid64_string(
+                    self._pick_value(row, ["attacker_steamid", "attacker_steamid64", "attacker"])
+                )
+                victim = self._to_steamid64_string(
+                    self._pick_value(row, ["victim_steamid", "victim_steamid64", "victim"])
+                )
+                if not attacker or not victim or attacker == victim:
+                    continue
+
+                dmg = self._to_int(
+                    self._pick_value(row, ["dmg_health_real", "dmg_health", "damage"]),
+                    default=0,
+                )
+                if dmg <= 0:
+                    continue
+
+                _ensure_pair(attacker, victim)["damage"] += dmg
+
+        # --- 3) player_blind events: who flashed whom ---
+        events = payload.get("events")
+        if isinstance(events, dict):
+            blind_rows = self._iter_rows(events.get("player_blind"))
+            if blind_rows:
+                for row in blind_rows:
+                    attacker = self._to_steamid64_string(
+                        self._pick_value(row, ["attacker_steamid", "attacker_steamid64", "attacker"])
+                    )
+                    victim = self._to_steamid64_string(
+                        self._pick_value(row, ["user_steamid", "player_steamid", "steamid"])
+                    )
+                    if not attacker or not victim or attacker == victim:
+                        continue
+                    _ensure_pair(attacker, victim)["flashes"] += 1
+
+        if not aggregated:
+            return []
 
         now = datetime.utcnow().isoformat()
         rows = []
@@ -1040,6 +1101,10 @@ class DemoScrapperRestoreMixin:
                 "kills": stats["kills"],
                 "headshot_kills": stats["headshot_kills"],
                 "teamkills": stats["teamkills"],
+                "damage": stats["damage"],
+                "assists": stats["assists"],
+                "flash_assists": stats["flash_assists"],
+                "flashes": stats["flashes"],
                 "updated_at": now,
             })
 

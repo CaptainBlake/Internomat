@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -1346,9 +1347,24 @@ def _refresh_plot_only(parent):
 def build_stattracker_tab(parent):
     logger.log("[UI] Build Stat Tracker tab", level="DEBUG")
 
-    layout = QVBoxLayout(parent)
+    outer_layout = QVBoxLayout(parent)
+    outer_layout.setContentsMargins(0, 0, 0, 0)
+    outer_layout.setSpacing(0)
+
+    scroll_area = QScrollArea()
+    scroll_area.setWidgetResizable(True)
+    scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+    outer_layout.addWidget(scroll_area)
+
+    scroll_content = QWidget()
+    scroll_area.setWidget(scroll_content)
+
+    layout = QVBoxLayout(scroll_content)
     layout.setContentsMargins(16, 8, 16, 12)
     layout.setSpacing(8)
+
+    # Store scroll internals so refresh can find the inner layout
+    parent._stattracker_scroll_content = scroll_content
 
     title = QLabel("Stat Tracker")
     title.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -1370,6 +1386,7 @@ def build_stattracker_tab(parent):
     parent._stattracker_chart_mode = "line"
     parent._stattracker_compare_player = ""
     parent._stattracker_compare_players = []
+    parent._stattracker_player_category = "combat"
     parent._stattracker_selected_timeline_items = []
     parent._stattracker_selected_seasons = None
     parent._stattracker_selected_plot_metrics = []
@@ -1402,7 +1419,8 @@ def build_stattracker_tab(parent):
 def refresh_stattracker(parent):
     logger.log("[UI] Refresh Stat Tracker tab", level="DEBUG")
 
-    layout = parent.layout()
+    scroll_content = getattr(parent, "_stattracker_scroll_content", None)
+    layout = scroll_content.layout() if scroll_content else parent.layout()
     if layout is None:
         return
 
@@ -1535,6 +1553,14 @@ def refresh_stattracker(parent):
         parent._stattracker_initial_focus_applied = True
 
     kpis = dashboard.get("kpis") or {}
+    relationships = stattracker.get_player_kill_relationships(
+        selected_sid,
+        seasons=getattr(parent, "_stattracker_selected_seasons", None),
+    )
+    fav = relationships.get("favourite_target")
+    nem = relationships.get("arch_nemesis")
+    _practice_target = f"{fav['opponent_name']} ({fav['kills_dealt']}K)" if fav else "-"
+    _nemesis = f"{nem['opponent_name']} ({nem['kills_received']}D)" if nem else "-"
 
     # --- Global Stats ---
     global_title = QLabel("Global Stats")
@@ -1549,7 +1575,7 @@ def refresh_stattracker(parent):
             "Elo Rating",
             "Maps Played", "Win Rate", "K/D", "ADR",
             "Avg Kills", "Avg Deaths", "HS%",
-            "Strafe %", "Avg Speed (m/s)", "Camp Time (s)",
+            "Camp Time (s)", "Nemesis", "Practice-Target",
         ],
         [
             [
@@ -1561,9 +1587,9 @@ def refresh_stattracker(parent):
                 f"{float(kpis.get('avg_kills') or 0.0):.2f}",
                 f"{float(kpis.get('avg_deaths') or 0.0):.2f}",
                 _fmt_pct(kpis.get("hs_pct") or 0.0),
-                _fmt_pct((float(kpis.get("strafe_ratio") or 0.0) * 100.0)),
-                f"{float(kpis.get('avg_speed_m_s') or 0.0):.2f}",
                 f"{float(kpis.get('camp_time_s') or 0.0):.1f}",
+                _nemesis,
+                _practice_target,
             ]
         ],
     )
@@ -1594,12 +1620,21 @@ def refresh_stattracker(parent):
         _cmp_elo_val = compare_kpis.get("elo_rating")
         _cmp_elo_display = f"{_cmp_elo_val:.0f}" if _cmp_elo_val is not None else "-"
 
+        cmp_rel = stattracker.get_player_kill_relationships(
+            compare_sid,
+            seasons=getattr(parent, "_stattracker_selected_seasons", None),
+        )
+        cmp_fav = cmp_rel.get("favourite_target")
+        cmp_nem = cmp_rel.get("arch_nemesis")
+        _cmp_practice = f"{cmp_fav['opponent_name']} ({cmp_fav['kills_dealt']}K)" if cmp_fav else "-"
+        _cmp_nemesis = f"{cmp_nem['opponent_name']} ({cmp_nem['kills_received']}D)" if cmp_nem else "-"
+
         compare_table = _build_table(
             [
                 "Elo Rating",
                 "Maps Played", "Win Rate", "K/D", "ADR",
                 "Avg Kills", "Avg Deaths", "HS%",
-                "Strafe %", "Avg Speed (m/s)", "Camp Time (s)",
+                "Camp Time (s)", "Nemesis", "Practice-Target",
             ],
             [
                 [
@@ -1611,9 +1646,9 @@ def refresh_stattracker(parent):
                     f"{float(compare_kpis.get('avg_kills') or 0.0):.2f}",
                     f"{float(compare_kpis.get('avg_deaths') or 0.0):.2f}",
                     _fmt_pct(compare_kpis.get("hs_pct") or 0.0),
-                    _fmt_pct((float(compare_kpis.get("strafe_ratio") or 0.0) * 100.0)),
-                    f"{float(compare_kpis.get('avg_speed_m_s') or 0.0):.2f}",
                     f"{float(compare_kpis.get('camp_time_s') or 0.0):.1f}",
+                    _cmp_nemesis,
+                    _cmp_practice,
                 ]
             ],
         )

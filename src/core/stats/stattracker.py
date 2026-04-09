@@ -628,6 +628,14 @@ def get_player_kill_relationships(steamid64, seasons=None):
             "hs_received": int(r["hs_received"] or 0),
             "teamkills_dealt": int(r["teamkills_dealt"] or 0),
             "teamkills_received": int(r["teamkills_received"] or 0),
+            "damage_dealt": int(r["damage_dealt"] or 0),
+            "damage_received": int(r["damage_received"] or 0),
+            "assists_dealt": int(r["assists_dealt"] or 0),
+            "assists_received": int(r["assists_received"] or 0),
+            "flash_assists_dealt": int(r["flash_assists_dealt"] or 0),
+            "flash_assists_received": int(r["flash_assists_received"] or 0),
+            "flashes_dealt": int(r["flashes_dealt"] or 0),
+            "flashes_received": int(r["flashes_received"] or 0),
             "net": dealt - received,
         }
         rows.append(entry)

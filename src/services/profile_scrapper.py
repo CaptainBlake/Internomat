@@ -48,6 +48,8 @@ FETCH_DELAY = 0.5  # seconds between bulk fetches to avoid rate limits
 _driver = None
 _driver_lock = Lock()
 _cached_leetify_api = None
+_api_consecutive_failures = 0
+_API_FAILURE_THRESHOLD = 3  # skip API after this many consecutive failures
 
 
 def _resolve_leetify_api_key():
@@ -142,16 +144,32 @@ def _resolve_vanity(identifier):
 
 # LEETIFY API
 
+def reset_api_circuit_breaker():
+    """Reset the API failure counter (e.g. at the start of a new update cycle)."""
+    global _api_consecutive_failures
+    _api_consecutive_failures = 0
+
+
 def get_leetify_player(steam_id, auto_close=False):
     """
     auto_close = False (default): keeps driver alive (used for bulk)
     auto_close = True: ensures driver cleanup after call
     """
-
-    LEETIFY_API = _resolve_leetify_api_key()
+    global _api_consecutive_failures
 
     steam_id = _normalize_steam64_id(steam_id)
     redacted = logger.redact(steam_id)
+
+    # --- Circuit breaker: skip API after repeated failures ---
+    if _api_consecutive_failures >= _API_FAILURE_THRESHOLD:
+        logger.log(f"[FETCH] API circuit-breaker active, direct fallback {redacted}", level="DEBUG")
+        try:
+            return _get_leetify_profile_fallback(steam_id)
+        finally:
+            if auto_close:
+                close_driver()
+
+    LEETIFY_API = _resolve_leetify_api_key()
     logger.log(f"[FETCH] Leetify API start {redacted}", level="DEBUG")
 
     try:
@@ -163,10 +181,12 @@ def get_leetify_player(steam_id, auto_close=False):
 
         if r.status_code == 404:
             logger.log(f"[FETCH_FALLBACK] API 404 -> fallback {redacted}", level="INFO")
+            _api_consecutive_failures += 1
             return _get_leetify_profile_fallback(steam_id)
 
         if r.status_code != 200:
             logger.log(f"[FETCH_ERROR] API error {r.status_code} for {redacted}", level="INFO")
+            _api_consecutive_failures += 1
             raise Exception(f"Leetify API error ({r.status_code})")
 
         data = r.json()
@@ -178,6 +198,7 @@ def get_leetify_player(steam_id, auto_close=False):
             logger.log(f"[FETCH_FALLBACK] No premier -> fallback {redacted}", level="INFO")
             return _get_leetify_profile_fallback(steam_id)
 
+        _api_consecutive_failures = 0  # reset on success
         logger.log(f"[FETCH_SUCCESS] API success {redacted}", level="DEBUG")
 
         return {
@@ -187,10 +208,13 @@ def get_leetify_player(steam_id, auto_close=False):
             "premier_rating": premier,
             "leetify_rating": leetify,
             "total_matches": data.get("total_matches"),
-            "winrate": data.get("winrate")
+            "winrate": data.get("winrate"),
+            "rating_source": "api",
+            "rating_season": None,
         }
     except Exception as e:
         logger.log(f"[FETCH_ERROR] API fetch failed {redacted}: {e}", level="INFO")
+        _api_consecutive_failures += 1
         return _get_leetify_profile_fallback(steam_id)
     finally:
         if auto_close:
@@ -300,10 +324,12 @@ def _get_leetify_profile_fallback(steam_id):
             "premier_rating": settings.default_rating,
             "leetify_rating": None,
             "total_matches": None,
-            "winrate": None
+            "winrate": None,
+            "rating_source": "default",
+            "rating_season": None,
         }
 
-    logger.log(f"[FETCH_SUCCESS] Fallback success {redacted}", level="DEBUG")
+    logger.log(f"[FETCH_SUCCESS] Fallback success {redacted} season={player.get('season')}", level="DEBUG")
 
     return {
         "steam64_id": steam_id,
@@ -312,7 +338,9 @@ def _get_leetify_profile_fallback(steam_id):
         "premier_rating": player["premier_rating"],
         "leetify_rating": None,
         "total_matches": None,
-        "winrate": None
+        "winrate": None,
+        "rating_source": "fallback",
+        "rating_season": player.get("season"),
     }
 
 
@@ -361,25 +389,25 @@ def _parse_leetify_profile(html, steam_id):
                 continue
 
             cells = row.find_all("td")
-            if len(cells) < 2:
+            if not cells:
                 continue
 
-            max_rank_cell = cells[1]
-            large = max_rank_cell.select_one(".label-large")
-            small = max_rank_cell.select_one(".label-small")
+            # Priority: current rating (cells[0]) > last known (cells[1]) > skip
+            for cell in cells:
+                large = cell.select_one(".label-large")
+                small = cell.select_one(".label-small")
+                if not large or not small:
+                    continue
 
-            if not large or not small:
-                continue
-
-            number = (large.text + small.text).replace(",", "").strip()
-
-            if number.isdigit():
-                return {
-                    "steam64_id": steam_id,
-                    "name": name,
-                    "premier_rating": int(number),
-                    "season": season_number
-                }
+                number = (large.text + small.text).replace(",", "").strip()
+                if number.isdigit():
+                    return {
+                        "steam64_id": steam_id,
+                        "name": name,
+                        "premier_rating": int(number),
+                        "season": season_number
+                    }
+                break  # cell had labels but not a valid number, try next cell
 
     raise Exception("Premier rank not found in profile")
 

@@ -30,9 +30,23 @@ def init_db():
                 total_matches INTEGER,
                 winrate REAL,
                 added_at TEXT,
-                last_updated TEXT
+                last_updated TEXT,
+                rating_source TEXT,
+                rating_season INTEGER
             )
         """)
+
+        # Backward-compatible migration for existing players table.
+        player_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(players)").fetchall()
+        }
+        if "rating_source" not in player_columns:
+            conn.execute("ALTER TABLE players ADD COLUMN rating_source TEXT")
+            logger.log("[DB] Added players.rating_source column", level="INFO")
+        if "rating_season" not in player_columns:
+            conn.execute("ALTER TABLE players ADD COLUMN rating_season INTEGER")
+            logger.log("[DB] Added players.rating_season column", level="INFO")
 
         # --- MATCH META ---
         conn.execute("""
@@ -447,6 +461,10 @@ def init_db():
                 kills INTEGER NOT NULL DEFAULT 0,
                 headshot_kills INTEGER NOT NULL DEFAULT 0,
                 teamkills INTEGER NOT NULL DEFAULT 0,
+                damage INTEGER NOT NULL DEFAULT 0,
+                assists INTEGER NOT NULL DEFAULT 0,
+                flash_assists INTEGER NOT NULL DEFAULT 0,
+                flashes INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY (attacker_steamid64, victim_steamid64, match_id, map_number)
             )
@@ -457,6 +475,21 @@ def init_db():
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_kill_matrix_victim ON player_kill_matrix(victim_steamid64)"
         )
+
+        # Backward-compatible migration for existing databases.
+        pkm_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(player_kill_matrix)").fetchall()
+        }
+        for col, col_type in [
+            ("damage", "INTEGER NOT NULL DEFAULT 0"),
+            ("assists", "INTEGER NOT NULL DEFAULT 0"),
+            ("flash_assists", "INTEGER NOT NULL DEFAULT 0"),
+            ("flashes", "INTEGER NOT NULL DEFAULT 0"),
+        ]:
+            if col not in pkm_columns:
+                conn.execute(f"ALTER TABLE player_kill_matrix ADD COLUMN {col} {col_type}")
+                logger.log(f"[DB] Added player_kill_matrix.{col} column", level="INFO")
 
         weapon_seed_rows = list(iter_seed_weapon_rows())
         conn.executemany(
