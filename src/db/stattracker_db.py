@@ -530,6 +530,227 @@ def upsert_player_round_events_many(rows, conn=None):
         executemany_write(c, query, params)
 
 
+def upsert_player_kill_matrix_many(rows, conn=None):
+    if not rows:
+        return
+
+    query = """
+        INSERT INTO player_kill_matrix (
+            attacker_steamid64,
+            victim_steamid64,
+            match_id,
+            map_number,
+            kills,
+            headshot_kills,
+            teamkills,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(attacker_steamid64, victim_steamid64, match_id, map_number) DO UPDATE SET
+            kills = excluded.kills,
+            headshot_kills = excluded.headshot_kills,
+            teamkills = excluded.teamkills,
+            updated_at = excluded.updated_at
+    """
+
+    params = [
+        (
+            str(row.get("attacker_steamid64") or ""),
+            str(row.get("victim_steamid64") or ""),
+            str(row.get("match_id") or ""),
+            int(row.get("map_number") or 0),
+            int(row.get("kills") or 0),
+            int(row.get("headshot_kills") or 0),
+            int(row.get("teamkills") or 0),
+            str(row.get("updated_at") or ""),
+        )
+        for row in rows
+        if isinstance(row, dict)
+        and str(row.get("attacker_steamid64") or "").strip()
+        and str(row.get("victim_steamid64") or "").strip()
+        and str(row.get("match_id") or "").strip()
+    ]
+
+    if not params:
+        return
+
+    with optional_conn(conn, commit=True) as c:
+        executemany_write(c, query, params)
+
+
+def fetch_player_kill_relationships(steamid64, seasons=None):
+    """Return favourite target + arch-nemesis for a player.
+
+    Returns a list of rows with columns:
+        opponent_steamid64, opponent_name, kills_dealt, kills_received,
+        hs_dealt, hs_received, teamkills_dealt, teamkills_received
+    ordered by total interactions descending.
+    """
+    sid = str(steamid64 or "").strip()
+    if not sid:
+        return []
+
+    season_sql_a, season_params_a = _season_filter_clause("a.match_id", seasons)
+    season_sql_r, season_params_r = _season_filter_clause("r.match_id", seasons)
+
+    with get_conn() as conn:
+        return conn.execute(
+            f"""
+            SELECT
+                opponent,
+                COALESCE(p.name, opponent) AS opponent_name,
+                COALESCE(SUM(kills_dealt), 0) AS kills_dealt,
+                COALESCE(SUM(kills_received), 0) AS kills_received,
+                COALESCE(SUM(hs_dealt), 0) AS hs_dealt,
+                COALESCE(SUM(hs_received), 0) AS hs_received,
+                COALESCE(SUM(tk_dealt), 0) AS teamkills_dealt,
+                COALESCE(SUM(tk_received), 0) AS teamkills_received
+            FROM (
+                SELECT
+                    a.victim_steamid64 AS opponent,
+                    SUM(a.kills) AS kills_dealt,
+                    0 AS kills_received,
+                    SUM(a.headshot_kills) AS hs_dealt,
+                    0 AS hs_received,
+                    SUM(a.teamkills) AS tk_dealt,
+                    0 AS tk_received
+                FROM player_kill_matrix a
+                WHERE a.attacker_steamid64 = ?
+                    {season_sql_a}
+                GROUP BY a.victim_steamid64
+
+                UNION ALL
+
+                SELECT
+                    r.attacker_steamid64 AS opponent,
+                    0 AS kills_dealt,
+                    SUM(r.kills) AS kills_received,
+                    0 AS hs_dealt,
+                    SUM(r.headshot_kills) AS hs_received,
+                    0 AS tk_dealt,
+                    SUM(r.teamkills) AS tk_received
+                FROM player_kill_matrix r
+                WHERE r.victim_steamid64 = ?
+                    {season_sql_r}
+                GROUP BY r.attacker_steamid64
+            ) combined
+            LEFT JOIN players p ON p.steam64_id = combined.opponent
+            WHERE opponent != ?
+            GROUP BY opponent
+            ORDER BY (COALESCE(SUM(kills_dealt), 0) + COALESCE(SUM(kills_received), 0)) DESC
+            """,
+            (sid, *season_params_a, sid, *season_params_r, sid),
+        ).fetchall()
+
+
+def fetch_player_combat_summary(steamid64, seasons=None):
+    """Aggregate combat-related stats from match_player_stats + player_round_events."""
+    sid = str(steamid64 or "").strip()
+    if not sid:
+        return None
+
+    season_sql, season_params = _season_filter_clause("mps.match_id", seasons)
+
+    with get_conn() as conn:
+        return conn.execute(
+            f"""
+            SELECT
+                COUNT(*) AS maps_played,
+                COALESCE(SUM(mps.kills), 0) AS total_kills,
+                COALESCE(SUM(mps.deaths), 0) AS total_deaths,
+                COALESCE(SUM(mps.assists), 0) AS total_assists,
+                COALESCE(SUM(mps.damage), 0) AS total_damage,
+                COALESCE(SUM(mps.head_shot_kills), 0) AS total_hs_kills,
+                COALESCE(SUM(mps.flash_count), 0) AS total_flashes_thrown,
+                COALESCE(SUM(mps.enemies_flashed), 0) AS total_enemies_flashed,
+                COALESCE(SUM(mps.entry_count), 0) AS total_entry_attempts,
+                COALESCE(SUM(mps.entry_wins), 0) AS total_entry_wins,
+                COALESCE(SUM(mps.v1_count), 0) AS total_clutch_1v1,
+                COALESCE(SUM(mps.v1_wins), 0) AS total_clutch_1v1_wins,
+                COALESCE(SUM(mps.v2_count), 0) AS total_clutch_1v2,
+                COALESCE(SUM(mps.v2_wins), 0) AS total_clutch_1v2_wins,
+                COALESCE(SUM(mps.enemy5ks), 0) AS total_aces,
+                COALESCE(SUM(mps.enemy4ks), 0) AS total_4ks,
+                COALESCE(SUM(mps.enemy3ks), 0) AS total_3ks,
+                COALESCE(tk.total_teamkills, 0) AS total_teamkills
+            FROM match_player_stats mps
+            LEFT JOIN (
+                SELECT
+                    attacker_steamid64,
+                    SUM(teamkills) AS total_teamkills
+                FROM player_kill_matrix
+                WHERE attacker_steamid64 = ?
+                GROUP BY attacker_steamid64
+            ) tk ON tk.attacker_steamid64 = mps.steamid64
+            WHERE mps.steamid64 = ?
+                {season_sql}
+            """,
+            (sid, sid, *season_params),
+        ).fetchone()
+
+
+def fetch_player_elo_rating(steamid64):
+    """Return the current Elo rating for a player, or None if not yet rated."""
+    sid = str(steamid64 or "").strip()
+    if not sid:
+        return None
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT elo FROM elo_ratings WHERE steamid64 = ?",
+            (sid,),
+        ).fetchone()
+        return float(row["elo"]) if row else None
+
+
+def fetch_elo_seasons():
+    """Return all Elo season rows ordered by season ASC."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM elo_seasons ORDER BY season ASC"
+        ).fetchall()
+
+
+def fetch_player_elo_history(steamid64, season=None):
+    """Return chronological Elo snapshots for a player within a season."""
+    sid = str(steamid64 or "").strip()
+    if not sid:
+        return []
+
+    conditions = ["eh.steamid64 = ?"]
+    params = [sid]
+
+    if season is not None:
+        conditions.append(
+            "EXISTS (SELECT 1 FROM elo_match_season ems WHERE ems.match_id = eh.match_id AND ems.season = ?)"
+        )
+        params.append(int(season))
+
+    where = " AND ".join(conditions)
+
+    with get_conn() as conn:
+        return conn.execute(
+            f"""
+            SELECT
+                eh.match_id,
+                eh.elo_before,
+                eh.elo_after,
+                eh.elo_delta,
+                eh.result,
+                eh.team_name,
+                eh.adr,
+                COALESCE(mm.map_name, 'unknown') AS map_name,
+                COALESCE(mm.start_time, m.start_time, '') AS start_time
+            FROM elo_history eh
+            LEFT JOIN match_maps mm
+              ON mm.match_id = eh.match_id AND mm.map_number = 0
+            LEFT JOIN matches m ON m.match_id = eh.match_id
+            WHERE {where}
+            ORDER BY COALESCE(mm.start_time, m.start_time, eh.match_id) ASC
+            """,
+            tuple(params),
+        ).fetchall()
+
+
 def fetch_player_movement_match_series(steamid64, maps=None, seasons=None):
     sid = str(steamid64 or "").strip()
     if not sid:

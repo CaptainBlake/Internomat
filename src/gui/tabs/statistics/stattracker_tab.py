@@ -594,6 +594,13 @@ def _on_player_changed(parent, combo):
     refresh_stattracker(parent)
 
 
+def _on_compare_changed_top(parent, combo):
+    selected = str(combo.currentData() or "")
+    parent._stattracker_compare_player = selected
+    parent._stattracker_compare_players = [selected] if selected else []
+    refresh_stattracker(parent)
+
+
 def _build_statboard_section(title, stats_dict):
     """Build a stat section panel with paired label/value rows (2 pairs per row)."""
     frame = QFrame()
@@ -910,28 +917,19 @@ def _refresh_plot_only(parent):
             return {"x_labels": first["x_labels"], "match_keys": first.get("match_keys") or [], "multi_series": multi}
 
         if main_view == "players":
+            season_param = None
+            if selected_seasons and len(selected_seasons) == 1:
+                season_param = int(selected_seasons[0])
             if len(metrics) == 1:
-                data = stattracker.get_map_match_series(
-                    target_sid,
-                    maps=None,
-                    metric=metrics[0],
-                    seasons=selected_seasons,
+                return stattracker.get_player_elo_history_series(
+                    target_sid, metric=metrics[0], season=season_param,
                 )
-                data["series"] = _aggregate_map_series(data.get("series") or {}, metrics[0])
-                return data
-
-            first = stattracker.get_map_match_series(target_sid, maps=None, metric=metrics[0], seasons=selected_seasons)
-            multi = [{
-                "metric_label": first["metric_label"],
-                "series": _aggregate_map_series(first.get("series") or {}, metrics[0]),
-            }]
+            first = stattracker.get_player_elo_history_series(target_sid, metric=metrics[0], season=season_param)
+            multi = [{"metric_label": first["metric_label"], "series": first["series"]}]
             for m in metrics[1:]:
-                r = stattracker.get_map_match_series(target_sid, maps=None, metric=m, seasons=selected_seasons)
-                multi.append({
-                    "metric_label": r["metric_label"],
-                    "series": _aggregate_map_series(r.get("series") or {}, m),
-                })
-            return {"x_labels": first["x_labels"], "multi_series": multi}
+                r = stattracker.get_player_elo_history_series(target_sid, metric=m, season=season_param)
+                multi.append({"metric_label": r["metric_label"], "series": r["series"]})
+            return {"x_labels": first["x_labels"], "match_keys": first.get("match_keys") or [], "multi_series": multi}
 
         selected_map = str(getattr(parent, "_stattracker_selected_map", "all") or "all")
         map_name = selected_map if selected_map != "all" else None
@@ -1467,6 +1465,30 @@ def refresh_stattracker(parent):
     picker.blockSignals(False)
     picker.currentIndexChanged.connect(lambda _i: _on_player_changed(parent, picker))
     player_row.addWidget(picker)
+
+    # --- Compare-to picker ---
+    compare_label = QLabel("Compare to:")
+    compare_label.setStyleSheet("font-size: 11px; font-weight: 700; color: #6C8790;")
+    player_row.addWidget(compare_label)
+
+    compare_picker = QComboBox()
+    compare_picker.setMinimumWidth(200)
+    compare_picker.addItem("none", "")
+    compare_sid = str(getattr(parent, "_stattracker_compare_player", "") or "")
+    for option in player_options:
+        opt_sid = str(option.get("steamid64") or "")
+        if opt_sid and opt_sid != selected_sid:
+            compare_picker.addItem(option.get("player_name") or opt_sid, opt_sid)
+    cidx = compare_picker.findData(compare_sid)
+    if cidx < 0:
+        cidx = 0
+        parent._stattracker_compare_player = ""
+        parent._stattracker_compare_players = []
+    compare_picker.setCurrentIndex(cidx)
+    compare_picker.currentIndexChanged.connect(lambda _i: _on_compare_changed_top(parent, compare_picker))
+    parent._stattracker_compare_combo = compare_picker
+    player_row.addWidget(compare_picker)
+
     player_row.addStretch(1)
     panel_layout.addLayout(player_row)
 
@@ -1519,14 +1541,19 @@ def refresh_stattracker(parent):
     global_title.setStyleSheet("font-size: 13px; font-weight: 900; color: #21443C;")
     layout.addWidget(global_title)
 
+    _elo_val = kpis.get("elo_rating")
+    _elo_display = f"{_elo_val:.0f}" if _elo_val is not None else "-"
+
     global_table = _build_table(
         [
+            "Elo Rating",
             "Maps Played", "Win Rate", "K/D", "ADR",
             "Avg Kills", "Avg Deaths", "HS%",
             "Strafe %", "Avg Speed (m/s)", "Camp Time (s)",
         ],
         [
             [
+                _elo_display,
                 int(kpis.get("maps_played") or 0),
                 _fmt_pct(kpis.get("win_rate") or 0.0),
                 f"{float(kpis.get('kdr') or 0.0):.2f}",
@@ -1542,6 +1569,56 @@ def refresh_stattracker(parent):
     )
     _fit_single_row_table_height(global_table)
     layout.addWidget(global_table)
+
+    # --- Compared player Global Stats ---
+    compare_sid = str(getattr(parent, "_stattracker_compare_player", "") or "")
+    if compare_sid and compare_sid != selected_sid:
+        compare_dashboard = stattracker.get_player_dashboard(
+            compare_sid,
+            min_weapon_shots=1,
+            weapon_category="all",
+            seasons=getattr(parent, "_stattracker_selected_seasons", None),
+        )
+        compare_kpis = compare_dashboard.get("kpis") or {}
+
+        def _compare_label(sid):
+            for opt in player_options:
+                if str(opt.get("steamid64") or "") == str(sid or ""):
+                    return str(opt.get("player_name") or sid)
+            return str(sid or "?")
+
+        compare_title = QLabel(f"Global Stats — {_compare_label(compare_sid)}")
+        compare_title.setStyleSheet("font-size: 13px; font-weight: 900; color: #6C8790;")
+        layout.addWidget(compare_title)
+
+        _cmp_elo_val = compare_kpis.get("elo_rating")
+        _cmp_elo_display = f"{_cmp_elo_val:.0f}" if _cmp_elo_val is not None else "-"
+
+        compare_table = _build_table(
+            [
+                "Elo Rating",
+                "Maps Played", "Win Rate", "K/D", "ADR",
+                "Avg Kills", "Avg Deaths", "HS%",
+                "Strafe %", "Avg Speed (m/s)", "Camp Time (s)",
+            ],
+            [
+                [
+                    _cmp_elo_display,
+                    int(compare_kpis.get("maps_played") or 0),
+                    _fmt_pct(compare_kpis.get("win_rate") or 0.0),
+                    f"{float(compare_kpis.get('kdr') or 0.0):.2f}",
+                    f"{float(compare_kpis.get('adr') or 0.0):.1f}",
+                    f"{float(compare_kpis.get('avg_kills') or 0.0):.2f}",
+                    f"{float(compare_kpis.get('avg_deaths') or 0.0):.2f}",
+                    _fmt_pct(compare_kpis.get("hs_pct") or 0.0),
+                    _fmt_pct((float(compare_kpis.get("strafe_ratio") or 0.0) * 100.0)),
+                    f"{float(compare_kpis.get('avg_speed_m_s') or 0.0):.2f}",
+                    f"{float(compare_kpis.get('camp_time_s') or 0.0):.1f}",
+                ]
+            ],
+        )
+        _fit_single_row_table_height(compare_table)
+        layout.addWidget(compare_table)
 
     # --- Insight Selection ---
     selected_category = str(getattr(parent, "_stattracker_weapon_category", "all") or "all")

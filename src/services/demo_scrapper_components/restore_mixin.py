@@ -23,6 +23,7 @@ from db.stattracker_db import (
     upsert_player_round_movement_stats_many,
     upsert_player_round_timeline_bins_many,
     upsert_player_round_events_many,
+    upsert_player_kill_matrix_many,
 )
 from analytics import demo_payload_analysis
 from services import demo_cache
@@ -996,6 +997,54 @@ class DemoScrapperRestoreMixin:
 
         return rows
 
+    def _build_kill_matrix_rows(self, *, match_id, map_number, parsed_payload):
+        kills_table = self._iter_rows((parsed_payload or {}).get("kills"))
+        if not kills_table:
+            return []
+
+        aggregated = {}
+        for row in kills_table:
+            attacker = self._to_steamid64_string(
+                self._pick_value(row, ["attacker_steamid", "attacker_steamid64", "attacker"])
+            )
+            victim = self._to_steamid64_string(
+                self._pick_value(row, ["victim_steamid", "victim_steamid64", "victim"])
+            )
+            if not attacker or not victim or attacker == victim:
+                continue
+
+            attacker_side = self._normalize_side_label(
+                self._pick_value(row, ["attacker_side", "attacker_team_name"])
+            )
+            victim_side = self._normalize_side_label(
+                self._pick_value(row, ["victim_side", "victim_team_name"])
+            )
+            is_teamkill = 1 if (attacker_side and victim_side and attacker_side == victim_side) else 0
+            is_headshot = 1 if self._pick_value(row, ["is_headshot", "headshot"]) else 0
+
+            key = (attacker, victim)
+            if key not in aggregated:
+                aggregated[key] = {"kills": 0, "headshot_kills": 0, "teamkills": 0}
+            aggregated[key]["kills"] += 1
+            aggregated[key]["headshot_kills"] += is_headshot
+            aggregated[key]["teamkills"] += is_teamkill
+
+        now = datetime.utcnow().isoformat()
+        rows = []
+        for (attacker, victim), stats in aggregated.items():
+            rows.append({
+                "attacker_steamid64": str(attacker),
+                "victim_steamid64": str(victim),
+                "match_id": str(match_id),
+                "map_number": int(map_number),
+                "kills": stats["kills"],
+                "headshot_kills": stats["headshot_kills"],
+                "teamkills": stats["teamkills"],
+                "updated_at": now,
+            })
+
+        return rows
+
     def _restore_db_entities_from_payload(
         self,
         match_id,
@@ -1115,6 +1164,11 @@ class DemoScrapperRestoreMixin:
             map_number=target_map_number,
             parsed_payload=parsed_payload,
         )
+        kill_matrix_rows = self._build_kill_matrix_rows(
+            match_id=target_match_id,
+            map_number=target_map_number,
+            parsed_payload=parsed_payload,
+        )
 
         self._ensure_not_cancelled(stage="restore")
 
@@ -1158,6 +1212,7 @@ class DemoScrapperRestoreMixin:
             upsert_player_round_movement_stats_many(movement_round_rows, conn=conn)
             upsert_player_round_timeline_bins_many(movement_bin_rows, conn=conn)
             upsert_player_round_events_many(round_event_rows, conn=conn)
+            upsert_player_kill_matrix_many(kill_matrix_rows, conn=conn)
 
             set_match_has_demo(match_id=target_match_id, has_demo=True, conn=conn)
 

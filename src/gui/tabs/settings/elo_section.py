@@ -19,8 +19,7 @@ from gui.tabs.settings.settings_helpers import (
     date_from_str,
 )
 import services.logger as logger
-import db.settings_db as settings_db
-from db.connection_db import get_conn
+import db.matches_db as matches_db
 from core.stats.elo import recalculate_elo, bind_current_settings_tuning_to_season
 from datetime import datetime, timedelta
 import json
@@ -237,20 +236,10 @@ def build_elo_section(parent, setting_bindings, mark_dirty, sidebar, callbacks):
                     _set_date_if_changed(end_edit, end_max)
 
     def _first_match_date_or_none():
-        with get_conn() as conn:
-            row = conn.execute(
-                """
-                SELECT TRIM(COALESCE(NULLIF(end_time, ''), NULLIF(start_time, ''), NULLIF(created_at, ''), '')) AS played_at
-                FROM matches
-                WHERE TRIM(COALESCE(NULLIF(end_time, ''), NULLIF(start_time, ''), NULLIF(created_at, ''), '')) <> ''
-                ORDER BY played_at ASC
-                LIMIT 1
-                """
-            ).fetchone()
-
-        raw = str((row["played_at"] if row else "") or "").strip()
+        raw = matches_db.fetch_first_match_played_at()
         if not raw:
             return None
+        raw = raw.strip()
         try:
             return datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
         except Exception:
@@ -415,16 +404,10 @@ def build_elo_section(parent, setting_bindings, mark_dirty, sidebar, callbacks):
 
     def _count_matches_for_season(season_idx, seasons_payload):
         count = 0
-        with get_conn() as conn:
-            rows = conn.execute(
-                """
-                SELECT TRIM(COALESCE(NULLIF(end_time, ''), NULLIF(start_time, ''), NULLIF(created_at, ''), '')) AS played_at
-                FROM matches
-                """
-            ).fetchall()
+        raw_dates = matches_db.fetch_all_match_played_dates()
 
-        for r in rows:
-            raw = str(r["played_at"] or "").strip()
+        for raw in raw_dates:
+            raw = str(raw or "").strip()
             if not raw:
                 continue
             try:
@@ -567,8 +550,8 @@ def build_elo_section(parent, setting_bindings, mark_dirty, sidebar, callbacks):
         existing_payload = str(getattr(settings, "elo_seasons_json", "[]") or "[]")
         seasons_changed = payload != existing_payload
 
-        settings_db.set("elo_seasons_json", payload)
         settings.elo_seasons_json = payload
+        settings.save_keys(["elo_seasons_json"])
 
         if seasons_changed:
             _recalculate_elo_safe("season save", show_popup=True)
@@ -794,8 +777,8 @@ def build_elo_section(parent, setting_bindings, mark_dirty, sidebar, callbacks):
 
         try:
             for key, value in tuning_payload.items():
-                settings_db.set(key, value)
                 setattr(settings, key, value)
+            settings.save_keys(tuning_payload.keys())
 
             target_season = _resolve_tuning_target_season(today, seasons_now)
             bind_current_settings_tuning_to_season(target_season, source="settings_ui")

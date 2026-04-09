@@ -437,6 +437,27 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_player_round_events_match_map ON player_round_events(match_id, map_number, round_num)"
         )
 
+        # --- PLAYER KILL MATRIX ---
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS player_kill_matrix (
+                attacker_steamid64 TEXT NOT NULL,
+                victim_steamid64 TEXT NOT NULL,
+                match_id TEXT NOT NULL,
+                map_number INTEGER NOT NULL,
+                kills INTEGER NOT NULL DEFAULT 0,
+                headshot_kills INTEGER NOT NULL DEFAULT 0,
+                teamkills INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (attacker_steamid64, victim_steamid64, match_id, map_number)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_kill_matrix_attacker ON player_kill_matrix(attacker_steamid64)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_kill_matrix_victim ON player_kill_matrix(victim_steamid64)"
+        )
+
         weapon_seed_rows = list(iter_seed_weapon_rows())
         conn.executemany(
             """

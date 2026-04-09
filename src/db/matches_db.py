@@ -566,3 +566,30 @@ def get_map_play_counts_for_season(season, conn=None):
         str(row["map_name"]): int(row["played_count"] or 0)
         for row in rows
     }
+
+
+def fetch_first_match_played_at(conn=None):
+    """Return the earliest match played_at timestamp as a string, or None."""
+    with optional_conn(conn) as c:
+        row = c.execute(
+            """
+            SELECT TRIM(COALESCE(NULLIF(end_time, ''), NULLIF(start_time, ''), NULLIF(created_at, ''), '')) AS played_at
+            FROM matches
+            WHERE TRIM(COALESCE(NULLIF(end_time, ''), NULLIF(start_time, ''), NULLIF(created_at, ''), '')) <> ''
+            ORDER BY played_at ASC
+            LIMIT 1
+            """
+        ).fetchone()
+    return str(row["played_at"]) if row else None
+
+
+def fetch_all_match_played_dates(conn=None):
+    """Return all match played_at timestamps as a list of strings."""
+    with optional_conn(conn) as c:
+        rows = c.execute(
+            """
+            SELECT TRIM(COALESCE(NULLIF(end_time, ''), NULLIF(start_time, ''), NULLIF(created_at, ''), '')) AS played_at
+            FROM matches
+            """
+        ).fetchall()
+    return [str(r["played_at"] or "") for r in rows]

@@ -558,7 +558,10 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
 
     # [4] Metric selector (timeline only) – multi-select _CheckableCombo
     if is_timeline:
-        if main_view in {"maps", "players"}:
+        if main_view == "players":
+            opts = stattracker.get_players_plot_metric_options()
+            default_metric = "elo"
+        elif main_view == "maps":
             opts = stattracker.get_map_plot_metric_options()
             default_metric = "kd_ratio"
         elif main_view == "movement":
@@ -987,25 +990,95 @@ def build_insight_section(parent, layout, dashboard, selected_sid, selected_cate
             layout.addWidget(hint)
 
     elif main_view == "players":
-        kpis = dashboard.get("kpis") or {}
-        player_statboard = _build_statboard_section(
-            "Player Profile",
+        selected_seasons = getattr(parent, "_stattracker_selected_seasons", None)
+        combat = stattracker.get_player_combat_summary(selected_sid, seasons=selected_seasons)
+        relationships = stattracker.get_player_kill_relationships(selected_sid, seasons=selected_seasons)
+
+        # --- Combat KPI cards ---
+        combat_statboard = _build_statboard_section(
+            "Combat Summary",
             {
-                "Maps Played": int(kpis.get("maps_played") or 0),
-                "Win Rate": _fmt_pct(kpis.get("win_rate") or 0.0),
-                "K/D": f"{float(kpis.get('kdr') or 0.0):.2f}",
-                "ADR": f"{float(kpis.get('adr') or 0.0):.1f}",
-                "Avg Kills": f"{float(kpis.get('avg_kills') or 0.0):.2f}",
-                "Avg Deaths": f"{float(kpis.get('avg_deaths') or 0.0):.2f}",
-                "Avg Assists": f"{float(kpis.get('avg_assists') or 0.0):.2f}",
-                "HS%": _fmt_pct(kpis.get("hs_pct") or 0.0),
-                "Avg KAST": "-" if kpis.get("avg_kast") is None else _fmt_pct(kpis.get("avg_kast") * 100.0),
-                "Avg Impact": "-" if kpis.get("avg_impact") is None else f"{float(kpis.get('avg_impact') or 0.0):.2f}",
-                "Avg Rating": "-" if kpis.get("avg_rating") is None else f"{float(kpis.get('avg_rating') or 0.0):.2f}",
-                "Performance": f"{float(kpis.get('performance_index') or 0.0):.1f}",
+                "Flashes Thrown": int(combat.get("total_flashes_thrown") or 0),
+                "Enemies Flashed": int(combat.get("total_enemies_flashed") or 0),
+                "Entry Attempts": int(combat.get("total_entry_attempts") or 0),
+                "Entry Wins": int(combat.get("total_entry_wins") or 0),
+                "Entry Win %": _fmt_pct(combat.get("entry_success_pct") or 0.0),
+                "Teamkills": int(combat.get("total_teamkills") or 0),
+                "1v1 Clutches": f"{int(combat.get('total_clutch_1v1_wins') or 0)}/{int(combat.get('total_clutch_1v1') or 0)}",
+                "1v2 Clutches": f"{int(combat.get('total_clutch_1v2_wins') or 0)}/{int(combat.get('total_clutch_1v2') or 0)}",
+                "Aces": int(combat.get("total_aces") or 0),
+                "4Ks": int(combat.get("total_4ks") or 0),
+                "3Ks": int(combat.get("total_3ks") or 0),
+                "HS%": _fmt_pct(combat.get("hs_pct") or 0.0),
             },
         )
-        layout.addWidget(player_statboard)
+        layout.addWidget(combat_statboard)
+
+        # --- Kill relationship highlights ---
+        fav = relationships.get("favourite_target")
+        nem = relationships.get("arch_nemesis")
+        if fav or nem:
+            rel_cards = {}
+            if fav:
+                rel_cards["Favourite Target"] = f"{fav['opponent_name']}  ({fav['kills_dealt']} kills)"
+                rel_cards["  HS Dealt"] = str(fav.get("hs_dealt") or 0)
+            if nem:
+                rel_cards["Arch-Nemesis"] = f"{nem['opponent_name']}  (died {nem['kills_received']}x)"
+                rel_cards["  HS Received"] = str(nem.get("hs_received") or 0)
+
+            rel_statboard = _build_statboard_section("Kill Relationships", rel_cards)
+            layout.addWidget(rel_statboard)
+
+        # --- Full kill relationships table ---
+        rel_rows = relationships.get("rows") or []
+        if rel_rows:
+            rel_table = _build_table(
+                ["Opponent", "Kills Dealt", "Kills Received", "Net", "HS Dealt", "HS Received", "TK Dealt", "TK Received"],
+                [
+                    [
+                        r["opponent_name"],
+                        r["kills_dealt"],
+                        r["kills_received"],
+                        r["net"],
+                        r["hs_dealt"],
+                        r["hs_received"],
+                        r["teamkills_dealt"],
+                        r["teamkills_received"],
+                    ]
+                    for r in rel_rows
+                ],
+            )
+            layout.addWidget(rel_table, 1)
+
+        # --- Compared player combat summary ---
+        compare_sid = str(getattr(parent, "_stattracker_compare_player", "") or "")
+        if compare_sid and compare_sid != selected_sid:
+            compare_combat = stattracker.get_player_combat_summary(compare_sid, seasons=selected_seasons)
+            if compare_combat:
+                def _compare_name(sid):
+                    for opt in (getattr(parent, "_stattracker_player_options", []) or []):
+                        if str(opt.get("steamid64") or "") == str(sid or ""):
+                            return str(opt.get("player_name") or sid)
+                    return str(sid or "?")
+
+                cmp_statboard = _build_statboard_section(
+                    f"Combat Summary — {_compare_name(compare_sid)}",
+                    {
+                        "Flashes Thrown": int(compare_combat.get("total_flashes_thrown") or 0),
+                        "Enemies Flashed": int(compare_combat.get("total_enemies_flashed") or 0),
+                        "Entry Attempts": int(compare_combat.get("total_entry_attempts") or 0),
+                        "Entry Wins": int(compare_combat.get("total_entry_wins") or 0),
+                        "Entry Win %": _fmt_pct(compare_combat.get("entry_success_pct") or 0.0),
+                        "Teamkills": int(compare_combat.get("total_teamkills") or 0),
+                        "1v1 Clutches": f"{int(compare_combat.get('total_clutch_1v1_wins') or 0)}/{int(compare_combat.get('total_clutch_1v1') or 0)}",
+                        "1v2 Clutches": f"{int(compare_combat.get('total_clutch_1v2_wins') or 0)}/{int(compare_combat.get('total_clutch_1v2') or 0)}",
+                        "Aces": int(compare_combat.get("total_aces") or 0),
+                        "4Ks": int(compare_combat.get("total_4ks") or 0),
+                        "3Ks": int(compare_combat.get("total_3ks") or 0),
+                        "HS%": _fmt_pct(compare_combat.get("hs_pct") or 0.0),
+                    },
+                )
+                layout.addWidget(cmp_statboard)
 
     else:  # weapons (table or statboard)
         if selected_weapon != "all":

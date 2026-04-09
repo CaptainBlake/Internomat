@@ -75,5 +75,11 @@ class Settings:
             str(self.auto_import_players_from_history or self.auto_import_maps_from_history),
         )
 
+    def save_keys(self, keys):
+        """Persist only the listed settings keys to the database."""
+        for key in keys:
+            value = getattr(self, key)
+            settings_db.set(key, str(value))
+
 
 settings = Settings()
