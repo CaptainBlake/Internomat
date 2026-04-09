@@ -1,57 +1,34 @@
 # Internomat
 
-Internomat is a desktop tool for creating balanced CS2 teams.
+Internomat is a desktop app for organizing CS2 in-house matches.
 
-Players are added via their Steam profile link. The application automatically retrieves their Leetify rating and generates two teams with similar overall strength.
-
-It also includes a Map Roulette, Leaderboard and Statistics from private game servers (work in progress)
-
----
+Current scope:
+- Build balanced teams from your player pool (Prime/Elo aware).
+- Manage a map pool and run animated map roulette.
+- Sync match history from MatchZy and demo files.
+- View leaderboard, history stats, and stat tracker views.
 
 ## Download
 
-Latest release:  
+Latest release:
 https://github.com/CaptainBlake/Internomat/releases
-
----
 
 ## Quick Start
 
-1. Download the installer from the Releases page  
-2. Run the setup wizard and choose your installation directory  
-3. Optionally enable desktop shortcut creation during setup  
-4. Start the application  
-5. Add players via Steam links  
-6. Have fun
+1. Download and run the latest installer.
+2. Start Internomat.
+3. Add players using Steam profile URLs.
+4. Build teams and run map roulette.
 
----
+## Documentation
 
-## Shipping (Maintainers)
-
-Create shipping artifacts locally:
-
-```bash
-python src/build.py --installer --version 0.1.0
-```
-
-This produces:
-
-- `dist/Internomat/` (one-folder app bundle)
-- `dist/Internomat-Setup-0.1.0.exe` (installer wizard)
-
-Installer config lives in `installer/Internomat.iss`.
-
-For signing support and advanced packaging options, see `DEVELOPER.md`.
-
----
-
-## Development
-
-See `DEVELOPER.md` for setup, build instructions, and technical details.
-
----
+- User-facing capabilities: docs/app_capabilities.md
+- Developer index: DEVELOPER.md
+- Local setup and run: docs/development.md
+- Build and release: docs/build_and_release.md
+- Client versioning policy: docs/update_client_versioning.md
 
 ## License
 
-GNU General Public License v3.0  
+GNU General Public License v3.0
 https://www.gnu.org/licenses/gpl-3.0.html
