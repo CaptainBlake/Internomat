@@ -12,9 +12,6 @@ from gui.tabs.settings.settings_helpers import create_section
 from core.settings.settings import settings
 from core import io_service
 from core.pathing import data_path
-from db.connection_db import DB_FILE, get_conn
-from db.init_db import init_db
-import db.settings_db as settings_db
 from services import demo_cache
 import services.logger as logger
 from pathlib import Path
@@ -40,11 +37,7 @@ def run_clear_cache_dialog(parent, on_data_updated=None, on_players_data_updated
     demos_dir = base_dir / "demos"
     parsed_dir = demos_dir / "parsed"
     logs_dir = base_dir / "log"
-    db_files = [
-        Path(DB_FILE),
-        Path(str(DB_FILE) + "-wal"),
-        Path(str(DB_FILE) + "-shm"),
-    ]
+    db_files = io_service.get_db_file_paths()
 
     dialog = QDialog(parent)
     dialog.setWindowTitle("Delete Data")
@@ -171,45 +164,11 @@ def run_clear_cache_dialog(parent, on_data_updated=None, on_players_data_updated
             logger.set_log_export_enabled(prev_export_state)
 
         if selected_database:
-            settings_snapshot = []
-            players_snapshot = []
-            if not selected_include_settings:
-                try:
-                    with get_conn() as conn:
-                        rows = conn.execute("SELECT key, value FROM settings").fetchall()
-                        settings_snapshot = [(str(r["key"]), str(r["value"])) for r in rows]
-                except Exception as exc:
-                    logger.log_error(f"[CLEANUP] Failed to snapshot settings before DB deletion: {exc}")
-
-            if not selected_include_players:
-                try:
-                    players_snapshot = io_service.get_players_payload()
-                except Exception as exc:
-                    logger.log_error(f"[CLEANUP] Failed to snapshot players before DB deletion: {exc}")
-
-            db_deleted = 0
-            for db_path in db_files:
-                try:
-                    if db_path.exists():
-                        db_path.unlink()
-                        db_deleted += 1
-                except Exception as exc:
-                    logger.log_error(f"[CLEANUP] Failed to delete database file {db_path}: {exc}")
-            total_deleted += db_deleted
-            try:
-                init_db()
-                if not selected_include_settings and settings_snapshot:
-                    for key, value in settings_snapshot:
-                        settings_db.set(key, value)
-                    logger.log_info(f"[CLEANUP] Restored settings entries={len(settings_snapshot)}")
-
-                if not selected_include_players and players_snapshot:
-                    restored_players = io_service.import_players_payload(players_snapshot)
-                    logger.log_info(f"[CLEANUP] Restored player-list entries={restored_players}")
-
-                logger.log_info("[CLEANUP] Reinitialized database after deletion")
-            except Exception as exc:
-                logger.log_error(f"[CLEANUP] Database reinitialize failed: {exc}")
+            result = io_service.reset_database(
+                keep_settings=not selected_include_settings,
+                keep_players=not selected_include_players,
+            )
+            total_deleted += result.get("db_files_deleted", 0)
 
         logger.log_info(f"[CLEANUP] Deleted selected data entries={total_deleted}")
 

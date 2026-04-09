@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from db import elo_db
 from db.connection_db import get_conn, write_transaction
 import db.settings_db as settings_db
+import db.matches_db as matches_db
 import services.logger as logger
 
 
@@ -804,3 +805,39 @@ def _compute_elo(outcomes, adr_lookup, season_tune_map, all_players, current_sea
             season_rating_rows_flat.append(row)
 
     return history_rows, rating_rows, season_rating_rows_flat, final_anchor, current_season
+
+
+# ── Match-date helpers (for GUI season editors) ──────────────────────
+
+
+def get_first_match_date():
+    """Return the earliest match date as a `datetime.date`, or *None*."""
+    raw = matches_db.fetch_first_match_played_at()
+    if not raw:
+        return None
+    raw = raw.strip()
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
+    except Exception:
+        try:
+            return datetime.fromisoformat(raw[:10]).date()
+        except Exception:
+            return None
+
+
+def get_match_dates():
+    """Return all match dates as a list of `datetime.date` (skipping unparseable)."""
+    raw_dates = matches_db.fetch_all_match_played_dates()
+    result = []
+    for raw in raw_dates:
+        raw = str(raw or "").strip()
+        if not raw:
+            continue
+        try:
+            result.append(datetime.fromisoformat(raw.replace("Z", "+00:00")).date())
+        except Exception:
+            try:
+                result.append(datetime.fromisoformat(raw[:10]).date())
+            except Exception:
+                continue
+    return result

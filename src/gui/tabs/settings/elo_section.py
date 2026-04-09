@@ -19,8 +19,12 @@ from gui.tabs.settings.settings_helpers import (
     date_from_str,
 )
 import services.logger as logger
-import db.matches_db as matches_db
-from core.stats.elo import recalculate_elo, bind_current_settings_tuning_to_season
+from core.stats.elo import (
+    recalculate_elo,
+    bind_current_settings_tuning_to_season,
+    get_first_match_date,
+    get_match_dates,
+)
 from datetime import datetime, timedelta
 import json
 
@@ -236,17 +240,7 @@ def build_elo_section(parent, setting_bindings, mark_dirty, sidebar, callbacks):
                     _set_date_if_changed(end_edit, end_max)
 
     def _first_match_date_or_none():
-        raw = matches_db.fetch_first_match_played_at()
-        if not raw:
-            return None
-        raw = raw.strip()
-        try:
-            return datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
-        except Exception:
-            try:
-                return datetime.fromisoformat(raw[:10]).date()
-            except Exception:
-                return None
+        return get_first_match_date()
 
     def _build_season_rows(seasons_data):
         season_rows.clear()
@@ -404,19 +398,9 @@ def build_elo_section(parent, setting_bindings, mark_dirty, sidebar, callbacks):
 
     def _count_matches_for_season(season_idx, seasons_payload):
         count = 0
-        raw_dates = matches_db.fetch_all_match_played_dates()
+        all_dates = get_match_dates()
 
-        for raw in raw_dates:
-            raw = str(raw or "").strip()
-            if not raw:
-                continue
-            try:
-                d = datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
-            except Exception:
-                try:
-                    d = datetime.fromisoformat(raw[:10]).date()
-                except Exception:
-                    continue
+        for d in all_dates:
             resolved = _season_for_date(d, seasons_payload)
             if resolved == season_idx:
                 count += 1
