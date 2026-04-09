@@ -62,16 +62,14 @@ def upsert_player(player, mode="full", conn=None):
     with optional_conn(conn, commit=True) as c:
         if mode == "import":
             execute_write(c, """
-                INSERT INTO players (steam64_id, name, added_at, last_updated)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO players (steam64_id, name, added_at)
+                VALUES (?, ?, ?)
                 ON CONFLICT(steam64_id) DO UPDATE SET
-                    name=excluded.name,
-                    last_updated=excluded.last_updated
+                    name=excluded.name
             """, (
                 player["steam64_id"],
                 player["name"],
                 now,
-                now
             ))
         else:
             execute_write(c, """

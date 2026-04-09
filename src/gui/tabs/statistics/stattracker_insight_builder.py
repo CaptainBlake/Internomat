@@ -105,7 +105,7 @@ def _on_season_multi_changed(parent):
     else:
         checked = [int(s) for s in (season_combo.checked_data() or [])]
         all_known = [int(s) for s in stattracker.get_season_options()]
-        parent._stattracker_selected_seasons = None if set(checked) == set(all_known) else checked
+        parent._stattracker_selected_seasons = None if (not checked or set(checked) == set(all_known)) else checked
     from .stattracker_tab import refresh_stattracker
     refresh_stattracker(parent)
 

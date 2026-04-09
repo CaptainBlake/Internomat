@@ -650,6 +650,7 @@ def fetch_player_combat_summary(steamid64, seasons=None):
         return None
 
     season_sql, season_params = _season_filter_clause("mps.match_id", seasons)
+    tk_season_sql, tk_season_params = _season_filter_clause("pkm.match_id", seasons)
 
     with get_conn() as conn:
         return conn.execute(
@@ -678,14 +679,15 @@ def fetch_player_combat_summary(steamid64, seasons=None):
                 SELECT
                     attacker_steamid64,
                     SUM(teamkills) AS total_teamkills
-                FROM player_kill_matrix
+                FROM player_kill_matrix pkm
                 WHERE attacker_steamid64 = ?
+                    {tk_season_sql}
                 GROUP BY attacker_steamid64
             ) tk ON tk.attacker_steamid64 = mps.steamid64
             WHERE mps.steamid64 = ?
                 {season_sql}
             """,
-            (sid, sid, *season_params),
+            (sid, *tk_season_params, sid, *season_params),
         ).fetchone()
 
 
