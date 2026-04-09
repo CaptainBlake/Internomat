@@ -1,3 +1,5 @@
+import sqlite3
+
 from .connection_db import executemany_write, get_conn, optional_conn
 
 _WEAPON_FROM = """
@@ -736,10 +738,16 @@ def fetch_player_elo_rating(steamid64):
     if not sid:
         return None
     with get_conn() as conn:
-        row = conn.execute(
-            "SELECT elo FROM elo_ratings WHERE steamid64 = ?",
-            (sid,),
-        ).fetchone()
+        try:
+            row = conn.execute(
+                "SELECT elo FROM elo_ratings WHERE steamid64 = ?",
+                (sid,),
+            ).fetchone()
+        except sqlite3.OperationalError as exc:
+            # Some lightweight test databases do not include Elo tables.
+            if "no such table" in str(exc).lower() and "elo_ratings" in str(exc).lower():
+                return None
+            raise
         return float(row["elo"]) if row else None
 
 
