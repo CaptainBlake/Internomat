@@ -589,10 +589,11 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_premier_history_player
             ON premier_rating_history(steamid64, game_played_at)
         """)
+        # Migration: partial index → full index (ON CONFLICT needs non-partial).
+        conn.execute("DROP INDEX IF EXISTS uq_premier_history_match")
         conn.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS uq_premier_history_match
             ON premier_rating_history(steamid64, leetify_match_id)
-            WHERE leetify_match_id IS NOT NULL
         """)
 
         # --- DEFAULT MAPS ---
