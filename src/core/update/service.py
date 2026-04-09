@@ -10,7 +10,11 @@ import requests
 from core.version import APP_VERSION, RELEASE_CONFIG
 
 
-_VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
+_VERSION_RE = re.compile(
+    r"^v?(\d+)\.(\d+)\.(\d+)"
+    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
 
 
 @dataclass(frozen=True)
@@ -37,11 +41,73 @@ class DownloadedInstaller:
     verified_with_release_checksums: bool
 
 
-def _parse_version(version_text: str) -> tuple[int, int, int]:
+def _parse_prerelease_identifiers(prerelease: str) -> tuple[int | str, ...]:
+    parts: list[int | str] = []
+    for part in prerelease.split("."):
+        if part.isdigit():
+            parts.append(int(part))
+        else:
+            parts.append(part)
+    return tuple(parts)
+
+
+def _parse_version(version_text: str) -> tuple[int, int, int, tuple[int | str, ...]]:
     match = _VERSION_RE.match((version_text or "").strip())
     if not match:
         raise ValueError(f"Unsupported version format: {version_text}")
-    return tuple(int(part) for part in match.groups())
+    major = int(match.group(1))
+    minor = int(match.group(2))
+    patch = int(match.group(3))
+    prerelease = (match.group(4) or "").strip()
+    prerelease_ids = _parse_prerelease_identifiers(prerelease) if prerelease else ()
+    return major, minor, patch, prerelease_ids
+
+
+def _compare_prerelease(
+    left: tuple[int | str, ...],
+    right: tuple[int | str, ...],
+) -> int:
+    # Per semver: a normal release has higher precedence than prerelease.
+    if not left and not right:
+        return 0
+    if not left:
+        return 1
+    if not right:
+        return -1
+
+    for l_id, r_id in zip(left, right):
+        l_is_num = isinstance(l_id, int)
+        r_is_num = isinstance(r_id, int)
+
+        if l_is_num and r_is_num:
+            if l_id != r_id:
+                return 1 if l_id > r_id else -1
+            continue
+
+        if l_is_num != r_is_num:
+            # Numeric identifiers have lower precedence than non-numeric.
+            return -1 if l_is_num else 1
+
+        l_text = str(l_id)
+        r_text = str(r_id)
+        if l_text != r_text:
+            return 1 if l_text > r_text else -1
+
+    if len(left) == len(right):
+        return 0
+    return 1 if len(left) > len(right) else -1
+
+
+def _compare_versions(left: str, right: str) -> int:
+    l_major, l_minor, l_patch, l_pre = _parse_version(left)
+    r_major, r_minor, r_patch, r_pre = _parse_version(right)
+
+    l_core = (l_major, l_minor, l_patch)
+    r_core = (r_major, r_minor, r_patch)
+    if l_core != r_core:
+        return 1 if l_core > r_core else -1
+
+    return _compare_prerelease(l_pre, r_pre)
 
 
 def _normalize_version(version_text: str) -> str:
@@ -157,9 +223,7 @@ def check_latest_release(timeout_seconds: float = 8.0) -> UpdateCheckResult:
     tag_name = str(payload.get("tag_name") or "").strip()
     latest_version = _normalize_version(tag_name)
 
-    current_tuple = _parse_version(APP_VERSION)
-    latest_tuple = _parse_version(latest_version)
-    update_available = latest_tuple > current_tuple
+    update_available = _compare_versions(latest_version, APP_VERSION) > 0
 
     assets = payload.get("assets") or []
     installer_asset = _best_installer_asset(assets)
