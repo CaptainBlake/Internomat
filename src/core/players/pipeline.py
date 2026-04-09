@@ -50,7 +50,8 @@ def update_players_pipeline(
             if on_finish:
                 on_finish()
             return
-        
+
+        profile_scrapper.reset_api_circuit_breaker()
         total = len(steam_ids)
         seen = set()
 
@@ -81,3 +82,9 @@ def update_players_pipeline(
     except Exception as e:
         if on_error:
             on_error(e)
+    finally:
+        # Ensure fallback Selenium is not kept alive after update cycles.
+        try:
+            profile_scrapper.close_driver()
+        except Exception as e:
+            logger.log(f"[UPDATE] Selenium close after pipeline failed: {e}", level="DEBUG")

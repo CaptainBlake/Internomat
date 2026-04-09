@@ -119,6 +119,8 @@ def _build_recent_maps_table(rows, on_row_activated=None):
     table.setAlternatingRowColors(True)
     table.setShowGrid(True)
     table.setGridStyle(Qt.PenStyle.SolidLine)
+    table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
     table.setMouseTracking(True)
     table.verticalHeader().setVisible(False)
     table.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
@@ -531,10 +533,10 @@ def _start_statistics_update(parent, render_after_update):
     def worker():
         try:
             overview = statistics.get_overview()
-            recent_rows = statistics.get_recent_maps(10)
+            recent_rows = statistics.get_recent_maps()
 
             scoreboards = {}
-            for row in recent_rows:
+            for row in recent_rows[:20]:
                 match_id = str(row.get("match_id"))
                 map_number = int(row.get("map_number") or 0)
                 key = (match_id, map_number)

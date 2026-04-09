@@ -1,4 +1,5 @@
 from .connection_db import get_conn
+from .elo_db import init_elo_tables
 from .weapon_catalog import iter_seed_alias_rows, iter_seed_weapon_rows
 import services.logger as logger
 
@@ -29,9 +30,23 @@ def init_db():
                 total_matches INTEGER,
                 winrate REAL,
                 added_at TEXT,
-                last_updated TEXT
+                last_updated TEXT,
+                rating_source TEXT,
+                rating_season INTEGER
             )
         """)
+
+        # Backward-compatible migration for existing players table.
+        player_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(players)").fetchall()
+        }
+        if "rating_source" not in player_columns:
+            conn.execute("ALTER TABLE players ADD COLUMN rating_source TEXT")
+            logger.log("[DB] Added players.rating_source column", level="INFO")
+        if "rating_season" not in player_columns:
+            conn.execute("ALTER TABLE players ADD COLUMN rating_season INTEGER")
+            logger.log("[DB] Added players.rating_season column", level="INFO")
 
         # --- MATCH META ---
         conn.execute("""
@@ -436,6 +451,46 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_player_round_events_match_map ON player_round_events(match_id, map_number, round_num)"
         )
 
+        # --- PLAYER KILL MATRIX ---
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS player_kill_matrix (
+                attacker_steamid64 TEXT NOT NULL,
+                victim_steamid64 TEXT NOT NULL,
+                match_id TEXT NOT NULL,
+                map_number INTEGER NOT NULL,
+                kills INTEGER NOT NULL DEFAULT 0,
+                headshot_kills INTEGER NOT NULL DEFAULT 0,
+                teamkills INTEGER NOT NULL DEFAULT 0,
+                damage INTEGER NOT NULL DEFAULT 0,
+                assists INTEGER NOT NULL DEFAULT 0,
+                flash_assists INTEGER NOT NULL DEFAULT 0,
+                flashes INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (attacker_steamid64, victim_steamid64, match_id, map_number)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_kill_matrix_attacker ON player_kill_matrix(attacker_steamid64)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_kill_matrix_victim ON player_kill_matrix(victim_steamid64)"
+        )
+
+        # Backward-compatible migration for existing databases.
+        pkm_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(player_kill_matrix)").fetchall()
+        }
+        for col, col_type in [
+            ("damage", "INTEGER NOT NULL DEFAULT 0"),
+            ("assists", "INTEGER NOT NULL DEFAULT 0"),
+            ("flash_assists", "INTEGER NOT NULL DEFAULT 0"),
+            ("flashes", "INTEGER NOT NULL DEFAULT 0"),
+        ]:
+            if col not in pkm_columns:
+                conn.execute(f"ALTER TABLE player_kill_matrix ADD COLUMN {col} {col_type}")
+                logger.log(f"[DB] Added player_kill_matrix.{col} column", level="INFO")
+
         weapon_seed_rows = list(iter_seed_weapon_rows())
         conn.executemany(
             """
@@ -511,6 +566,35 @@ def init_db():
             )
             """
         )
+
+        # --- ELO TABLES ---
+        init_elo_tables(conn)
+
+        # --- PREMIER RATING HISTORY ---
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS premier_rating_history (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                steamid64       TEXT NOT NULL,
+                premier_rating  INTEGER NOT NULL,
+                rating_source   TEXT NOT NULL,
+                rating_season   INTEGER,
+                leetify_match_id TEXT,
+                map_name        TEXT,
+                outcome         TEXT,
+                game_played_at  TEXT,
+                recorded_at     TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_premier_history_player
+            ON premier_rating_history(steamid64, game_played_at)
+        """)
+        # Migration: partial index → full index (ON CONFLICT needs non-partial).
+        conn.execute("DROP INDEX IF EXISTS uq_premier_history_match")
+        conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_premier_history_match
+            ON premier_rating_history(steamid64, leetify_match_id)
+        """)
 
         # --- DEFAULT MAPS ---
         cur = conn.execute("SELECT COUNT(*) FROM maps")

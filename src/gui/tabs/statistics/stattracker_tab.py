@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -594,6 +595,13 @@ def _on_player_changed(parent, combo):
     refresh_stattracker(parent)
 
 
+def _on_compare_changed_top(parent, combo):
+    selected = str(combo.currentData() or "")
+    parent._stattracker_compare_player = selected
+    parent._stattracker_compare_players = [selected] if selected else []
+    refresh_stattracker(parent)
+
+
 def _build_statboard_section(title, stats_dict):
     """Build a stat section panel with paired label/value rows (2 pairs per row)."""
     frame = QFrame()
@@ -700,7 +708,7 @@ def _refresh_plot_only(parent):
             metrics = [str(getattr(parent, "_stattracker_plot_metric", "accuracy") or "accuracy")]
 
     if not metrics:
-        if main_view == "maps":
+        if main_view in {"maps", "players"}:
             fallback_metric = "kd_ratio"
         elif main_view == "movement":
             fallback_metric = "avg_speed_m_s"
@@ -733,6 +741,7 @@ def _refresh_plot_only(parent):
     # Important: keep [] as "show none". Only None means "no filter / all".
     selected_items_filter = checked_items if checked_items is not None else None
     timeline_scale = str(getattr(parent, "_stattracker_timeline_scale", "match") or "match")
+    selected_seasons = getattr(parent, "_stattracker_selected_seasons", None)
     if main_view not in {"movement", "weapons"}:
         timeline_scale = "match"
         parent._stattracker_timeline_scale = "match"
@@ -797,6 +806,7 @@ def _refresh_plot_only(parent):
                 str(target_sid or ""),
                 min_weapon_shots=1,
                 weapon_category="all",
+                seasons=selected_seasons,
             )
             rows = dash.get("weapon_rows") or []
             return [
@@ -822,6 +832,7 @@ def _refresh_plot_only(parent):
             str(target_sid or ""),
             min_weapon_shots=1,
             weapon_category="all",
+            seasons=selected_seasons,
         )
         weapon_rows = dashboard.get("weapon_rows") or []
         weapon_to_category = {
@@ -863,17 +874,17 @@ def _refresh_plot_only(parent):
         if main_view == "maps":
             if len(metrics) == 1:
                 data = stattracker.get_map_match_series(
-                    target_sid, maps=selected_items_filter, metric=metrics[0],
+                    target_sid, maps=selected_items_filter, metric=metrics[0], seasons=selected_seasons,
                 )
                 data["series"] = _aggregate_map_series(data.get("series") or {}, metrics[0])
                 return data
-            first = stattracker.get_map_match_series(target_sid, maps=selected_items_filter, metric=metrics[0])
+            first = stattracker.get_map_match_series(target_sid, maps=selected_items_filter, metric=metrics[0], seasons=selected_seasons)
             multi = [{
                 "metric_label": first["metric_label"],
                 "series": _aggregate_map_series(first.get("series") or {}, metrics[0]),
             }]
             for m in metrics[1:]:
-                r = stattracker.get_map_match_series(target_sid, maps=selected_items_filter, metric=m)
+                r = stattracker.get_map_match_series(target_sid, maps=selected_items_filter, metric=m, seasons=selected_seasons)
                 multi.append({
                     "metric_label": r["metric_label"],
                     "series": _aggregate_map_series(r.get("series") or {}, m),
@@ -887,11 +898,13 @@ def _refresh_plot_only(parent):
                     target_sid,
                     maps=selected_items_filter,
                     metric=metrics[0],
+                    seasons=selected_seasons,
                 )
             first = fetch_fn(
                 target_sid,
                 maps=selected_items_filter,
                 metric=metrics[0],
+                seasons=selected_seasons,
             )
             multi = [{"metric_label": first["metric_label"], "series": first["series"]}]
             for m in metrics[1:]:
@@ -899,7 +912,42 @@ def _refresh_plot_only(parent):
                     target_sid,
                     maps=selected_items_filter,
                     metric=m,
+                    seasons=selected_seasons,
                 )
+                multi.append({"metric_label": r["metric_label"], "series": r["series"]})
+            return {"x_labels": first["x_labels"], "match_keys": first.get("match_keys") or [], "multi_series": multi}
+
+        if main_view == "players":
+            season_param = None
+            if selected_seasons and len(selected_seasons) == 1:
+                season_param = int(selected_seasons[0])
+
+            def _fetch_player_metric(sid, metric, season):
+                if metric == "premier":
+                    return stattracker.get_player_premier_history_series(sid)
+                return stattracker.get_player_elo_history_series(sid, metric=metric, season=season)
+
+            # Premier uses a different data source (Leetify match history) than
+            # Elo metrics (local elo_history table), so their x-axes don't align.
+            # When multiple metrics are selected, only combine elo-family metrics.
+            # If premier is among them, show premier alone (first wins).
+            has_premier = "premier" in metrics
+            elo_metrics = [m for m in metrics if m != "premier"]
+
+            if has_premier and not elo_metrics:
+                return _fetch_player_metric(target_sid, "premier", season_param)
+
+            if has_premier and elo_metrics:
+                # Premier can't share x-axis with elo; show premier only
+                return _fetch_player_metric(target_sid, "premier", season_param)
+
+            if len(elo_metrics) == 1:
+                return _fetch_player_metric(target_sid, elo_metrics[0], season_param)
+
+            first = _fetch_player_metric(target_sid, elo_metrics[0], season_param)
+            multi = [{"metric_label": first["metric_label"], "series": first["series"]}]
+            for m in elo_metrics[1:]:
+                r = _fetch_player_metric(target_sid, m, season_param)
                 multi.append({"metric_label": r["metric_label"], "series": r["series"]})
             return {"x_labels": first["x_labels"], "match_keys": first.get("match_keys") or [], "multi_series": multi}
 
@@ -910,7 +958,7 @@ def _refresh_plot_only(parent):
         fetch_weapon_fn = stattracker.get_weapon_round_series if timeline_scale == "round" else stattracker.get_weapon_match_series
         if len(metrics) == 1:
             result = fetch_weapon_fn(
-                target_sid, weapons=weapon_filter, metric=metrics[0], map_name=map_name,
+                target_sid, weapons=weapon_filter, metric=metrics[0], map_name=map_name, seasons=selected_seasons,
             )
             if group_mode == "category":
                 result["series"] = _aggregate_weapon_series_by_category(
@@ -919,13 +967,13 @@ def _refresh_plot_only(parent):
                     metrics[0],
                 )
             return result
-        first = fetch_weapon_fn(target_sid, weapons=weapon_filter, metric=metrics[0], map_name=map_name)
+        first = fetch_weapon_fn(target_sid, weapons=weapon_filter, metric=metrics[0], map_name=map_name, seasons=selected_seasons)
         first_series = first["series"]
         if group_mode == "category":
             first_series = _aggregate_weapon_series_by_category(first_series, target_sid, metrics[0])
         multi = [{"metric_label": first["metric_label"], "series": first_series}]
         for m in metrics[1:]:
-            r = fetch_weapon_fn(target_sid, weapons=weapon_filter, metric=m, map_name=map_name)
+            r = fetch_weapon_fn(target_sid, weapons=weapon_filter, metric=m, map_name=map_name, seasons=selected_seasons)
             metric_series = r["series"]
             if group_mode == "category":
                 metric_series = _aggregate_weapon_series_by_category(metric_series, target_sid, m)
@@ -1318,9 +1366,24 @@ def _refresh_plot_only(parent):
 def build_stattracker_tab(parent):
     logger.log("[UI] Build Stat Tracker tab", level="DEBUG")
 
-    layout = QVBoxLayout(parent)
+    outer_layout = QVBoxLayout(parent)
+    outer_layout.setContentsMargins(0, 0, 0, 0)
+    outer_layout.setSpacing(0)
+
+    scroll_area = QScrollArea()
+    scroll_area.setWidgetResizable(True)
+    scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+    outer_layout.addWidget(scroll_area)
+
+    scroll_content = QWidget()
+    scroll_area.setWidget(scroll_content)
+
+    layout = QVBoxLayout(scroll_content)
     layout.setContentsMargins(16, 8, 16, 12)
     layout.setSpacing(8)
+
+    # Store scroll internals so refresh can find the inner layout
+    parent._stattracker_scroll_content = scroll_content
 
     title = QLabel("Stat Tracker")
     title.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -1342,7 +1405,9 @@ def build_stattracker_tab(parent):
     parent._stattracker_chart_mode = "line"
     parent._stattracker_compare_player = ""
     parent._stattracker_compare_players = []
+    parent._stattracker_player_category = "combat"
     parent._stattracker_selected_timeline_items = []
+    parent._stattracker_selected_seasons = None
     parent._stattracker_selected_plot_metrics = []
     parent._stattracker_timeline_scale = "match"
     parent._stattracker_timeline_window_mode = "all"
@@ -1362,6 +1427,7 @@ def build_stattracker_tab(parent):
     parent._stattracker_range_match_label = None
     parent._stattracker_plot_container = None
     parent._stattracker_timeline_combo = None
+    parent._stattracker_season_combo = None
     parent._stattracker_compare_combo = None
     parent._stattracker_initial_focus_applied = False
     parent._stattracker_on_update = lambda: on_stattracker_data_updated(parent)
@@ -1372,7 +1438,8 @@ def build_stattracker_tab(parent):
 def refresh_stattracker(parent):
     logger.log("[UI] Refresh Stat Tracker tab", level="DEBUG")
 
-    layout = parent.layout()
+    scroll_content = getattr(parent, "_stattracker_scroll_content", None)
+    layout = scroll_content.layout() if scroll_content else parent.layout()
     if layout is None:
         return
 
@@ -1435,6 +1502,30 @@ def refresh_stattracker(parent):
     picker.blockSignals(False)
     picker.currentIndexChanged.connect(lambda _i: _on_player_changed(parent, picker))
     player_row.addWidget(picker)
+
+    # --- Compare-to picker ---
+    compare_label = QLabel("Compare to:")
+    compare_label.setStyleSheet("font-size: 11px; font-weight: 700; color: #6C8790;")
+    player_row.addWidget(compare_label)
+
+    compare_picker = QComboBox()
+    compare_picker.setMinimumWidth(200)
+    compare_picker.addItem("none", "")
+    compare_sid = str(getattr(parent, "_stattracker_compare_player", "") or "")
+    for option in player_options:
+        opt_sid = str(option.get("steamid64") or "")
+        if opt_sid and opt_sid != selected_sid:
+            compare_picker.addItem(option.get("player_name") or opt_sid, opt_sid)
+    cidx = compare_picker.findData(compare_sid)
+    if cidx < 0:
+        cidx = 0
+        parent._stattracker_compare_player = ""
+        parent._stattracker_compare_players = []
+    compare_picker.setCurrentIndex(cidx)
+    compare_picker.currentIndexChanged.connect(lambda _i: _on_compare_changed_top(parent, compare_picker))
+    parent._stattracker_compare_combo = compare_picker
+    player_row.addWidget(compare_picker)
+
     player_row.addStretch(1)
     panel_layout.addLayout(player_row)
 
@@ -1457,6 +1548,7 @@ def refresh_stattracker(parent):
         selected_sid,
         min_weapon_shots=1,
         weapon_category="all",
+        seasons=getattr(parent, "_stattracker_selected_seasons", None),
     )
 
     # First open defaults: rifles category with one focused weapon to avoid clutter.
@@ -1480,20 +1572,33 @@ def refresh_stattracker(parent):
         parent._stattracker_initial_focus_applied = True
 
     kpis = dashboard.get("kpis") or {}
+    relationships = stattracker.get_player_kill_relationships(
+        selected_sid,
+        seasons=getattr(parent, "_stattracker_selected_seasons", None),
+    )
+    fav = relationships.get("favourite_target")
+    nem = relationships.get("arch_nemesis")
+    _practice_target = f"{fav['opponent_name']} ({fav['kills_dealt']}K)" if fav else "-"
+    _nemesis = f"{nem['opponent_name']} ({nem['kills_received']}D)" if nem else "-"
 
     # --- Global Stats ---
     global_title = QLabel("Global Stats")
     global_title.setStyleSheet("font-size: 13px; font-weight: 900; color: #21443C;")
     layout.addWidget(global_title)
 
+    _elo_val = kpis.get("elo_rating")
+    _elo_display = f"{_elo_val:.0f}" if _elo_val is not None else "-"
+
     global_table = _build_table(
         [
+            "Elo Rating",
             "Maps Played", "Win Rate", "K/D", "ADR",
             "Avg Kills", "Avg Deaths", "HS%",
-            "Strafe %", "Avg Speed (m/s)", "Camp Time (s)",
+            "Camp Time (s)", "Nemesis", "Practice-Target",
         ],
         [
             [
+                _elo_display,
                 int(kpis.get("maps_played") or 0),
                 _fmt_pct(kpis.get("win_rate") or 0.0),
                 f"{float(kpis.get('kdr') or 0.0):.2f}",
@@ -1501,14 +1606,73 @@ def refresh_stattracker(parent):
                 f"{float(kpis.get('avg_kills') or 0.0):.2f}",
                 f"{float(kpis.get('avg_deaths') or 0.0):.2f}",
                 _fmt_pct(kpis.get("hs_pct") or 0.0),
-                _fmt_pct((float(kpis.get("strafe_ratio") or 0.0) * 100.0)),
-                f"{float(kpis.get('avg_speed_m_s') or 0.0):.2f}",
                 f"{float(kpis.get('camp_time_s') or 0.0):.1f}",
+                _nemesis,
+                _practice_target,
             ]
         ],
     )
     _fit_single_row_table_height(global_table)
     layout.addWidget(global_table)
+
+    # --- Compared player Global Stats ---
+    compare_sid = str(getattr(parent, "_stattracker_compare_player", "") or "")
+    if compare_sid and compare_sid != selected_sid:
+        compare_dashboard = stattracker.get_player_dashboard(
+            compare_sid,
+            min_weapon_shots=1,
+            weapon_category="all",
+            seasons=getattr(parent, "_stattracker_selected_seasons", None),
+        )
+        compare_kpis = compare_dashboard.get("kpis") or {}
+
+        def _compare_label(sid):
+            for opt in player_options:
+                if str(opt.get("steamid64") or "") == str(sid or ""):
+                    return str(opt.get("player_name") or sid)
+            return str(sid or "?")
+
+        compare_title = QLabel(f"Global Stats — {_compare_label(compare_sid)}")
+        compare_title.setStyleSheet("font-size: 13px; font-weight: 900; color: #6C8790;")
+        layout.addWidget(compare_title)
+
+        _cmp_elo_val = compare_kpis.get("elo_rating")
+        _cmp_elo_display = f"{_cmp_elo_val:.0f}" if _cmp_elo_val is not None else "-"
+
+        cmp_rel = stattracker.get_player_kill_relationships(
+            compare_sid,
+            seasons=getattr(parent, "_stattracker_selected_seasons", None),
+        )
+        cmp_fav = cmp_rel.get("favourite_target")
+        cmp_nem = cmp_rel.get("arch_nemesis")
+        _cmp_practice = f"{cmp_fav['opponent_name']} ({cmp_fav['kills_dealt']}K)" if cmp_fav else "-"
+        _cmp_nemesis = f"{cmp_nem['opponent_name']} ({cmp_nem['kills_received']}D)" if cmp_nem else "-"
+
+        compare_table = _build_table(
+            [
+                "Elo Rating",
+                "Maps Played", "Win Rate", "K/D", "ADR",
+                "Avg Kills", "Avg Deaths", "HS%",
+                "Camp Time (s)", "Nemesis", "Practice-Target",
+            ],
+            [
+                [
+                    _cmp_elo_display,
+                    int(compare_kpis.get("maps_played") or 0),
+                    _fmt_pct(compare_kpis.get("win_rate") or 0.0),
+                    f"{float(compare_kpis.get('kdr') or 0.0):.2f}",
+                    f"{float(compare_kpis.get('adr') or 0.0):.1f}",
+                    f"{float(compare_kpis.get('avg_kills') or 0.0):.2f}",
+                    f"{float(compare_kpis.get('avg_deaths') or 0.0):.2f}",
+                    _fmt_pct(compare_kpis.get("hs_pct") or 0.0),
+                    f"{float(compare_kpis.get('camp_time_s') or 0.0):.1f}",
+                    _cmp_nemesis,
+                    _cmp_practice,
+                ]
+            ],
+        )
+        _fit_single_row_table_height(compare_table)
+        layout.addWidget(compare_table)
 
     # --- Insight Selection ---
     selected_category = str(getattr(parent, "_stattracker_weapon_category", "all") or "all")

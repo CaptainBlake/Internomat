@@ -1,46 +1,40 @@
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QAbstractSpinBox,
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
-    QSizePolicy,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
-    QPushButton,
-    QComboBox,
     QFileDialog,
     QScrollArea,
-    QFrame,
+    QStackedWidget,
     QListWidget,
     QLineEdit,
-    QGridLayout,
     QSpinBox,
     QMessageBox,
-    QDialog,
 )
 from core.settings.settings import settings
 from core.settings import service as settings_service
 from core.update import service as update_service
 from core.version import APP_VERSION
-from core import io_service
 from services import executor
 import services.logger as logger
 from services.matchzy import sync
 from services.demo_scrapper import DemoScrapperIntegration
-from services import demo_cache
 from PySide6.QtCore import QObject, Signal
 from gui.tabs.settings.log_window import open_log_window
+from gui.tabs.settings.settings_helpers import small_button, danger_button
+from gui.tabs.settings.general_section import build_general_section
+from gui.tabs.settings.elo_section import build_elo_section
+from gui.tabs.settings.matchzy_section import build_matchzy_section
+from gui.tabs.settings.demos_section import build_demos_section
+from gui.tabs.settings.maintenance_section import build_maintenance_section, run_clear_cache_dialog
 from gui.widgets.pipeline_progress_dialog import PipelineProgressDialog
 import json
-from pathlib import Path
-import shutil
-from db.connection_db import DB_FILE, get_conn
-from db.init_db import init_db
-import db.settings_db as settings_db
-from core.pathing import data_path
+
 
 class SettingsDispatcher(QObject):
     sync_finished = Signal()
@@ -53,10 +47,11 @@ class SettingsDispatcher(QObject):
     update_download_finished = Signal(object)
     update_download_error = Signal(object)
 
+
 # SETTINGS TAB
 def build_settings_tab(parent, on_players_updated=None, on_update_players=None, on_update_players_only=None, on_data_updated=None, on_players_data_updated=None):
 
-    section_order = ["Settings", "MatchZy", "Demos", "Maintenance"]
+    section_order = ["Settings", "Elo", "MatchZy", "Demos", "Maintenance"]
 
     root_layout = QHBoxLayout(parent)
     root_layout.setContentsMargins(20, 20, 20, 20)
@@ -92,233 +87,41 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
 
     section_frames = []
 
-    # SCROLL AREA
-    scroll = QScrollArea()
-    scroll.setWidgetResizable(True)
-    scroll.setStyleSheet("""
-        QScrollArea {
-            border: none;
-            background: transparent;
-        }
-    """)
-
-    container = QWidget()
-    layout = QVBoxLayout(container)
-    layout.setSpacing(12)
-    layout.setAlignment(Qt.AlignTop)
+    # RIGHT-SIDE CONTENT AREA (one section visible at a time, each in its own scroll)
+    stack = QStackedWidget()
     dispatcher = SettingsDispatcher(parent)
     demo_sync_progress_dialog = {"dialog": None}
     setting_bindings = []
     settings_dirty = {"value": False}
 
-    scroll.setWidget(container)
-    root_layout.addWidget(scroll, 1)
-
-
-    # HELPERS
-
-    def create_section(title):
-        frame = QFrame()
-        frame.setStyleSheet("""
-            QFrame {
-                background: rgba(255, 255, 255, 0.94);
-                border: none;
-                border-radius: 16px;
-            }
-        """)
-
-        section_layout = QVBoxLayout(frame)
-        section_layout.setContentsMargins(14, 12, 14, 12)
-        section_layout.setSpacing(12)
-
-        title_label = QLabel(title)
-        title_label.setStyleSheet("""
-            font-size: 15px;
-            font-weight: 800;
-            color: #22384D;
-        """)
-
-        section_layout.addWidget(title_label)
-        return frame, section_layout
-
-    def small_button(text):
-        btn = QPushButton(text)
-        btn.setFixedHeight(32)
-        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3F88D9;
-                color: #FFFFFF;
-                border: none;
-                border-radius: 8px;
-                padding: 6px 12px;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: #5A9BE3;
-            }
-            QPushButton:pressed {
-                background-color: #2F6FB3;
-            }
-            QPushButton:disabled {
-                background-color: #BFD0E0;
-                color: #F7FAFD;
-            }
-        """)
-        return btn
-
-    def danger_button(text):
-        btn = QPushButton(text)
-        btn.setFixedHeight(32)
-        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        btn.setStyleSheet("""
-            QPushButton {
-                background-color: #C73A3A;
-                color: #FFFFFF;
-                border: none;
-                border-radius: 8px;
-                padding: 6px 12px;
-                font-weight: 700;
-            }
-            QPushButton:hover {
-                background-color: #D64B4B;
-            }
-            QPushButton:pressed {
-                background-color: #A82F2F;
-            }
-            QPushButton:disabled {
-                background-color: #E6B8B8;
-                color: #F8F3F3;
-            }
-        """)
-        return btn
-
-    def create_grid_section(title, rows, columns=3):
-        frame, section_layout = create_section(title)
-
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(10)
-
-        for col in range(columns):
-            grid.setColumnStretch(col, 1)
-
-        for r, row in enumerate(rows):
-            for c, widget in enumerate(row):
-                if widget:
-                    grid.addWidget(widget, r, c)
-
-        section_layout.addLayout(grid)
-        return frame
-
-    def create_setting_row(label_text, widget, attr_name, tooltip=None):
-        row = QHBoxLayout()
-        row.setSpacing(10)
-
-        label = QLabel(label_text)
-        label.setMinimumWidth(220)
-        label.setStyleSheet("""
-            QLabel {
-                font-weight: 600;
-                color: #2E4C69;
-                border: none;
-                background: transparent;
-            }
-        """)
-
-        if tooltip:
-            label.setToolTip(tooltip)
-            widget.setToolTip(tooltip)
-
-        if isinstance(widget, (QSpinBox, QDoubleSpinBox)):
-            widget.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.PlusMinus)
-        widget.setStyleSheet("""
-            QSpinBox, QDoubleSpinBox {
-                background: #FFFFFF;
-                color: #1E2B38;
-                border: 1px solid #B9CADC;
-                border-radius: 8px;
-                padding: 6px 36px 6px 10px;
-                min-height: 36px;
-                min-width: 130px;
-            }
-
-            QSpinBox:focus, QDoubleSpinBox:focus {
-                border: 1px solid #3F88D9;
-            }
-
-            QSpinBox::up-button, QDoubleSpinBox::up-button,
-            QSpinBox::down-button, QDoubleSpinBox::down-button {
-                subcontrol-origin: border;
-                border: none;
-                background: #DCEAF7;
-                width: 24px;
-            }
-
-            QSpinBox::up-button, QDoubleSpinBox::up-button {
-                subcontrol-position: top right;
-                border-top-right-radius: 8px;
-            }
-
-            QSpinBox::down-button, QDoubleSpinBox::down-button {
-                subcontrol-position: bottom right;
-                border-bottom-right-radius: 8px;
-            }
-
-            QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
-            QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
-                background: #E7F1FB;
-            }
-
-            QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
-                width: 0px;
-                height: 0px;
-            }
-
-            QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
-                width: 0px;
-                height: 0px;
-            }
-        """)
-
-        def mark_dirty(*_args):
-            settings_dirty["value"] = True
-            save_settings_button.setEnabled(True)
-
-        if isinstance(widget, QCheckBox):
-            widget.stateChanged.connect(mark_dirty)
-        elif isinstance(widget, QLineEdit):
-            widget.textChanged.connect(mark_dirty)
-        elif isinstance(widget, QComboBox):
-            widget.currentTextChanged.connect(mark_dirty)
-        else:
-            widget.valueChanged.connect(mark_dirty)
-
-        setting_bindings.append((attr_name, widget))
-
-        row.addWidget(label)
-        row.addWidget(widget)
-        row.addStretch()
-
-        return row
+    root_layout.addWidget(stack, 1)
 
     # BUTTONS
 
-    open_logs_button = small_button("Open Logs")
+    save_buttons = []
 
+    def _make_save_button():
+        btn = small_button("Save Settings")
+        btn.setEnabled(False)
+        btn.setFocusPolicy(Qt.NoFocus)
+        save_buttons.append(btn)
+        return btn
+
+    def _sync_save_buttons_enabled(enabled):
+        for btn in save_buttons:
+            btn.setEnabled(enabled)
+
+    open_logs_button = small_button("Open Logs")
     import_settings_button = small_button("Import Settings")
     export_settings_button = small_button("Export Settings")
-    save_settings_button = small_button("Save Settings")
-
     sync_matchzy_button = small_button("Sync with Matchzy")
     sync_demos_button = small_button("Sync demos")
-    clear_cache_button = danger_button("Clear Cache")
+    clear_cache_button = danger_button("Cleaning")
     check_updates_button = small_button("Look for Updates")
 
     for btn in [
         import_settings_button,
         export_settings_button,
-        save_settings_button,
         sync_matchzy_button,
         sync_demos_button,
         check_updates_button,
@@ -326,262 +129,30 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
     ]:
         btn.setFocusPolicy(Qt.NoFocus)
 
-    save_settings_button.setEnabled(False)
+    def mark_dirty(*_args):
+        settings_dirty["value"] = True
+        _sync_save_buttons_enabled(True)
 
+    # BUILD SECTIONS
 
-    # SECTIONS
+    elo_callbacks = {
+        "on_data_updated": on_data_updated,
+        "on_players_updated": on_players_updated,
+        "on_players_data_updated": on_players_data_updated,
+    }
 
-    # MAINTENANCE
-    maintenance_frame = create_grid_section("Maintenance", [
-        [open_logs_button, clear_cache_button, check_updates_button],
-        [import_settings_button, export_settings_button, None],
-    ], columns=3)
-
-    # SETTINGS
-    settings_frame, settings_layout = create_section("Settings")
-
-    
-    # cooldown
-    spin_cooldown = QSpinBox()
-    spin_cooldown.setRange(0, 9999)
-    spin_cooldown.setValue(settings.update_cooldown_minutes)
-    spin_cooldown.setFixedWidth(100)
-    spin_cooldown.setButtonSymbols(QSpinBox.NoButtons)
-
-    settings_layout.addLayout(create_setting_row(
-        "Update cooldown (minutes):",
-        spin_cooldown,
-        "update_cooldown_minutes",
-        "Minimum time between updates\nRecommended: 10"
-    ))
-
-    spin_max_demos = QSpinBox()
-    spin_max_demos.setRange(0, 10000)
-    spin_max_demos.setValue(int(getattr(settings, "max_demos_per_update", 0) or 0))
-    spin_max_demos.setFixedWidth(140)
-    spin_max_demos.setButtonSymbols(QSpinBox.NoButtons)
-
-    settings_layout.addLayout(create_setting_row(
-        "Max demos per update:",
-        spin_max_demos,
-        "max_demos_per_update",
-        "Hard cap per sync run. 0 disables the cap."
-    ))
-
-    # dist weight
-    spin_weight = QDoubleSpinBox()
-    spin_weight.setRange(0.0, 0.5)
-    spin_weight.setSingleStep(0.01)
-    spin_weight.setDecimals(2)
-    spin_weight.setValue(settings.dist_weight)
-    spin_weight.setFixedWidth(100)
-
-    settings_layout.addLayout(create_setting_row(
-        "Team balance weight:",
-        spin_weight,
-        "dist_weight",
-        "Higher = more random teams\nRecommended: 0.25"
-    ))
-
-    # default rating
-    spin_rating = QSpinBox()
-    spin_rating.setRange(0, 50000)
-    spin_rating.setValue(settings.default_rating)
-    spin_rating.setFixedWidth(100)
-    spin_rating.setButtonSymbols(QSpinBox.NoButtons)
-
-    settings_layout.addLayout(create_setting_row(
-        "Default rating:",
-        spin_rating,
-        "default_rating",
-        "Fallback rating\nRecommended: 10000"
-    ))
-
-    # allow uneven teams
-    checkbox_uneven = QCheckBox()
-    checkbox_uneven.setChecked(settings.allow_uneven_teams)
-
-    settings_layout.addLayout(create_setting_row(
-        "Allow uneven teams:",
-        checkbox_uneven,
-        "allow_uneven_teams",
-        "Allow uneven teams (e.g. 3 vs 2)"
-    ))
-
-    checkbox_maproulette_history = QCheckBox()
-    checkbox_maproulette_history.setChecked(settings.maproulette_use_history)
-
-    settings_layout.addLayout(create_setting_row(
-        "Map roulette uses history:",
-        checkbox_maproulette_history,
-        "maproulette_use_history",
-        "When enabled, map roulette uses match history percentages as map weights."
-    ))
-
-    checkbox_log_export_enabled = QCheckBox()
-    checkbox_log_export_enabled.setChecked(bool(getattr(settings, "log_export_enabled", True)))
-
-    settings_layout.addLayout(create_setting_row(
-        "Export logs to file:",
-        checkbox_log_export_enabled,
-        "log_export_enabled",
-        "When enabled, logs are written to timestamped files in the log folder."
-    ))
-
-    settings_button_row = QHBoxLayout()
-    settings_button_row.setSpacing(10)
-    settings_button_row.addWidget(save_settings_button)
-    settings_button_row.addStretch()
-    settings_layout.addLayout(settings_button_row)
-
-    # MATCHZY SETTINGS
-    matchzy_frame, matchzy_layout = create_section("MatchZy Database")
-
-    info_label = QLabel("Requires MatchZy to be configured with a MySQL database.")
-    info_label.setWordWrap(True)
-    info_label.setStyleSheet("""
-        QLabel {
-            font-size: 12px;
-            color: #5A6B7C;
-            padding-bottom: 6px;
-        }
-    """)
-
-    matchzy_layout.addWidget(info_label)
-
-    def text_input(value="", password=False):
-        inp = QLineEdit()
-        inp.setText(value)
-        inp.setFixedWidth(200)
-
-        if password:
-            inp.setEchoMode(QLineEdit.Password)
-
-        inp.setStyleSheet("""
-            QLineEdit {
-                background: #FFFFFF;
-                color: #1E2B38;
-                border: 1px solid #B9CADC;
-                border-radius: 8px;
-                padding: 6px 10px;
-                min-height: 36px;
-            }
-            QLineEdit:focus {
-                border: 1px solid #3F88D9;
-            }
-        """)
-        return inp
-
-
-    # host
-    input_host = text_input(settings.matchzy_host)
-    matchzy_layout.addLayout(create_setting_row(
-        "Host:",
-        input_host,
-        "matchzy_host"
-    ))
-
-    input_port = QSpinBox()
-    input_port.setFixedWidth(100)
-    input_port.setRange(1, 65535)
-    input_port.setValue(settings.matchzy_port)
-
-    matchzy_layout.addLayout(create_setting_row(
-        "Port:",
-        input_port,
-        "matchzy_port"
-    ))
-
-    # user
-    input_user = text_input(settings.matchzy_user)
-    matchzy_layout.addLayout(create_setting_row(
-        "User:",
-        input_user,
-        "matchzy_user"
-    ))
-
-    # password
-    input_password = text_input(settings.matchzy_password, password=True)
-    matchzy_layout.addLayout(create_setting_row(
-        "Password:",
-        input_password,
-        "matchzy_password"
-    ))
-
-    # database
-    input_db = text_input(settings.matchzy_database)
-    matchzy_layout.addLayout(create_setting_row(
-        "Database:",
-        input_db,
-        "matchzy_database"
-    ))
-
-    checkbox_auto_import_players_from_history = QCheckBox()
-    checkbox_auto_import_players_from_history.setChecked(settings.auto_import_players_from_history)
-    matchzy_layout.addLayout(create_setting_row(
-        "Import players from history:",
-        checkbox_auto_import_players_from_history,
-        "auto_import_players_from_history",
-        "When enabled, MatchZy + demo sync imports players from match history into the team pool."
-    ))
-
-    checkbox_auto_import_maps_from_history = QCheckBox()
-    checkbox_auto_import_maps_from_history.setChecked(settings.auto_import_maps_from_history)
-    matchzy_layout.addLayout(create_setting_row(
-        "Import maps from history:",
-        checkbox_auto_import_maps_from_history,
-        "auto_import_maps_from_history",
-        "When enabled, MatchZy sync imports map names from match history into the map pool."
-    ))
-
-    # DEMOS SETTINGS
-    demos_frame, demos_layout = create_section("MatchZy Demos")
-
-    input_demo_ftp_host = text_input(settings.demo_ftp_host)
-    input_demo_ftp_host.setPlaceholderText("IP/domain")
-    demos_layout.addLayout(create_setting_row(
-        "FTP Server IP:",
-        input_demo_ftp_host,
-        "demo_ftp_host",
-        "IP or domain"
-    ))
-
-    input_demo_ftp_port = QSpinBox()
-    input_demo_ftp_port.setFixedWidth(100)
-    input_demo_ftp_port.setRange(1, 65535)
-    input_demo_ftp_port.setValue(settings.demo_ftp_port)
-    demos_layout.addLayout(create_setting_row(
-        "FTP Port:",
-        input_demo_ftp_port,
-        "demo_ftp_port"
-    ))
-
-    input_demo_ftp_user = text_input(settings.demo_ftp_user)
-    input_demo_ftp_user.setPlaceholderText("FTP user")
-    demos_layout.addLayout(create_setting_row(
-        "FTP User:",
-        input_demo_ftp_user,
-        "demo_ftp_user"
-    ))
-
-    input_demo_ftp_password = text_input(settings.demo_ftp_password, password=True)
-    input_demo_ftp_password.setPlaceholderText("FTP password")
-    demos_layout.addLayout(create_setting_row(
-        "FTP Passwort:",
-        input_demo_ftp_password,
-        "demo_ftp_password"
-    ))
-
-    input_demo_remote_path = text_input(settings.demo_remote_path)
-    input_demo_remote_path.setPlaceholderText("/cs2/game/csgo/MatchZy")
-    demos_layout.addLayout(create_setting_row(
-        "Remote demo path:",
-        input_demo_remote_path,
-        "demo_remote_path"
-    ))
+    settings_frame = build_general_section(setting_bindings, mark_dirty, _make_save_button())
+    elo_api = build_elo_section(parent, setting_bindings, mark_dirty, sidebar, elo_callbacks)
+    matchzy_frame = build_matchzy_section(setting_bindings, mark_dirty, _make_save_button())
+    demos_frame = build_demos_section(setting_bindings, mark_dirty, _make_save_button())
+    maintenance_frame = build_maintenance_section(
+        open_logs_button, clear_cache_button, check_updates_button,
+        import_settings_button, export_settings_button,
+    )
 
     sections_by_key = {
         "Settings": settings_frame,
+        "Elo": elo_api["frame"],
         "MatchZy": matchzy_frame,
         "Demos": demos_frame,
         "Maintenance": maintenance_frame,
@@ -592,22 +163,68 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         if frame is None:
             continue
 
-        layout.addWidget(frame)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background: transparent;
+            }
+        """)
+        wrapper = QWidget()
+        wrapper_layout = QVBoxLayout(wrapper)
+        wrapper_layout.setSpacing(24)
+        wrapper_layout.setAlignment(Qt.AlignTop)
+        wrapper_layout.addWidget(frame)
+        wrapper_layout.addStretch()
+        scroll.setWidget(wrapper)
+
+        stack.addWidget(scroll)
         section_frames.append(frame)
 
-    layout.addStretch()
-
     def go_to_section(index):
-        if index < 0 or index >= len(section_frames):
+        if index < 0 or index >= stack.count():
             return
+        stack.setCurrentIndex(index)
 
-        target = section_frames[index]
-        scroll.ensureWidgetVisible(target, 0, 16)
-    
-    # ACTIONS
+    elo_callbacks["go_to_section"] = go_to_section
 
-    def open_logs():
-        open_log_window(parent)
+    # SHARED HELPERS
+
+    tuning_setting_keys = {
+        "elo_k_factor",
+        "elo_base_rating",
+        "elo_adr_alpha",
+        "elo_adr_spread",
+        "elo_adr_min_mult",
+        "elo_adr_max_mult",
+        "elo_adr_prior_matches",
+        "elo_initial_global_anchor",
+    }
+
+    def read_widget_value(widget):
+        if isinstance(widget, QCheckBox):
+            return widget.isChecked()
+        if isinstance(widget, QLineEdit):
+            return widget.text()
+        if isinstance(widget, QComboBox):
+            return widget.currentText()
+        return widget.value()
+
+    def apply_form_to_settings(save=False, include_tuning=True):
+        for attr_name, widget in setting_bindings:
+            if not include_tuning and attr_name in tuning_setting_keys:
+                continue
+            setattr(settings, attr_name, read_widget_value(widget))
+
+        seasons = elo_api["serialize_seasons_or_error"](show_popup=True)
+        if seasons is None:
+            return False
+        settings.elo_seasons_json = json.dumps(seasons)
+
+        if save:
+            settings.save()
+        return True
 
     def apply_settings_payload_to_form(payload):
         for attr_name, widget in setting_bindings:
@@ -629,6 +246,75 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
             elif isinstance(widget, QDoubleSpinBox):
                 widget.setValue(float(value))
 
+        if "elo_seasons_json" in payload:
+            elo_api["rebuild_seasons_from_json"](payload.get("elo_seasons_json"))
+
+    # ACTIONS
+
+    def save_settings_action():
+        spins = elo_api["spins"]
+
+        if float(spins["elo_adr_min_mult"].value()) > float(spins["elo_adr_max_mult"].value()):
+            QMessageBox.warning(
+                parent,
+                "Invalid Elo tuning",
+                "ADR min multiplier cannot be greater than ADR max multiplier.",
+            )
+            return
+
+        if float(spins["elo_adr_spread"].value()) <= 0:
+            QMessageBox.warning(
+                parent,
+                "Invalid Elo tuning",
+                "ADR spread must be greater than 0.",
+            )
+            return
+
+        tuning_changed = elo_api["tuning_changed"]()
+
+        seasons_before_raw = str(getattr(settings, "elo_seasons_json", "[]") or "[]")
+        try:
+            seasons_before = json.loads(seasons_before_raw)
+        except Exception:
+            seasons_before = []
+
+        seasons_now = elo_api["serialize_seasons_or_error"](show_popup=True)
+        if seasons_now is None:
+            return
+
+        seasons_changed = seasons_now != seasons_before
+
+        if not apply_form_to_settings(save=True, include_tuning=False):
+            return
+
+        if seasons_changed:
+            elo_api["recalculate_elo_safe"]("settings save", show_popup=True)
+            if callable(on_players_updated):
+                logger.log("[UI] Refresh Team Builder player view after season change in settings save", level="DEBUG")
+                on_players_updated()
+            if callable(on_players_data_updated):
+                on_players_data_updated()
+
+        if callable(on_players_updated):
+            on_players_updated()
+
+        logger.set_log_export_enabled(bool(getattr(settings, "log_export_enabled", True)))
+        if tuning_changed:
+            QMessageBox.information(
+                parent,
+                "Tuning not saved",
+                "General settings were saved. Use 'Save Elo Parameters' to persist tuning changes.",
+            )
+            settings_dirty["value"] = True
+            _sync_save_buttons_enabled(True)
+        else:
+            settings_dirty["value"] = False
+            _sync_save_buttons_enabled(False)
+        elo_api["lock_seasons"]()
+        elo_api["refresh_season_save_state"]()
+        elo_api["refresh_tuning_state"]()
+        logger.log("[SETTINGS] Saved", level="INFO")
+
     def export_settings_action():
         path, _ = QFileDialog.getSaveFileName(
             parent,
@@ -640,6 +326,10 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
             return
 
         payload = {attr_name: read_widget_value(widget) for attr_name, widget in setting_bindings}
+        seasons = elo_api["serialize_seasons_or_error"](show_popup=True)
+        if seasons is None:
+            return
+        payload["elo_seasons_json"] = json.dumps(seasons)
 
         try:
             settings_service.export_settings_payload(path, payload)
@@ -675,10 +365,11 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
 
             apply_settings_payload_to_form(payload)
 
-            apply_form_to_settings(save=True)
+            if not apply_form_to_settings(save=True):
+                return
             logger.set_log_export_enabled(bool(getattr(settings, "log_export_enabled", True)))
             settings_dirty["value"] = False
-            save_settings_button.setEnabled(False)
+            _sync_save_buttons_enabled(False)
             logger.log_info(f"[SETTINGS] Imported from {path}")
 
             if callable(on_data_updated):
@@ -687,34 +378,12 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         except Exception as e:
             logger.log_error(f"[SETTINGS] Import failed: {e}")
 
-    def read_widget_value(widget):
-        if isinstance(widget, QCheckBox):
-            return widget.isChecked()
-        if isinstance(widget, QLineEdit):
-            return widget.text()
-        if isinstance(widget, QComboBox):
-            return widget.currentText()
-        return widget.value()
-
-    def apply_form_to_settings(save=False):
-        for attr_name, widget in setting_bindings:
-            setattr(settings, attr_name, read_widget_value(widget))
-
-        if save:
-            settings.save()
-
-    def save_settings_action():
-        apply_form_to_settings(save=True)
-        logger.set_log_export_enabled(bool(getattr(settings, "log_export_enabled", True)))
-        settings_dirty["value"] = False
-        save_settings_button.setEnabled(False)
-        logger.log("[SETTINGS] Saved", level="INFO")
-
     def sync_matchzy_action():
         if not sync_matchzy_button.isEnabled():
             return
 
-        apply_form_to_settings(save=False)
+        if not apply_form_to_settings(save=False):
+            return
         sync_matchzy_button.setEnabled(False)
 
         def worker():
@@ -727,208 +396,14 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
         executor.submit(worker)
 
     def clear_cache_action():
-        base_dir = data_path()
-        demos_dir = base_dir / "demos"
-        parsed_dir = demos_dir / "parsed"
-        logs_dir = base_dir / "log"
-        db_files = [
-            Path(DB_FILE),
-            Path(str(DB_FILE) + "-wal"),
-            Path(str(DB_FILE) + "-shm"),
-        ]
-
-        dialog = QDialog(parent)
-        dialog.setWindowTitle("Delete Data")
-        dialog.setModal(True)
-        dialog.resize(430, 250)
-
-        dlg_layout = QVBoxLayout(dialog)
-        dlg_layout.setContentsMargins(14, 12, 14, 12)
-        dlg_layout.setSpacing(10)
-
-        info = QLabel("Select what to delete:")
-        info.setStyleSheet("font-size: 13px; font-weight: 700; color: #22384D;")
-        dlg_layout.addWidget(info)
-
-        cb_demos = QCheckBox("Demos")
-        cb_parsed = QCheckBox("Parsed payloads")
-        cb_logs = QCheckBox("Logs")
-        cb_database = QCheckBox("Database")
-        cb_include_settings = QCheckBox("Including settings")
-        cb_include_players = QCheckBox("Including player-list")
-        cb_include_settings.setChecked(False)
-        cb_include_settings.setEnabled(False)
-        cb_include_players.setChecked(False)
-        cb_include_players.setEnabled(False)
-
-        for cb in (cb_demos, cb_parsed, cb_logs, cb_database):
-            cb.setStyleSheet("QCheckBox { color: #2E4C69; font-weight: 600; padding: 2px 0px; }")
-            dlg_layout.addWidget(cb)
-
-        cb_include_settings.setStyleSheet("QCheckBox { color: #5A6B7C; font-weight: 600; padding: 0px 0px 2px 18px; }")
-        dlg_layout.addWidget(cb_include_settings)
-        cb_include_players.setStyleSheet("QCheckBox { color: #5A6B7C; font-weight: 600; padding: 0px 0px 2px 18px; }")
-        dlg_layout.addWidget(cb_include_players)
-
-        hint = QLabel(
-            "Notes: 'Demos' removes raw demo files, 'Parsed payloads' removes cached parsed files,\n"
-            "'Database' resets internomat.db and recreates a clean schema. Settings and player-list are kept unless explicitly included."
-        )
-        hint.setStyleSheet("font-size: 11px; color: #5A6B7C;")
-        dlg_layout.addWidget(hint)
-
-        button_row = QHBoxLayout()
-        button_row.addStretch(1)
-        cancel_btn = QPushButton("Cancel")
-        delete_btn = QPushButton("Delete Selected")
-        delete_btn.setEnabled(False)
-        delete_btn.setStyleSheet(
-            "QPushButton { background-color: #C73A3A; color: #FFFFFF; border: none; "
-            "border-radius: 8px; padding: 6px 12px; font-weight: 700; } "
-            "QPushButton:disabled { background-color: #E6B8B8; color: #F8F3F3; }"
-        )
-        button_row.addWidget(cancel_btn)
-        button_row.addWidget(delete_btn)
-        dlg_layout.addLayout(button_row)
-
-        def _update_delete_enabled(*_args):
-            delete_btn.setEnabled(any((cb_demos.isChecked(), cb_parsed.isChecked(), cb_logs.isChecked(), cb_database.isChecked())))
-            allow_settings_toggle = cb_database.isChecked()
-            cb_include_settings.setEnabled(allow_settings_toggle)
-            cb_include_players.setEnabled(allow_settings_toggle)
-            if not allow_settings_toggle:
-                cb_include_settings.setChecked(False)
-                cb_include_players.setChecked(False)
-
-        for cb in (cb_demos, cb_parsed, cb_logs, cb_database):
-            cb.stateChanged.connect(_update_delete_enabled)
-
-        cancel_btn.clicked.connect(dialog.reject)
-
-        def _delete_dir_contents(path_obj, exclude_names=None):
-            exclude = set(exclude_names or [])
-            deleted = 0
-            if not path_obj.exists():
-                return deleted
-
-            for item in path_obj.iterdir():
-                if item.name in exclude:
-                    continue
-                try:
-                    if item.is_dir():
-                        shutil.rmtree(item)
-                    else:
-                        item.unlink()
-                    deleted += 1
-                except Exception as exc:
-                    logger.log_error(f"[CLEANUP] Failed to delete {item}: {exc}")
-            return deleted
-
-        def _perform_delete():
-            confirm = QMessageBox.question(
-                dialog,
-                "Confirm Delete",
-                "Delete selected data now? This action cannot be undone.",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            if confirm != QMessageBox.Yes:
-                return
-
-            total_deleted = 0
-
-            selected_demos = cb_demos.isChecked()
-            selected_parsed = cb_parsed.isChecked()
-            selected_logs = cb_logs.isChecked()
-            selected_database = cb_database.isChecked()
-            selected_include_settings = cb_include_settings.isChecked()
-            selected_include_players = cb_include_players.isChecked()
-            requires_restart = bool(selected_database)
-
-            if selected_demos and selected_parsed:
-                total_deleted += demo_cache.clear_cache(demos_dir)
-                io_service.clear_demo_flags()
-            elif selected_demos:
-                total_deleted += _delete_dir_contents(demos_dir, exclude_names={"parsed"})
-                io_service.clear_demo_flags()
-            elif selected_parsed:
-                total_deleted += demo_cache.clear_cache(parsed_dir)
-                io_service.clear_demo_flags()
-
-            if selected_logs:
-                prev_export_state = bool(getattr(settings, "log_export_enabled", True))
-                logger.set_log_export_enabled(False)
-                total_deleted += demo_cache.clear_cache(logs_dir)
-                logger.set_log_export_enabled(prev_export_state)
-
-            if selected_database:
-                settings_snapshot = []
-                players_snapshot = []
-                if not selected_include_settings:
-                    try:
-                        with get_conn() as conn:
-                            rows = conn.execute("SELECT key, value FROM settings").fetchall()
-                            settings_snapshot = [(str(r["key"]), str(r["value"])) for r in rows]
-                    except Exception as exc:
-                        logger.log_error(f"[CLEANUP] Failed to snapshot settings before DB deletion: {exc}")
-
-                if not selected_include_players:
-                    try:
-                        players_snapshot = io_service.get_players_payload()
-                    except Exception as exc:
-                        logger.log_error(f"[CLEANUP] Failed to snapshot players before DB deletion: {exc}")
-
-                db_deleted = 0
-                for db_path in db_files:
-                    try:
-                        if db_path.exists():
-                            db_path.unlink()
-                            db_deleted += 1
-                    except Exception as exc:
-                        logger.log_error(f"[CLEANUP] Failed to delete database file {db_path}: {exc}")
-                total_deleted += db_deleted
-                try:
-                    init_db()
-                    if not selected_include_settings and settings_snapshot:
-                        for key, value in settings_snapshot:
-                            settings_db.set(key, value)
-                        logger.log_info(f"[CLEANUP] Restored settings entries={len(settings_snapshot)}")
-
-                    if not selected_include_players and players_snapshot:
-                        restored_players = io_service.import_players_payload(players_snapshot)
-                        logger.log_info(f"[CLEANUP] Restored player-list entries={restored_players}")
-
-                    logger.log_info("[CLEANUP] Reinitialized database after deletion")
-                except Exception as exc:
-                    logger.log_error(f"[CLEANUP] Database reinitialize failed: {exc}")
-
-            logger.log_info(f"[CLEANUP] Deleted selected data entries={total_deleted}")
-
-            if not requires_restart:
-                if callable(on_data_updated):
-                    on_data_updated()
-                if callable(on_players_data_updated):
-                    on_players_data_updated()
-
-            dialog.accept()
-
-            if requires_restart:
-                logger.log_info("[CLEANUP] Database changed; forcing UI restart to refresh all in-memory state")
-
-                def _restart_ui():
-                    from gui.gui import restart_window
-                    restart_window()
-
-                QTimer.singleShot(0, _restart_ui)
-
-        delete_btn.clicked.connect(_perform_delete)
-        dialog.exec()
+        run_clear_cache_dialog(parent, on_data_updated, on_players_data_updated)
 
     def sync_demos_action():
         if not sync_demos_button.isEnabled():
             return
 
-        apply_form_to_settings(save=False)
+        if not apply_form_to_settings(save=False):
+            return
         sync_demos_button.clearFocus()
         sync_demos_button.setEnabled(False)
 
@@ -986,9 +461,13 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
 
         executor.submit(worker)
 
+    # SIGNAL HANDLERS
+
     def on_sync_finished():
         sync_matchzy_button.setEnabled(True)
         logger.log("[MATCHZY] Sync completed", level="INFO")
+
+        executor.submit(lambda: elo_api["recalculate_elo_safe"]("MatchZy sync", show_popup=False))
 
         if callable(on_update_players):
             logger.log("[UI] Trigger Team Builder update after MatchZy sync", level="DEBUG")
@@ -1029,6 +508,8 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
             QTimer.singleShot(700, _close_dialog_later)
 
         def _run_post_sync_updates():
+            executor.submit(lambda: elo_api["recalculate_elo_safe"]("demo sync", show_popup=False))
+
             if callable(on_data_updated):
                 on_data_updated()
 
@@ -1148,10 +629,11 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
 
     # SIGNALS
 
-    open_logs_button.clicked.connect(open_logs)
+    open_logs_button.clicked.connect(lambda: open_log_window(parent))
     import_settings_button.clicked.connect(import_settings_action)
     export_settings_button.clicked.connect(export_settings_action)
-    save_settings_button.clicked.connect(save_settings_action)
+    for _btn in save_buttons:
+        _btn.clicked.connect(save_settings_action)
     sync_matchzy_button.clicked.connect(sync_matchzy_action)
     sync_demos_button.clicked.connect(sync_demos_action)
     clear_cache_button.clicked.connect(clear_cache_action)
@@ -1168,5 +650,3 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
     dispatcher.update_download_error.connect(on_update_download_error)
 
     sidebar.setCurrentRow(0)
-
-

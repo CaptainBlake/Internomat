@@ -48,10 +48,9 @@ def fetch_overview():
     return row
 
 
-def fetch_recent_maps(limit):
+def fetch_recent_maps(limit=None):
     with get_conn() as conn:
-        return conn.execute(
-            """
+        sql = """
             SELECT
                 mm.match_id,
                 mm.map_number,
@@ -81,7 +80,11 @@ def fetch_recent_maps(limit):
                 ON mps.match_id = mm.match_id
                AND mps.map_number = mm.map_number
             ORDER BY COALESCE(mm.end_time, mm.start_time, m.end_time, m.start_time) DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
+            """
+
+        params = []
+        if limit is not None:
+            sql = sql + "\nLIMIT ?"
+            params.append(int(limit))
+
+        return conn.execute(sql, tuple(params)).fetchall()

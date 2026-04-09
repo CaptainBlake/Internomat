@@ -96,12 +96,12 @@ def test_defaults_for_absent_keys(db_conn, db_file):
     s = Settings()
     s.load()
 
-    assert s.update_cooldown_minutes == 0
+    assert s.update_cooldown_minutes == 10
     assert s.log_level == "INFO"
     assert s.dist_weight == 0.25
     assert s.default_rating == 10000
     assert s.allow_uneven_teams is False
-    assert s.maproulette_use_history is False
+    assert s.maproulette_use_history is True
     assert s.matchzy_host == ""
     assert s.matchzy_port == 3306
     assert s.demo_ftp_host == ""
@@ -122,7 +122,7 @@ def test_save_defaults_then_load(db_conn, db_file):
     s2.update_cooldown_minutes = 999  # dirty the instance
     s2.load()
 
-    assert s2.update_cooldown_minutes == 0
+    assert s2.update_cooldown_minutes == 10
     assert s2.log_level == "INFO"
     assert s2.allow_uneven_teams is False
 
@@ -149,5 +149,5 @@ def test_partial_settings_seed(db_conn, db_file):
     assert s.log_level == "ERROR"
     assert s.default_rating == 8000
     # Rest should be default
-    assert s.update_cooldown_minutes == 0
+    assert s.update_cooldown_minutes == 10
     assert s.matchzy_host == ""

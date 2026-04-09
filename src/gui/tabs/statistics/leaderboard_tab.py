@@ -1,8 +1,10 @@
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QBrush, QFont
 from PySide6.QtWidgets import (
+    QComboBox,
     QFrame,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QTableWidget,
     QTableWidgetItem,
@@ -184,12 +186,12 @@ def _build_leaderboard(title_text, headers, rows, value_suffix="", top3_colorize
     return frame
 
 
-def _compute_stat_overview_payload():
+def _compute_stat_overview_payload(season=None):
     return {
-        "kills": leaderboard.get_top_kills(10),
-        "deaths": leaderboard.get_top_deaths(10),
-        "ratings": leaderboard.get_top_ratings(10),
-        "damage": leaderboard.get_top_damage_per_match(10),
+        "kills": leaderboard.get_top_kills(10, season=season),
+        "deaths": leaderboard.get_top_deaths(10, season=season),
+        "ratings": leaderboard.get_top_ratings(10, season=season),
+        "damage": leaderboard.get_top_damage_per_match(10, season=season),
     }
 
 
@@ -233,6 +235,31 @@ def _render_stat_overview_content(layout, payload):
     layout.addLayout(content, 1)
 
 
+def _sync_season_combo(parent):
+    combo = getattr(parent, "_stat_overview_season_combo", None)
+    if combo is None:
+        return
+
+    selected = getattr(parent, "_stat_overview_selected_season", None)
+    options = [int(s) for s in (leaderboard.get_season_options() or [])]
+
+    was_blocked = combo.blockSignals(True)
+    combo.clear()
+    combo.addItem("ALL Seasons", None)
+    for season_id in options:
+        combo.addItem(f"Season {season_id}", int(season_id))
+
+    if selected is not None and int(selected) in options:
+        idx = combo.findData(int(selected))
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+        parent._stat_overview_selected_season = int(selected)
+    else:
+        combo.setCurrentIndex(0)
+        parent._stat_overview_selected_season = None
+
+    combo.blockSignals(was_blocked)
+
+
 def build_stat_overview_tab(parent):
     logger.log("[UI] Build Stat Overview tab", level="DEBUG")
 
@@ -250,6 +277,28 @@ def build_stat_overview_tab(parent):
     info.setStyleSheet("font-size: 12px; color: #5B7A72;")
     layout.addWidget(info)
 
+    parent._stat_overview_selected_season = None
+
+    season_row = QHBoxLayout()
+    season_row.addStretch(1)
+    season_row.addWidget(QLabel("Season:"))
+    season_combo = QComboBox()
+    season_combo.setMinimumWidth(190)
+    season_combo.addItem("ALL Seasons", None)
+    for season_id in leaderboard.get_season_options():
+        season_combo.addItem(f"Season {season_id}", int(season_id))
+
+    def _on_season_changed(_idx):
+        parent._stat_overview_selected_season = season_combo.currentData()
+        parent._stat_overview_cache_dirty = True
+        refresh_stat_overview(parent)
+
+    season_combo.currentIndexChanged.connect(_on_season_changed)
+    season_row.addWidget(season_combo)
+    season_row.addStretch(1)
+    layout.addLayout(season_row)
+    parent._stat_overview_season_combo = season_combo
+
     parent._stat_overview_cache_dirty = True
     parent._stat_overview_payload = None
 
@@ -265,8 +314,10 @@ def refresh_stat_overview(parent):
     if layout is None:
         return
 
-    while layout.count() > 2:
-        item = layout.takeAt(2)
+    _sync_season_combo(parent)
+
+    while layout.count() > 3:
+        item = layout.takeAt(3)
         if item is None:
             continue
 
@@ -281,9 +332,10 @@ def refresh_stat_overview(parent):
 
     cache_dirty = getattr(parent, "_stat_overview_cache_dirty", True)
     payload = getattr(parent, "_stat_overview_payload", None)
+    selected_season = getattr(parent, "_stat_overview_selected_season", None)
 
     if cache_dirty or not isinstance(payload, dict):
-        payload = _compute_stat_overview_payload()
+        payload = _compute_stat_overview_payload(season=selected_season)
         parent._stat_overview_payload = payload
         parent._stat_overview_cache_dirty = False
 
@@ -293,4 +345,5 @@ def refresh_stat_overview(parent):
 def on_stat_overview_data_updated(parent):
     logger.log("[UI] Stat Overview data update triggered", level="DEBUG")
     parent._stat_overview_cache_dirty = True
+    _sync_season_combo(parent)
     refresh_stat_overview(parent)

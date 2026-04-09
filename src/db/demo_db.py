@@ -237,8 +237,19 @@ def resolve_equivalent_match_map(
             if best is None or candidate["score"] > best["score"]:
                 best = candidate
 
-    # Require a minimum confidence to avoid accidental remapping.
-    if not best or best["score"] < 6:
+    # Require both minimum score and at least one strong corroborating signal.
+    # Team-name overlap alone is too weak and caused accidental cross-era merges.
+    strong_reasons = {"players_exact", "players_80", "score_pair", "time_15m", "time_60m"}
+    best_reasons = set(best.get("reasons") or []) if best else set()
+    has_strong_signal = bool(best_reasons & strong_reasons)
+
+    if not best or best["score"] < 6 or not has_strong_signal:
+        if best and best["score"] >= 6 and not has_strong_signal:
+            logger.log(
+                "[DB] Equivalent map rejected (weak evidence) "
+                f"match={best['match_id']} map={best['map_number']} score={best['score']} reasons={best['reasons']}",
+                level="DEBUG",
+            )
         return None
 
     logger.log(

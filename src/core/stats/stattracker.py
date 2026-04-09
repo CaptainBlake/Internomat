@@ -58,12 +58,17 @@ def get_player_options():
     return options
 
 
-def get_player_weapon_categories(steamid64):
+def get_season_options():
+    rows = stattracker_repo.fetch_elo_seasons()
+    return [int(r["season"]) for r in rows]
+
+
+def get_player_weapon_categories(steamid64, seasons=None):
     sid = str(steamid64 or "").strip()
     if not sid:
         return ["all"]
 
-    rows = stattracker_repo.fetch_player_weapon_categories(sid)
+    rows = stattracker_repo.fetch_player_weapon_categories(sid, seasons=seasons)
     def _to_category_key(raw):
         value = str(raw or "unknown").strip().lower() or "unknown"
         if value in {"all", "unknown"}:
@@ -85,7 +90,7 @@ def get_player_weapon_categories(steamid64):
     return categories
 
 
-def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
+def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all", seasons=None):
     sid = str(steamid64 or "").strip()
     if not sid:
         return {
@@ -101,13 +106,14 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
             "worst_map": "-",
         }
 
-    overall = stattracker_repo.fetch_player_overall_metrics(sid)
-    movement_overall = stattracker_repo.fetch_player_overall_movement_metrics(sid)
-    map_rows_raw = stattracker_repo.fetch_player_map_stats(sid)
+    overall = stattracker_repo.fetch_player_overall_metrics(sid, seasons=seasons)
+    movement_overall = stattracker_repo.fetch_player_overall_movement_metrics(sid, seasons=seasons)
+    map_rows_raw = stattracker_repo.fetch_player_map_stats(sid, seasons=seasons)
     weapon_rows_raw = stattracker_repo.fetch_player_weapon_stats(
         sid,
         min_shots=max(1, int(min_weapon_shots)),
         weapon_category=str(weapon_category or "all").strip().lower(),
+        seasons=seasons,
     )
 
     maps_played = int((overall["maps_played"] if overall else 0) or 0)
@@ -148,6 +154,8 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
     else:
         strafe_ratio = (total_strafe_distance_units / total_distance_units) if total_distance_units > 0 else 0.0
     avg_camp_time_s = M.safe_avg(total_camp_time_s, maps_played)
+
+    elo_rating = stattracker_repo.fetch_player_elo_rating(sid)
 
     map_rows = []
     for row in map_rows_raw:
@@ -199,7 +207,7 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
     unattributed_kills = int(max(0, total_kills - weapon_kills_total))
 
     if unattributed_kills > 0:
-        deltas = stattracker_repo.fetch_player_weapon_kill_attribution_deltas(sid)
+        deltas = stattracker_repo.fetch_player_weapon_kill_attribution_deltas(sid, seasons=seasons)
         logger.log(
             "[STATTRACKER] "
             f"kill attribution filtered steamid={sid[:8]} total={total_kills} "
@@ -217,6 +225,7 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all"):
 
     result = {
         "kpis": {
+            "elo_rating": elo_rating,
             "maps_played": maps_played,
             "win_rate": win_rate,
             "kdr": kdr,
@@ -421,13 +430,13 @@ def _build_round_series(rows, metric_fn, series_key_fn, log_tag):
     return round_keys, x_labels, series
 
 
-def get_weapon_match_series(steamid64, weapons=None, metric="accuracy", map_name=None):
+def get_weapon_match_series(steamid64, weapons=None, metric="accuracy", map_name=None, seasons=None):
     sid = str(steamid64 or "").strip()
     if not sid:
         return {"metric_label": "", "x_labels": [], "series": {}, "match_keys": []}
 
     metric_def = PLOT_METRICS.get(metric, PLOT_METRICS["accuracy"])
-    rows = stattracker_repo.fetch_player_weapon_match_series(sid, weapons=weapons, map_name=map_name)
+    rows = stattracker_repo.fetch_player_weapon_match_series(sid, weapons=weapons, map_name=map_name, seasons=seasons)
     match_keys, x_labels, series = _build_match_series(
         rows, metric_def["fn"], lambda r: str(r["weapon"]), "weapon",
     )
@@ -445,13 +454,13 @@ def get_weapon_match_series(steamid64, weapons=None, metric="accuracy", map_name
     }
 
 
-def get_weapon_round_series(steamid64, weapons=None, metric="accuracy", map_name=None):
+def get_weapon_round_series(steamid64, weapons=None, metric="accuracy", map_name=None, seasons=None):
     sid = str(steamid64 or "").strip()
     if not sid:
         return {"metric_label": "", "x_labels": [], "series": {}, "match_keys": []}
 
     metric_def = PLOT_METRICS.get(metric, PLOT_METRICS["accuracy"])
-    rows = stattracker_repo.fetch_player_weapon_round_series(sid, weapons=weapons, map_name=map_name)
+    rows = stattracker_repo.fetch_player_weapon_round_series(sid, weapons=weapons, map_name=map_name, seasons=seasons)
     round_keys, x_labels, series = _build_round_series(
         rows, metric_def["fn"], lambda r: str(r["weapon"]), "weapon-round",
     )
@@ -469,13 +478,13 @@ def get_weapon_round_series(steamid64, weapons=None, metric="accuracy", map_name
     }
 
 
-def get_map_match_series(steamid64, maps=None, metric="kd_ratio"):
+def get_map_match_series(steamid64, maps=None, metric="kd_ratio", seasons=None):
     sid = str(steamid64 or "").strip()
     if not sid:
         return {"metric_label": "", "x_labels": [], "series": {}, "match_keys": []}
 
     metric_def = MAP_PLOT_METRICS.get(metric, MAP_PLOT_METRICS["kd_ratio"])
-    rows = stattracker_repo.fetch_player_map_match_series(sid, maps=maps)
+    rows = stattracker_repo.fetch_player_map_match_series(sid, maps=maps, seasons=seasons)
     match_keys, x_labels, series = _build_match_series(
         rows, metric_def["fn"], lambda r: str(r["map_name"] or "unknown"), "map",
     )
@@ -493,13 +502,13 @@ def get_map_match_series(steamid64, maps=None, metric="kd_ratio"):
     }
 
 
-def get_movement_match_series(steamid64, maps=None, metric="avg_speed_m_s"):
+def get_movement_match_series(steamid64, maps=None, metric="avg_speed_m_s", seasons=None):
     sid = str(steamid64 or "").strip()
     if not sid:
         return {"metric_label": "", "x_labels": [], "series": {}, "match_keys": []}
 
     metric_def = MOVEMENT_PLOT_METRICS.get(metric, MOVEMENT_PLOT_METRICS["avg_speed_m_s"])
-    rows = stattracker_repo.fetch_player_movement_match_series(sid, maps=maps)
+    rows = stattracker_repo.fetch_player_movement_match_series(sid, maps=maps, seasons=seasons)
     match_keys, x_labels, series = _build_match_series(
         rows, metric_def["fn"], lambda r: "Movement", "movement",
     )
@@ -517,13 +526,13 @@ def get_movement_match_series(steamid64, maps=None, metric="avg_speed_m_s"):
     }
 
 
-def get_movement_round_series(steamid64, maps=None, metric="avg_speed_m_s"):
+def get_movement_round_series(steamid64, maps=None, metric="avg_speed_m_s", seasons=None):
     sid = str(steamid64 or "").strip()
     if not sid:
         return {"metric_label": "", "x_labels": [], "series": {}, "match_keys": []}
 
     metric_def = MOVEMENT_PLOT_METRICS.get(metric, MOVEMENT_PLOT_METRICS["avg_speed_m_s"])
-    rows = stattracker_repo.fetch_player_movement_round_series(sid, maps=maps)
+    rows = stattracker_repo.fetch_player_movement_round_series(sid, maps=maps, seasons=seasons)
     round_keys, x_labels, series = _build_round_series(
         rows, metric_def["fn"], lambda r: "Movement", "movement-round",
     )
@@ -538,4 +547,178 @@ def get_movement_round_series(steamid64, maps=None, metric="avg_speed_m_s"):
         "x_labels": x_labels,
         "series": series,
         "match_keys": [f"{rk[0]}:{rk[1]}:{rk[2]}" for rk in round_keys],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Players view: combat summary, kill relationships, Elo history
+# ---------------------------------------------------------------------------
+
+PLAYERS_PLOT_METRICS = {
+    "elo": {"label": "Elo Rating", "fn": lambda r: float(r["elo_after"])},
+    "elo_delta": {"label": "Elo Delta", "fn": lambda r: float(r["elo_delta"])},
+    "premier": {"label": "Premier Rating", "fn": None},
+}
+
+
+def get_players_plot_metric_options():
+    return [{"key": k, "label": v["label"]} for k, v in PLAYERS_PLOT_METRICS.items()]
+
+
+def get_player_combat_summary(steamid64, seasons=None):
+    sid = str(steamid64 or "").strip()
+    if not sid:
+        return {}
+
+    row = stattracker_repo.fetch_player_combat_summary(sid, seasons=seasons)
+    if not row:
+        return {}
+
+    maps_played = int(row["maps_played"] or 0)
+    total_kills = int(row["total_kills"] or 0)
+    total_deaths = int(row["total_deaths"] or 0)
+
+    return {
+        "maps_played": maps_played,
+        "total_kills": total_kills,
+        "total_deaths": total_deaths,
+        "total_assists": int(row["total_assists"] or 0),
+        "total_damage": int(row["total_damage"] or 0),
+        "total_hs_kills": int(row["total_hs_kills"] or 0),
+        "kdr": M.kd_ratio(total_kills, max(1, total_deaths)),
+        "hs_pct": M.hs_pct(int(row["total_hs_kills"] or 0), total_kills),
+        "total_flashes_thrown": int(row["total_flashes_thrown"] or 0),
+        "total_enemies_flashed": int(row["total_enemies_flashed"] or 0),
+        "total_entry_attempts": int(row["total_entry_attempts"] or 0),
+        "total_entry_wins": int(row["total_entry_wins"] or 0),
+        "entry_success_pct": M.win_rate(int(row["total_entry_wins"] or 0), int(row["total_entry_attempts"] or 0)),
+        "total_clutch_1v1": int(row["total_clutch_1v1"] or 0),
+        "total_clutch_1v1_wins": int(row["total_clutch_1v1_wins"] or 0),
+        "total_clutch_1v2": int(row["total_clutch_1v2"] or 0),
+        "total_clutch_1v2_wins": int(row["total_clutch_1v2_wins"] or 0),
+        "total_aces": int(row["total_aces"] or 0),
+        "total_4ks": int(row["total_4ks"] or 0),
+        "total_3ks": int(row["total_3ks"] or 0),
+        "total_teamkills": int(row["total_teamkills"] or 0),
+    }
+
+
+def get_player_kill_relationships(steamid64, seasons=None):
+    sid = str(steamid64 or "").strip()
+    if not sid:
+        return {"favourite_target": None, "arch_nemesis": None, "rows": []}
+
+    raw_rows = stattracker_repo.fetch_player_kill_relationships(sid, seasons=seasons)
+
+    rows = []
+    favourite_target = None
+    arch_nemesis = None
+    max_dealt = 0
+    max_received = 0
+
+    for r in raw_rows:
+        dealt = int(r["kills_dealt"] or 0)
+        received = int(r["kills_received"] or 0)
+        entry = {
+            "opponent_steamid64": str(r["opponent"] or ""),
+            "opponent_name": str(r["opponent_name"] or "?"),
+            "kills_dealt": dealt,
+            "kills_received": received,
+            "hs_dealt": int(r["hs_dealt"] or 0),
+            "hs_received": int(r["hs_received"] or 0),
+            "teamkills_dealt": int(r["teamkills_dealt"] or 0),
+            "teamkills_received": int(r["teamkills_received"] or 0),
+            "damage_dealt": int(r["damage_dealt"] or 0),
+            "damage_received": int(r["damage_received"] or 0),
+            "assists_dealt": int(r["assists_dealt"] or 0),
+            "assists_received": int(r["assists_received"] or 0),
+            "flash_assists_dealt": int(r["flash_assists_dealt"] or 0),
+            "flash_assists_received": int(r["flash_assists_received"] or 0),
+            "flashes_dealt": int(r["flashes_dealt"] or 0),
+            "flashes_received": int(r["flashes_received"] or 0),
+            "net": dealt - received,
+        }
+        rows.append(entry)
+
+        if dealt > max_dealt:
+            max_dealt = dealt
+            favourite_target = entry
+        if received > max_received:
+            max_received = received
+            arch_nemesis = entry
+
+    return {
+        "favourite_target": favourite_target,
+        "arch_nemesis": arch_nemesis,
+        "rows": rows,
+    }
+
+
+def get_player_elo_history_series(steamid64, metric="elo", season=None):
+    sid = str(steamid64 or "").strip()
+    if not sid:
+        return {"metric_label": "", "x_labels": [], "series": {}, "match_keys": []}
+
+    if metric == "premier":
+        return get_player_premier_history_series(sid)
+
+    metric_def = PLAYERS_PLOT_METRICS.get(metric, PLAYERS_PLOT_METRICS["elo"])
+    if metric_def.get("fn") is None:
+        return {"metric_label": metric_def["label"], "x_labels": [], "series": {}, "match_keys": []}
+
+    rows = stattracker_repo.fetch_player_elo_history(sid, season=season)
+
+    match_keys = []
+    x_labels = []
+    values = []
+
+    for r in rows:
+        mk = str(r["match_id"])
+        match_keys.append(mk)
+        map_name = str(r["map_name"] or "unknown")
+        subtitle = _format_match_time_subtitle(r["start_time"])
+        label = map_name
+        if subtitle:
+            label = f"{map_name}\n{subtitle}"
+        x_labels.append(label)
+        values.append(metric_def["fn"](r))
+
+    series_name = "Elo" if metric == "elo" else metric_def["label"]
+
+    return {
+        "metric_label": metric_def["label"],
+        "x_labels": x_labels,
+        "series": {series_name: values},
+        "match_keys": match_keys,
+    }
+
+
+def get_player_premier_history_series(steamid64):
+    sid = str(steamid64 or "").strip()
+    if not sid:
+        return {"metric_label": "Premier Rating", "x_labels": [], "series": {}, "match_keys": []}
+
+    rows = stattracker_repo.fetch_player_premier_rating_history(sid)
+
+    x_labels = []
+    values = []
+    match_keys = []
+
+    for r in rows:
+        mk = str(r["leetify_match_id"] or "")
+        match_keys.append(mk)
+        map_name = str(r["map_name"] or "profile")
+        ts = r["game_played_at"] or r["recorded_at"]
+        subtitle = _format_match_time_subtitle(ts)
+        label = map_name
+        if subtitle:
+            label = f"{map_name}\n{subtitle}"
+        x_labels.append(label)
+        values.append(int(r["premier_rating"]))
+
+    return {
+        "metric_label": "Premier Rating",
+        "x_labels": x_labels,
+        "series": {"Premier": values},
+        "match_keys": match_keys,
     }

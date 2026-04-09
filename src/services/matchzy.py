@@ -1,5 +1,6 @@
 import mysql.connector
 from mysql.connector import Error
+from datetime import datetime
 
 from db.connection_db import write_transaction
 import db.matches_db as match_db
@@ -70,7 +71,7 @@ class MatchZy:
         if conn is None:
             raise RuntimeError("MySQL connection failed: no connection object returned")
 
-        cursor = conn.cursor()
+        cursor = conn.cursor(dictionary=True)
         try:
             cursor.execute(query)
             return cursor.fetchall()
@@ -82,6 +83,132 @@ class MatchZy:
             return int(value)
         except (TypeError, ValueError):
             return 0
+
+    @staticmethod
+    def _clean_team_token(value):
+        return str(value or "").strip().lower().replace("_", "").replace("-", "").replace(" ", "")
+
+    @staticmethod
+    def _row_get(row, idx=None, keys=None, default=None):
+        if isinstance(row, dict):
+            keys = keys or []
+            lowered = {str(k).lower(): v for k, v in row.items()}
+
+            for key in keys:
+                val = row.get(key)
+                if val not in (None, ""):
+                    return val
+                val = lowered.get(str(key).lower())
+                if val not in (None, ""):
+                    return val
+
+            if idx is not None:
+                values = list(row.values())
+                if 0 <= idx < len(values):
+                    return values[idx]
+            return default
+
+        if isinstance(row, (tuple, list)):
+            if idx is not None and 0 <= idx < len(row):
+                return row[idx]
+            return default
+
+        return default
+
+    @staticmethod
+    def _normalize_map_name(value):
+        return str(value or "").strip().lower()
+
+    @staticmethod
+    def _parse_time_value(value):
+        if isinstance(value, datetime):
+            return value
+
+        txt = str(value or "").strip()
+        if not txt:
+            return None
+
+        # MatchZy may return either ISO-like strings or DB datetime strings.
+        normalized = txt.replace(" ", "T").replace("Z", "+00:00")
+        try:
+            return datetime.fromisoformat(normalized)
+        except Exception:
+            return None
+
+    def _team_pair_token(self, match_row):
+        team1 = self._clean_team_token(self._row_get(match_row, idx=5, keys=["team1_name", "team_a_name", "team1"], default=""))
+        team2 = self._clean_team_token(self._row_get(match_row, idx=7, keys=["team2_name", "team_b_name", "team2"], default=""))
+
+        tokens = [t for t in [team1, team2] if t]
+        if not tokens:
+            return ""
+
+        return "|".join(sorted(tokens))
+
+    def _build_team_name_map(self, team1_name=None, team2_name=None, player_rows=None):
+        """Build a per-match mapping from raw labels to canonical TeamA / TeamB."""
+        mapping = {}
+
+        def _register(raw, canonical):
+            txt = str(raw or "").strip()
+            if not txt:
+                return
+            mapping[txt] = canonical
+            mapping[txt.lower()] = canonical
+
+        # Canonical aliases always supported.
+        for alias in ["TeamA", "teama", "A", "CT", "CT_SIDE", "CounterTerrorist", "Counter-Terrorist"]:
+            _register(alias, "TeamA")
+        for alias in ["TeamB", "teamb", "B", "T", "T_SIDE", "Terrorist", "Terrorists"]:
+            _register(alias, "TeamB")
+
+        t1 = str(team1_name or "").strip()
+        t2 = str(team2_name or "").strip()
+        if t1:
+            _register(t1, "TeamA")
+        if t2:
+            _register(t2, "TeamB")
+
+        # Fallback: infer from first-seen distinct team labels in player rows.
+        if (not t1 or not t2) and player_rows:
+            ordered = []
+            for p in player_rows:
+                raw_team = str(self._row_get(p, idx=3, keys=["team", "team_name"], default="") or "").strip()
+                if not raw_team:
+                    continue
+                token = self._clean_team_token(raw_team)
+                if token in {"", "all"}:
+                    continue
+                if raw_team not in ordered:
+                    ordered.append(raw_team)
+
+            if ordered:
+                _register(ordered[0], "TeamA")
+            if len(ordered) > 1:
+                _register(ordered[1], "TeamB")
+
+        return mapping
+
+    def _canonical_team_label(self, raw_value, team_name_map):
+        txt = str(raw_value or "").strip()
+        if not txt:
+            return txt
+
+        token = self._clean_team_token(txt)
+        if token in {"teama", "a", "ct", "ctside", "counter", "counterterrorist", "counterterrorists"}:
+            return "TeamA"
+        if token in {"teamb", "b", "t", "tside", "terrorist", "terrorists"}:
+            return "TeamB"
+
+        return team_name_map.get(txt) or team_name_map.get(txt.lower()) or txt
+
+    def _extract_player_ids(self, player_rows):
+        ids = set()
+        for row in player_rows or []:
+            sid = str(self._row_get(row, idx=2, keys=["steamid64", "steamid", "steam_id"], default="") or "").strip()
+            if sid:
+                ids.add(sid)
+        return ids
 
     def close(self):
         if self.conn and self.conn.is_connected():
@@ -105,10 +232,17 @@ class MatchZy:
 
             players_by_match_map = {}
             for row in players:
-                key = (str(row[0]), self._to_int(row[1]))
+                key = (
+                    str(self._row_get(row, idx=0, keys=["match_id", "matchid", "id"], default="")),
+                    self._to_int(self._row_get(row, idx=1, keys=["map_number", "mapnumber", "map_no"], default=0)),
+                )
                 players_by_match_map.setdefault(key, []).append(row)
 
-            matches_by_id = {str(m[0]): m for m in matches}
+            matches_by_id = {}
+            for m in matches:
+                match_key = str(self._row_get(m, idx=0, keys=["match_id", "matchid", "id"], default=""))
+                if match_key:
+                    matches_by_id[match_key] = m
 
             total_maps = 0
             total_players = 0
@@ -117,100 +251,231 @@ class MatchZy:
             players_for_pool_import = []
 
             with write_transaction() as local_conn:
+                remote_to_local_match = {}
+                next_local_match_id = int(match_db.get_next_local_match_id(conn=local_conn, start_from=1))
+
+                # Some providers emit an unfinished pending row and then a finished row
+                # for effectively the same map shortly after. Collect finished rows
+                # keyed by normalized map name so we can skip stale pending duplicates.
+                # Key insight: end_time is often NULL in MatchZy; use start_time for proximity.
+                finished_rows_by_map: dict[str, list[dict]] = {}
+                for row in maps:
+                    end_time = self._row_get(row, idx=3, keys=["end_time", "ended_at", "finished_at"], default=None)
+                    if not end_time:
+                        continue
+
+                    mid = str(self._row_get(row, idx=0, keys=["match_id", "matchid", "id"], default=""))
+                    map_name = self._normalize_map_name(self._row_get(row, idx=5, keys=["map_name", "map", "mapname"], default=""))
+                    f_start = self._row_get(row, idx=2, keys=["start_time", "started_at"], default=None)
+                    if not map_name:
+                        continue
+
+                    finished_rows_by_map.setdefault(map_name, []).append({
+                        "match_id": mid,
+                        "start_time": self._parse_time_value(f_start),
+                        "end_time": self._parse_time_value(end_time),
+                    })
+
                 for map_row in maps:
 
-                    matchid = str(map_row[0])
-                    mapnumber = self._to_int(map_row[1])
+                    matchid = str(self._row_get(map_row, idx=0, keys=["match_id", "matchid", "id"], default=""))
+                    mapnumber = self._to_int(self._row_get(map_row, idx=1, keys=["map_number", "mapnumber", "map_no"], default=0))
+                    mapname = self._row_get(map_row, idx=5, keys=["map_name", "map", "mapname"], default="")
 
-                    start_time = map_row[2]
-                    end_time = map_row[3]
+                    start_time = self._row_get(map_row, idx=2, keys=["start_time", "started_at"], default=None)
+                    end_time = self._row_get(map_row, idx=3, keys=["end_time", "ended_at", "finished_at"], default=None)
+                    is_finished = bool(end_time)
+                    if not is_finished:
+                        norm_map = self._normalize_map_name(mapname)
+                        pending_start = self._parse_time_value(start_time)
+                        finished_candidates = finished_rows_by_map.get(norm_map, [])
 
-                    if match_db.match_exists(matchid):
-                        logger.log(f"[MATCHZY] Skipping existing match {matchid}", level="DEBUG")
-                        continue
+                        skip_reason = None
 
-                    if not end_time:
-                        logger.log(f"[MATCHZY] Skipping unfinished match {matchid}", level="DEBUG")
-                        continue
+                        logger.log(
+                            f"[MATCHZY] Pending check match={matchid} map={mapname} "
+                            f"start_time={start_time} candidates={len(finished_candidates)}",
+                            level="DEBUG",
+                        )
 
-                    winner = map_row[4]
-                    mapname = map_row[5]
-                    team1_score = self._to_int(map_row[6])
-                    team2_score = self._to_int(map_row[7])
+                        # Strategy 1: start_time proximity — a finished row for the same map
+                        # whose start_time is within 10 minutes of this pending row's start_time.
+                        # This is the most reliable signal since end_time is often NULL in MatchZy.
+                        if pending_start is not None:
+                            for fc in finished_candidates:
+                                if fc["start_time"] is None:
+                                    continue
+                                diff = abs((fc["start_time"] - pending_start).total_seconds())
+                                if diff <= 10 * 60:
+                                    skip_reason = (
+                                        f"start_time_proximity finished_match={fc['match_id']} "
+                                        f"diff_seconds={int(diff)}"
+                                    )
+                                    break
+
+                        # Strategy 2: ID-adjacency — a finished row for the same map
+                        # with a MatchZy match_id within ±1 of this pending row's id.
+                        if skip_reason is None:
+                            try:
+                                pending_id_int = int(matchid)
+                            except Exception:
+                                pending_id_int = None
+
+                            if pending_id_int is not None:
+                                for fc in finished_candidates:
+                                    try:
+                                        cand_id_int = int(fc["match_id"])
+                                    except Exception:
+                                        continue
+                                    if abs(cand_id_int - pending_id_int) <= 1:
+                                        skip_reason = (
+                                            f"id_adjacent finished_match={fc['match_id']} "
+                                            f"pending_id={pending_id_int} finished_id={cand_id_int}"
+                                        )
+                                        break
+
+                        if skip_reason:
+                            logger.log(
+                                f"[MATCHZY] Skip pending duplicate match={matchid} map={mapname} reason={skip_reason}",
+                                level="INFO",
+                            )
+                            continue
+
+                        logger.log(
+                            f"[MATCHZY] Ingest unfinished match as pending match={matchid} "
+                            f"map={mapname} start_time={start_time} "
+                            f"finished_candidates_for_map={len(finished_candidates)}",
+                            level="DEBUG",
+                        )
+
+                    winner = self._row_get(
+                        map_row,
+                        idx=4,
+                        keys=["winner", "winner_team", "winning_team", "winner_team_name", "winning_team_name"],
+                        default="",
+                    )
+                    team1_score = self._to_int(self._row_get(map_row, idx=6, keys=["team1_score", "score_team1", "team_a_score"], default=0))
+                    team2_score = self._to_int(self._row_get(map_row, idx=7, keys=["team2_score", "score_team2", "team_b_score"], default=0))
 
                     logger.log(f"[MATCHZY] Processing match={matchid} map={mapname}", level="INFO")
 
                     match_data = matches_by_id.get(matchid)
+                    player_rows_for_map = players_by_match_map.get((matchid, mapnumber), [])
+                    player_ids = self._extract_player_ids(player_rows_for_map)
+
+                    team_name_map = self._build_team_name_map(
+                        team1_name=self._row_get(match_data, idx=5, keys=["team1_name", "team_a_name", "team1"], default=None),
+                        team2_name=self._row_get(match_data, idx=7, keys=["team2_name", "team_b_name", "team2"], default=None),
+                        player_rows=player_rows_for_map,
+                    )
+
+                    canonical_map_winner = self._canonical_team_label(winner, team_name_map)
+
+                    canonical_match_winner = self._canonical_team_label(
+                        self._row_get(
+                            match_data,
+                            idx=3,
+                            keys=["winner", "winner_team", "winning_team", "winner_team_name", "winning_team_name"],
+                            default="",
+                        ),
+                        team_name_map,
+                    )
+
+                    if not str(canonical_match_winner or "").strip():
+                        canonical_match_winner = canonical_map_winner
+
+                    local_match_id = remote_to_local_match.get(matchid)
+                    local_map_number = int(mapnumber)
+
+                    if local_match_id is None:
+                        # MatchZy match_id is authoritative for MatchZy rows.
+                        # Do not fuzzy-remap to a different local id here, otherwise
+                        # distinct upstream matches (e.g. 9 and 10) can collapse.
+                        remote_id_exists = match_db.match_exists(matchid)
+                        if not remote_id_exists:
+                            local_match_id = matchid
+                        else:
+                            local_match_id = matchid
+
+                        remote_to_local_match[matchid] = str(local_match_id)
 
                     if match_data:
                         match_db.insert_match({
-                            "match_id": matchid,
-                            "start_time": match_data[1],
-                            "end_time": match_data[2],
-                            "winner": match_data[3],
-                            "series_type": match_data[4],
-                            "team1_name": match_data[5],
-                            "team1_score": self._to_int(match_data[6]),
-                            "team2_name": match_data[7],
-                            "team2_score": self._to_int(match_data[8]),
-                            "server_ip": match_data[9],
+                            "match_id": local_match_id,
+                            "start_time": self._row_get(match_data, idx=1, keys=["start_time", "started_at"], default=None),
+                            "end_time": self._row_get(match_data, idx=2, keys=["end_time", "ended_at", "finished_at"], default=None),
+                            "winner": canonical_match_winner,
+                            "series_type": self._row_get(match_data, idx=4, keys=["series_type", "series"], default=None),
+                            "team1_name": "TeamA",
+                            "team1_score": self._to_int(self._row_get(match_data, idx=6, keys=["team1_score", "score_team1", "team_a_score"], default=0)),
+                            "team2_name": "TeamB",
+                            "team2_score": self._to_int(self._row_get(match_data, idx=8, keys=["team2_score", "score_team2", "team_b_score"], default=0)),
+                            "server_ip": self._row_get(match_data, idx=9, keys=["server_ip", "server", "server_address"], default=None),
                         }, conn=local_conn)
                     else:
-                        match_db.insert_match({"match_id": matchid}, conn=local_conn)
+                        match_db.insert_match({"match_id": local_match_id}, conn=local_conn)
+
+                    match_db.set_match_winner_if_missing(
+                        local_match_id,
+                        canonical_map_winner,
+                        conn=local_conn,
+                    )
 
                     match_db.insert_match_map({
-                        "match_id": matchid,
-                        "map_number": mapnumber,
+                        "match_id": local_match_id,
+                        "map_number": local_map_number,
                         "map_name": mapname,
                         "start_time": start_time,
                         "end_time": end_time,
-                        "winner": winner,
+                        "winner": canonical_map_winner,
                         "team1_score": team1_score,
                         "team2_score": team2_score,
                     }, conn=local_conn)
 
                     total_maps += 1
 
-                    key = (matchid, mapnumber)
                     map_player_payloads = []
-                    for p in players_by_match_map.get(key, []):
+                    for p in player_rows_for_map:
                         player_payload = {
-                            "steamid64": str(p[2]),
-                            "match_id": matchid,
-                            "map_number": mapnumber,
-                            "team": p[3],
-                            "name": p[4],
-                            "kills": self._to_int(p[5]),
-                            "deaths": self._to_int(p[6]),
-                            "damage": self._to_int(p[7]),
-                            "assists": self._to_int(p[8]),
-                            "enemy5ks": self._to_int(p[9]),
-                            "enemy4ks": self._to_int(p[10]),
-                            "enemy3ks": self._to_int(p[11]),
-                            "enemy2ks": self._to_int(p[12]),
-                            "utility_count": self._to_int(p[13]),
-                            "utility_damage": self._to_int(p[14]),
-                            "utility_successes": self._to_int(p[15]),
-                            "utility_enemies": self._to_int(p[16]),
-                            "flash_count": self._to_int(p[17]),
-                            "flash_successes": self._to_int(p[18]),
-                            "health_points_removed_total": self._to_int(p[19]),
-                            "health_points_dealt_total": self._to_int(p[20]),
-                            "shots_fired_total": self._to_int(p[21]),
-                            "shots_on_target_total": self._to_int(p[22]),
-                            "v1_count": self._to_int(p[23]),
-                            "v1_wins": self._to_int(p[24]),
-                            "v2_count": self._to_int(p[25]),
-                            "v2_wins": self._to_int(p[26]),
-                            "entry_count": self._to_int(p[27]),
-                            "entry_wins": self._to_int(p[28]),
-                            "equipment_value": self._to_int(p[29]),
-                            "money_saved": self._to_int(p[30]),
-                            "kill_reward": self._to_int(p[31]),
-                            "live_time": self._to_int(p[32]),
-                            "head_shot_kills": self._to_int(p[33]),
-                            "cash_earned": self._to_int(p[34]),
-                            "enemies_flashed": self._to_int(p[35]),
+                            "steamid64": str(self._row_get(p, idx=2, keys=["steamid64", "steamid", "steam_id"], default="")),
+                            "match_id": local_match_id,
+                            "map_number": local_map_number,
+                            "team": self._canonical_team_label(
+                                self._row_get(p, idx=3, keys=["team", "team_name"], default=""),
+                                team_name_map,
+                            ),
+                            "name": self._row_get(p, idx=4, keys=["name", "player_name"], default=""),
+                            "kills": self._to_int(self._row_get(p, idx=5, keys=["kills"], default=0)),
+                            "deaths": self._to_int(self._row_get(p, idx=6, keys=["deaths"], default=0)),
+                            "damage": self._to_int(self._row_get(p, idx=7, keys=["damage"], default=0)),
+                            "assists": self._to_int(self._row_get(p, idx=8, keys=["assists"], default=0)),
+                            "enemy5ks": self._to_int(self._row_get(p, idx=9, keys=["enemy5ks"], default=0)),
+                            "enemy4ks": self._to_int(self._row_get(p, idx=10, keys=["enemy4ks"], default=0)),
+                            "enemy3ks": self._to_int(self._row_get(p, idx=11, keys=["enemy3ks"], default=0)),
+                            "enemy2ks": self._to_int(self._row_get(p, idx=12, keys=["enemy2ks"], default=0)),
+                            "utility_count": self._to_int(self._row_get(p, idx=13, keys=["utility_count"], default=0)),
+                            "utility_damage": self._to_int(self._row_get(p, idx=14, keys=["utility_damage"], default=0)),
+                            "utility_successes": self._to_int(self._row_get(p, idx=15, keys=["utility_successes"], default=0)),
+                            "utility_enemies": self._to_int(self._row_get(p, idx=16, keys=["utility_enemies"], default=0)),
+                            "flash_count": self._to_int(self._row_get(p, idx=17, keys=["flash_count"], default=0)),
+                            "flash_successes": self._to_int(self._row_get(p, idx=18, keys=["flash_successes"], default=0)),
+                            "health_points_removed_total": self._to_int(self._row_get(p, idx=19, keys=["health_points_removed_total"], default=0)),
+                            "health_points_dealt_total": self._to_int(self._row_get(p, idx=20, keys=["health_points_dealt_total"], default=0)),
+                            "shots_fired_total": self._to_int(self._row_get(p, idx=21, keys=["shots_fired_total"], default=0)),
+                            "shots_on_target_total": self._to_int(self._row_get(p, idx=22, keys=["shots_on_target_total"], default=0)),
+                            "v1_count": self._to_int(self._row_get(p, idx=23, keys=["v1_count"], default=0)),
+                            "v1_wins": self._to_int(self._row_get(p, idx=24, keys=["v1_wins"], default=0)),
+                            "v2_count": self._to_int(self._row_get(p, idx=25, keys=["v2_count"], default=0)),
+                            "v2_wins": self._to_int(self._row_get(p, idx=26, keys=["v2_wins"], default=0)),
+                            "entry_count": self._to_int(self._row_get(p, idx=27, keys=["entry_count"], default=0)),
+                            "entry_wins": self._to_int(self._row_get(p, idx=28, keys=["entry_wins"], default=0)),
+                            "equipment_value": self._to_int(self._row_get(p, idx=29, keys=["equipment_value"], default=0)),
+                            "money_saved": self._to_int(self._row_get(p, idx=30, keys=["money_saved"], default=0)),
+                            "kill_reward": self._to_int(self._row_get(p, idx=31, keys=["kill_reward"], default=0)),
+                            "live_time": self._to_int(self._row_get(p, idx=32, keys=["live_time"], default=0)),
+                            "head_shot_kills": self._to_int(self._row_get(p, idx=33, keys=["head_shot_kills"], default=0)),
+                            "cash_earned": self._to_int(self._row_get(p, idx=34, keys=["cash_earned"], default=0)),
+                            "enemies_flashed": self._to_int(self._row_get(p, idx=35, keys=["enemies_flashed"], default=0)),
                         }
                         map_player_payloads.append(player_payload)
 

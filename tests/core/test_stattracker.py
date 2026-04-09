@@ -202,7 +202,7 @@ class TestGetPlayerDashboard:
         monkeypatch.setattr(
             stattracker_module.stattracker_repo,
             "fetch_player_overall_metrics",
-            lambda _sid: {
+            lambda _sid, seasons=None: {
                 "maps_played": 2,
                 "map_wins": 1,
                 "total_kills": 20,
@@ -219,7 +219,7 @@ class TestGetPlayerDashboard:
         monkeypatch.setattr(
             stattracker_module.stattracker_repo,
             "fetch_player_overall_movement_metrics",
-            lambda _sid: {
+            lambda _sid, seasons=None: {
                 "total_distance_units": 0.0,
                 "strafe_distance_units": 0.0,
                 "strafe_time_s": 0.0,
@@ -227,11 +227,11 @@ class TestGetPlayerDashboard:
                 "camp_time_s": 0.0,
             },
         )
-        monkeypatch.setattr(stattracker_module.stattracker_repo, "fetch_player_map_stats", lambda _sid: [])
+        monkeypatch.setattr(stattracker_module.stattracker_repo, "fetch_player_map_stats", lambda _sid, seasons=None: [])
         monkeypatch.setattr(
             stattracker_module.stattracker_repo,
             "fetch_player_weapon_stats",
-            lambda _sid, min_shots, weapon_category: [
+            lambda _sid, min_shots, weapon_category, seasons=None: [
                 {
                     "weapon": "ak-47",
                     "category": "rifles",
@@ -247,7 +247,7 @@ class TestGetPlayerDashboard:
         monkeypatch.setattr(
             stattracker_module.stattracker_repo,
             "fetch_player_weapon_kill_attribution_deltas",
-            lambda _sid: [],
+            lambda _sid, seasons=None: [],
         )
 
         result = stattracker_module.get_player_dashboard("76561198000000001")
@@ -264,7 +264,7 @@ class TestGetPlayerDashboard:
         monkeypatch.setattr(
             stattracker_module.stattracker_repo,
             "fetch_player_overall_metrics",
-            lambda _sid: {
+            lambda _sid, seasons=None: {
                 "maps_played": 4,
                 "map_wins": 2,
                 "total_kills": 40,
@@ -281,7 +281,7 @@ class TestGetPlayerDashboard:
         monkeypatch.setattr(
             stattracker_module.stattracker_repo,
             "fetch_player_overall_movement_metrics",
-            lambda _sid: {
+            lambda _sid, seasons=None: {
                 "total_distance_units": 0.0,
                 "strafe_distance_units": 0.0,
                 "strafe_time_s": 0.0,
@@ -289,9 +289,9 @@ class TestGetPlayerDashboard:
                 "camp_time_s": 200.0,
             },
         )
-        monkeypatch.setattr(stattracker_module.stattracker_repo, "fetch_player_map_stats", lambda _sid: [])
-        monkeypatch.setattr(stattracker_module.stattracker_repo, "fetch_player_weapon_stats", lambda _sid, min_shots, weapon_category: [])
-        monkeypatch.setattr(stattracker_module.stattracker_repo, "fetch_player_weapon_kill_attribution_deltas", lambda _sid: [])
+        monkeypatch.setattr(stattracker_module.stattracker_repo, "fetch_player_map_stats", lambda _sid, seasons=None: [])
+        monkeypatch.setattr(stattracker_module.stattracker_repo, "fetch_player_weapon_stats", lambda _sid, min_shots, weapon_category, seasons=None: [])
+        monkeypatch.setattr(stattracker_module.stattracker_repo, "fetch_player_weapon_kill_attribution_deltas", lambda _sid, seasons=None: [])
 
         result = stattracker_module.get_player_dashboard("76561198000000001")
         kpis = result["kpis"]

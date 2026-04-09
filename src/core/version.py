@@ -5,7 +5,7 @@ from pathlib import Path
 from core.pathing import is_frozen, resource_path
 
 
-DEV_APP_VERSION = "1.4.1"
+DEV_APP_VERSION = "1.0.0"
 GITHUB_OWNER = "CaptainBlake"
 GITHUB_REPO = "Internomat"
 
