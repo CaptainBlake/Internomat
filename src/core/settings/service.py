@@ -19,7 +19,7 @@ SETTINGS_SCHEMA = {
     "dist_weight": float,
     "default_rating": int,
     "allow_uneven_teams": _to_bool,
-    "use_elo_when_in_season": _to_bool,
+    "use_elo": _to_bool,
     "maproulette_use_history": _to_bool,
     "maproulette_reset_weight_each_season": _to_bool,
     "matchzy_host": str,
@@ -56,6 +56,10 @@ def normalize_settings_payload(payload):
         legacy_value = _to_bool(payload.get("auto_import_match_players"))
         payload.setdefault("auto_import_players_from_history", legacy_value)
         payload.setdefault("auto_import_maps_from_history", legacy_value)
+
+    # Backward compatibility: old key "use_elo_when_in_season" became "use_elo".
+    if "use_elo_when_in_season" in payload:
+        payload.setdefault("use_elo", _to_bool(payload.get("use_elo_when_in_season")))
 
     normalized = {}
     for key, caster in SETTINGS_SCHEMA.items():

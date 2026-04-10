@@ -143,6 +143,8 @@ def build_elo_section(parent, setting_bindings, mark_dirty, sidebar, callbacks):
             return False
 
     def _is_today_in_any_season(seasons_payload):
+        if not bool(getattr(settings, "use_elo", True)):
+            return False
         today = datetime.now().date()
         return _season_for_date(today, seasons_payload or []) is not None
 

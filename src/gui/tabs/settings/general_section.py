@@ -72,12 +72,12 @@ def build_general_section(setting_bindings, mark_dirty, save_settings_button):
         tooltip="When enabled, logs are written to timestamped files in the log folder."
     ))
 
-    checkbox_use_elo_in_season = QCheckBox()
-    checkbox_use_elo_in_season.setChecked(bool(getattr(settings, "use_elo_when_in_season", True)))
+    checkbox_use_elo = QCheckBox()
+    checkbox_use_elo.setChecked(bool(getattr(settings, "use_elo", False)))
     layout.addLayout(create_setting_row(
-        "Use Elo in active season:", checkbox_use_elo_in_season, "use_elo_when_in_season",
+        "Use Elo:", checkbox_use_elo, "use_elo",
         setting_bindings, mark_dirty,
-        tooltip="When enabled, TeamBuilder auto-switches to Elo while today is inside a configured season."
+        tooltip="When enabled, season logic is active and TeamBuilder auto-switches to Elo during active seasons.\nWhen disabled, seasons are ignored and TeamBuilder stays on Prime."
     ))
 
     checkbox_auto_import_players = QCheckBox()
