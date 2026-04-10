@@ -72,12 +72,12 @@ def build_general_section(setting_bindings, mark_dirty, save_settings_button):
         tooltip="When enabled, logs are written to timestamped files in the log folder."
     ))
 
-    checkbox_use_elo_in_season = QCheckBox()
-    checkbox_use_elo_in_season.setChecked(bool(getattr(settings, "use_elo_when_in_season", True)))
+    checkbox_use_elo = QCheckBox()
+    checkbox_use_elo.setChecked(bool(getattr(settings, "use_elo", False)))
     layout.addLayout(create_setting_row(
-        "Use Elo in active season:", checkbox_use_elo_in_season, "use_elo_when_in_season",
+        "Use Elo:", checkbox_use_elo, "use_elo",
         setting_bindings, mark_dirty,
-        tooltip="When enabled, TeamBuilder auto-switches to Elo while today is inside a configured season."
+        tooltip="When enabled, season logic is active and TeamBuilder auto-switches to Elo during active seasons.\nWhen disabled, seasons are ignored and TeamBuilder stays on Prime."
     ))
 
     checkbox_auto_import_players = QCheckBox()
@@ -94,6 +94,14 @@ def build_general_section(setting_bindings, mark_dirty, save_settings_button):
         "Import maps from history:", checkbox_auto_import_maps, "auto_import_maps_from_history",
         setting_bindings, mark_dirty,
         tooltip="When enabled, MatchZy sync imports map names from match history into the map pool."
+    ))
+
+    checkbox_unstable = QCheckBox()
+    checkbox_unstable.setChecked(bool(getattr(settings, "update_include_unstable", False)))
+    layout.addLayout(create_setting_row(
+        "Include unstable builds:", checkbox_unstable, "update_include_unstable",
+        setting_bindings, mark_dirty,
+        tooltip="When enabled, the update check includes unstable (pre-release) builds.\nDisable to only receive stable releases."
     ))
 
     settings_button_row = QHBoxLayout()

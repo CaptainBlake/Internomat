@@ -280,7 +280,7 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
     ranking_mode_label.setStyleSheet("font-weight: 700; color: #2E4C69;")
 
     def _is_today_in_season():
-        if not bool(getattr(settings, "use_elo_when_in_season", False)):
+        if not bool(getattr(settings, "use_elo", False)):
             return False
         return bool(is_date_in_configured_season())
 
@@ -288,8 +288,8 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
         return "elo" if _is_today_in_season() else "prime"
 
     def _update_ranking_mode_label():
-        if not bool(getattr(settings, "use_elo_when_in_season", False)):
-            ranking_mode_label.setText("Ranking: Prime (auto-switch disabled)")
+        if not bool(getattr(settings, "use_elo", False)):
+            ranking_mode_label.setText("Ranking: Prime (Elo disabled)")
             return
         ranking_mode_label.setText(
             "Ranking: Elo (in-season)" if _current_rating_source() == "elo" else "Ranking: Prime (off-season)"
