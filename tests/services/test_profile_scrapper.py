@@ -4,6 +4,7 @@ import os
 from unittest.mock import patch, Mock, MagicMock
 
 import pytest
+from bs4 import BeautifulSoup
 
 
 # ---------------------------------------------------------------------------
@@ -385,7 +386,7 @@ class TestParseLeetifyProfile:
         </body></html>
         """
 
-        result = _parse_leetify_profile(html)
+        result = _parse_leetify_profile(BeautifulSoup(html, "html.parser"))
         assert result is not None
         assert result["premier_rating"] == 15234
         assert result["season"] == 1
@@ -412,7 +413,7 @@ class TestParseLeetifyProfile:
         </body></html>
         """
 
-        result = _parse_leetify_profile(html)
+        result = _parse_leetify_profile(BeautifulSoup(html, "html.parser"))
         assert result["premier_rating"] == 12500
         assert result["season"] == 2
 
@@ -420,7 +421,7 @@ class TestParseLeetifyProfile:
         from services.profile_scrapper import _parse_leetify_profile
 
         html = "<html><body><p>No data</p></body></html>"
-        result = _parse_leetify_profile(html)
+        result = _parse_leetify_profile(BeautifulSoup(html, "html.parser"))
         assert result is None
 
     def test_no_premier_row_raises(self):
@@ -439,7 +440,7 @@ class TestParseLeetifyProfile:
         """
 
         with pytest.raises(Exception, match="Premier rank not found"):
-            _parse_leetify_profile(html)
+            _parse_leetify_profile(BeautifulSoup(html, "html.parser"))
 
     def test_prefers_max_over_min(self):
         """When both min and max cells have labels, the MAX (rightmost) is used."""
@@ -460,7 +461,7 @@ class TestParseLeetifyProfile:
         </body></html>
         """
 
-        result = _parse_leetify_profile(html)
+        result = _parse_leetify_profile(BeautifulSoup(html, "html.parser"))
         assert result["premier_rating"] == 22500
         assert result["season"] == 4
 
@@ -485,7 +486,7 @@ class TestParseLeetifyProfileCurrent:
         </body></html>
         """
 
-        result = _parse_leetify_profile_current(html)
+        result = _parse_leetify_profile_current(BeautifulSoup(html, "html.parser"))
         assert result == 24777
 
     def test_ignores_labels_inside_rank_summary(self):
@@ -499,14 +500,14 @@ class TestParseLeetifyProfileCurrent:
         </body></html>
         """
 
-        result = _parse_leetify_profile_current(html)
+        result = _parse_leetify_profile_current(BeautifulSoup(html, "html.parser"))
         assert result is None
 
     def test_returns_none_when_no_rating(self):
         from services.profile_scrapper import _parse_leetify_profile_current
 
         html = "<html><head><title>Player - Leetify</title></head><body></body></html>"
-        result = _parse_leetify_profile_current(html)
+        result = _parse_leetify_profile_current(BeautifulSoup(html, "html.parser"))
         assert result is None
 
     def test_ignores_small_label_numbers(self):
@@ -518,7 +519,7 @@ class TestParseLeetifyProfileCurrent:
         </body></html>
         """
 
-        result = _parse_leetify_profile_current(html)
+        result = _parse_leetify_profile_current(BeautifulSoup(html, "html.parser"))
         assert result is None
 
     def test_broad_fallback_finds_comma_number(self):
@@ -531,7 +532,7 @@ class TestParseLeetifyProfileCurrent:
         </body></html>
         """
 
-        result = _parse_leetify_profile_current(html)
+        result = _parse_leetify_profile_current(BeautifulSoup(html, "html.parser"))
         assert result == 24777
 
     def test_ignores_css_rgb_color_values(self):
