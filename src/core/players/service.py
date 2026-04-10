@@ -1,4 +1,5 @@
 import db.players_db as player_db
+import db.prime_db as prime_db
 import services.profile_scrapper as profile_scrapper
 import services.logger as logger
 import core.players.pipeline as pipeline
@@ -35,6 +36,7 @@ def add_player_from_url(url):
         raise ValueError("Failed to fetch player")
 
     player_db.upsert_player(player)
+    prime_db.upsert_prime_rating(player)
 
     logger.log(f"[PLAYERS] Added {player.get('name')}", level="INFO")
 
@@ -49,7 +51,8 @@ def update_single_player(player):
         return
 
     player_db.update_player(player)
-    player_db.record_premier_rating_history(player)
+    prime_db.upsert_prime_rating(player)
+    prime_db.record_premier_rating_history(player)
 
 
 # --- DELETE ---

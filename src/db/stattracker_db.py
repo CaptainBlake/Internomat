@@ -43,7 +43,7 @@ def fetch_player_overview():
         row = conn.execute(
             """
             SELECT
-                (SELECT COUNT(DISTINCT steam64_id) FROM players) AS tracked_players,
+                (SELECT COUNT(DISTINCT steamid64) FROM players) AS tracked_players,
                 (SELECT COUNT(*) FROM match_player_stats) AS player_stat_rows,
                 (
                     SELECT COUNT(DISTINCT steamid64 || ':' || match_id || ':' || map_number)
@@ -675,7 +675,7 @@ def fetch_player_kill_relationships(steamid64, seasons=None):
                     {season_sql_r}
                 GROUP BY r.attacker_steamid64
             ) combined
-            LEFT JOIN players p ON p.steam64_id = combined.opponent
+            LEFT JOIN players p ON p.steamid64 = combined.opponent
             WHERE opponent != ?
             GROUP BY opponent
             ORDER BY (COALESCE(SUM(kills_dealt), 0) + COALESCE(SUM(kills_received), 0)) DESC

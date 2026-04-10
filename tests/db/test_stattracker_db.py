@@ -307,7 +307,7 @@ class TestFetchPlayerOverview:
     def test_overview_counts(self, db_conn, db_file, seed_player, seed_match, seed_player_stats):
         from db.stattracker_db import fetch_player_overview
 
-        seed_player(steam64_id="76561198000000001", name="Alice")
+        seed_player(steamid64="76561198000000001", name="Alice")
         seed_match(
             match_kwargs={"match_id": "400"},
             map_kwargs={"map_number": 0, "map_name": "de_dust2"},

@@ -13,22 +13,26 @@ def _patch_conn(module_path, db_file):
 class TestInsertAndFetchPlayer:
 
     def test_insert_player_then_fetch(self, db_conn, seed_player):
-        p = seed_player(steam64_id="76561198000000001", name="Alice", premier_rating=18000)
+        p = seed_player(steamid64="76561198000000001", name="Alice", premier_rating=18000)
 
         row = db_conn.execute(
-            "SELECT * FROM players WHERE steam64_id = ?", (p["steam64_id"],)
+            "SELECT * FROM players WHERE steamid64 = ?", (p["steamid64"],)
         ).fetchone()
 
         assert row is not None
         assert row["name"] == "Alice"
-        assert row["premier_rating"] == 18000
+
+        prime = db_conn.execute(
+            "SELECT premier_rating FROM prime_ratings WHERE steamid64 = ?", (p["steamid64"],)
+        ).fetchone()
+        assert prime["premier_rating"] == 18000
 
     def test_insert_player_sets_timestamps(self, db_conn, seed_player):
         p = seed_player()
 
         row = db_conn.execute(
-            "SELECT added_at, last_updated FROM players WHERE steam64_id = ?",
-            (p["steam64_id"],),
+            "SELECT added_at, last_updated FROM players WHERE steamid64 = ?",
+            (p["steamid64"],),
         ).fetchone()
 
         assert row["added_at"] is not None
@@ -40,16 +44,16 @@ class TestUpdatePlayer:
     def test_update_player_name(self, db_conn, seed_player):
         from db.players_db import update_player
 
-        p = seed_player(steam64_id="76561198000000002", name="Bob")
+        p = seed_player(steamid64="76561198000000002", name="Bob")
 
         update_player(
-            {"steam64_id": "76561198000000002", "name": "Bobby"},
+            {"steamid64": "76561198000000002", "name": "Bobby"},
             conn=db_conn,
         )
         db_conn.commit()
 
         row = db_conn.execute(
-            "SELECT name FROM players WHERE steam64_id = ?", ("76561198000000002",)
+            "SELECT name FROM players WHERE steamid64 = ?", ("76561198000000002",)
         ).fetchone()
         assert row["name"] == "Bobby"
 
@@ -58,60 +62,72 @@ class TestUpsertPlayer:
 
     def test_upsert_inserts_new_player(self, db_conn):
         from db.players_db import upsert_player
+        from db.prime_db import upsert_prime_rating
 
-        upsert_player(
-            {"steam64_id": "76561198000000010", "name": "NewGuy", "premier_rating": 12000},
-            conn=db_conn,
-        )
+        player = {"steamid64": "76561198000000010", "name": "NewGuy", "premier_rating": 12000}
+        upsert_player(player, conn=db_conn)
+        upsert_prime_rating(player, conn=db_conn)
         db_conn.commit()
 
         row = db_conn.execute(
-            "SELECT * FROM players WHERE steam64_id = ?", ("76561198000000010",)
+            "SELECT * FROM players WHERE steamid64 = ?", ("76561198000000010",)
         ).fetchone()
 
         assert row is not None
         assert row["name"] == "NewGuy"
-        assert row["premier_rating"] == 12000
+
+        prime = db_conn.execute(
+            "SELECT premier_rating FROM prime_ratings WHERE steamid64 = ?", ("76561198000000010",)
+        ).fetchone()
+        assert prime["premier_rating"] == 12000
 
     def test_upsert_updates_existing_player(self, db_conn, seed_player):
         from db.players_db import upsert_player
+        from db.prime_db import upsert_prime_rating
 
-        seed_player(steam64_id="76561198000000011", name="OldName", premier_rating=10000)
+        seed_player(steamid64="76561198000000011", name="OldName", premier_rating=10000)
 
-        upsert_player(
-            {"steam64_id": "76561198000000011", "name": "NewName", "premier_rating": 20000},
-            conn=db_conn,
-        )
+        player = {"steamid64": "76561198000000011", "name": "NewName", "premier_rating": 20000}
+        upsert_player(player, conn=db_conn)
+        upsert_prime_rating(player, conn=db_conn)
         db_conn.commit()
 
         row = db_conn.execute(
-            "SELECT name, premier_rating FROM players WHERE steam64_id = ?",
+            "SELECT name FROM players WHERE steamid64 = ?",
             ("76561198000000011",),
         ).fetchone()
-
         assert row["name"] == "NewName"
-        assert row["premier_rating"] == 20000
+
+        prime = db_conn.execute(
+            "SELECT premier_rating FROM prime_ratings WHERE steamid64 = ?",
+            ("76561198000000011",),
+        ).fetchone()
+        assert prime["premier_rating"] == 20000
 
     def test_upsert_import_mode_only_sets_name(self, db_conn, seed_player):
         from db.players_db import upsert_player
 
-        seed_player(steam64_id="76561198000000012", name="ImportGuy", premier_rating=15000)
+        seed_player(steamid64="76561198000000012", name="ImportGuy", premier_rating=15000)
 
         upsert_player(
-            {"steam64_id": "76561198000000012", "name": "ImportGuyRenamed"},
+            {"steamid64": "76561198000000012", "name": "ImportGuyRenamed"},
             mode="import",
             conn=db_conn,
         )
         db_conn.commit()
 
         row = db_conn.execute(
-            "SELECT name, premier_rating FROM players WHERE steam64_id = ?",
+            "SELECT name FROM players WHERE steamid64 = ?",
             ("76561198000000012",),
         ).fetchone()
-
         assert row["name"] == "ImportGuyRenamed"
-        # premier_rating should stay unchanged — import mode doesn't touch it
-        assert row["premier_rating"] == 15000
+
+        # prime_ratings should stay unchanged — import mode doesn't touch it
+        prime = db_conn.execute(
+            "SELECT premier_rating FROM prime_ratings WHERE steamid64 = ?",
+            ("76561198000000012",),
+        ).fetchone()
+        assert prime["premier_rating"] == 15000
 
 
 class TestDeletePlayer:
@@ -119,13 +135,13 @@ class TestDeletePlayer:
     def test_delete_player_removes_row(self, db_conn, db_file, seed_player):
         from db.players_db import delete_player
 
-        seed_player(steam64_id="76561198000000020", name="Doomed")
+        seed_player(steamid64="76561198000000020", name="Doomed")
 
         with _patch_conn("db.players_db.get_conn", db_file):
             delete_player("76561198000000020")
 
         row = db_conn.execute(
-            "SELECT 1 FROM players WHERE steam64_id = ?", ("76561198000000020",)
+            "SELECT 1 FROM players WHERE steamid64 = ?", ("76561198000000020",)
         ).fetchone()
         assert row is None
 
@@ -135,8 +151,8 @@ class TestGetPlayers:
     def test_get_players_returns_all(self, db_conn, db_file, seed_player):
         from db.players_db import get_players
 
-        seed_player(steam64_id="76561198000000030", name="P1", premier_rating=10000)
-        seed_player(steam64_id="76561198000000031", name="P2", premier_rating=20000)
+        seed_player(steamid64="76561198000000030", name="P1", premier_rating=10000)
+        seed_player(steamid64="76561198000000031", name="P2", premier_rating=20000)
 
         with _patch_conn("db.players_db.get_conn", db_file):
             rows = get_players()
@@ -146,8 +162,8 @@ class TestGetPlayers:
     def test_get_players_ordered_by_rating_desc(self, db_conn, db_file, seed_player):
         from db.players_db import get_players
 
-        seed_player(steam64_id="76561198000000040", name="Low", premier_rating=5000)
-        seed_player(steam64_id="76561198000000041", name="High", premier_rating=25000)
+        seed_player(steamid64="76561198000000040", name="Low", premier_rating=5000)
+        seed_player(steamid64="76561198000000041", name="High", premier_rating=25000)
 
         with _patch_conn("db.players_db.get_conn", db_file):
             rows = get_players()
@@ -170,7 +186,7 @@ class TestUpsertPlayersFromMatchStats:
         from db.players_db import upsert_players_from_match_stats
 
         rows = [
-            {"steam64_id": "76561198000000050", "name": "StatPlayer1"},
+            {"steamid64": "76561198000000050", "name": "StatPlayer1"},
             {"steamid64": "76561198000000051", "name": "StatPlayer2"},
         ]
 
@@ -179,7 +195,7 @@ class TestUpsertPlayersFromMatchStats:
 
         assert count == 2
         row = db_conn.execute(
-            "SELECT 1 FROM players WHERE steam64_id = ?", ("76561198000000050",)
+            "SELECT 1 FROM players WHERE steamid64 = ?", ("76561198000000050",)
         ).fetchone()
         assert row is not None
 
@@ -187,8 +203,8 @@ class TestUpsertPlayersFromMatchStats:
         from db.players_db import upsert_players_from_match_stats
 
         rows = [
-            {"steam64_id": "76561198000000060", "name": "Dup"},
-            {"steam64_id": "76561198000000060", "name": "Dup"},
+            {"steamid64": "76561198000000060", "name": "Dup"},
+            {"steamid64": "76561198000000060", "name": "Dup"},
         ]
 
         count = upsert_players_from_match_stats(rows, conn=db_conn)

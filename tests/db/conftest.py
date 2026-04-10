@@ -36,7 +36,7 @@ def db_file(db_conn):
 # ---------------------------------------------------------------------------
 
 def _make_player(
-    steam64_id="76561198000000001",
+    steamid64="76561198000000001",
     name="TestPlayer",
     premier_rating=15000,
     leetify_rating=None,
@@ -45,7 +45,7 @@ def _make_player(
     leetify_id=None,
 ):
     return {
-        "steam64_id": steam64_id,
+        "steamid64": steamid64,
         "name": name,
         "premier_rating": premier_rating,
         "leetify_rating": leetify_rating,
@@ -162,10 +162,12 @@ def seed_player(db_conn):
     """Return a callable that inserts a player and returns the dict."""
 
     from db.players_db import insert_player
+    from db.prime_db import upsert_prime_rating
 
     def _seed(**kwargs):
         p = _make_player(**kwargs)
         insert_player(p, conn=db_conn)
+        upsert_prime_rating(p, conn=db_conn)
         db_conn.commit()
         return p
 

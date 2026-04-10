@@ -32,7 +32,7 @@ def test_leetify_api_returns_200(require_live, leetify_api_key):
     """Fetch a known player profile from the Leetify API and verify HTTP 200."""
     r = requests.get(
         LEETIFY_API_URL,
-        params={"steam64_id": KNOWN_STEAM64_ID},
+        params={"steamid64": KNOWN_STEAM64_ID},
         headers={"Authorization": f"Bearer {leetify_api_key}"},
         timeout=15,
     )
@@ -43,7 +43,7 @@ def test_leetify_api_response_shape(require_live, leetify_api_key):
     """Verify the API response contains expected top-level keys."""
     r = requests.get(
         LEETIFY_API_URL,
-        params={"steam64_id": KNOWN_STEAM64_ID},
+        params={"steamid64": KNOWN_STEAM64_ID},
         headers={"Authorization": f"Bearer {leetify_api_key}"},
         timeout=15,
     )

@@ -220,7 +220,7 @@ class TestGetLeetifyPlayer:
 
         result = get_leetify_player("76561198000000001")
 
-        assert result["steam64_id"] == "76561198000000001"
+        assert result["steamid64"] == "76561198000000001"
         assert result["premier_rating"] == 18500
         assert result["leetify_rating"] == 1.15
         assert result["name"] == "TestPlayer"  # From Steam XML
@@ -238,7 +238,7 @@ class TestGetLeetifyPlayer:
 
         # Fallback with empty HTML won't find premier, so returns default
         assert result is not None
-        assert result["steam64_id"] == "76561198000000099"
+        assert result["steamid64"] == "76561198000000099"
 
     def test_api_non_200_triggers_fallback(self, mock_get, mock_driver):
         from services.profile_scrapper import get_leetify_player
@@ -249,7 +249,7 @@ class TestGetLeetifyPlayer:
 
         result = get_leetify_player("76561198000000099")
         assert result is not None
-        assert result["steam64_id"] == "76561198000000099"
+        assert result["steamid64"] == "76561198000000099"
 
     def test_api_no_premier_triggers_fallback(self, mock_get, mock_driver):
         from services.profile_scrapper import get_leetify_player
@@ -262,7 +262,7 @@ class TestGetLeetifyPlayer:
         result = get_leetify_player("76561198000000099")
         assert result is not None
         # Falls back → default rating path
-        assert result["steam64_id"] == "76561198000000099"
+        assert result["steamid64"] == "76561198000000099"
 
     def test_auto_close_calls_close_driver(self, mock_get):
         from services.profile_scrapper import get_leetify_player
@@ -334,7 +334,7 @@ class TestFetchPlayer:
             result = fetch_player("76561198000000001")
 
         assert result["premier_rating"] == 18500
-        assert result["steam64_id"] == "76561198000000001"
+        assert result["steamid64"] == "76561198000000001"
 
     def test_fetch_player_from_profiles_url(self, mock_get):
         from services.profile_scrapper import fetch_player
@@ -349,7 +349,7 @@ class TestFetchPlayer:
                 "https://steamcommunity.com/profiles/76561198000000001"
             )
 
-        assert result["steam64_id"] == "76561198000000001"
+        assert result["steamid64"] == "76561198000000001"
 
     def test_fetch_player_invalid_url(self, mock_get):
         from services.profile_scrapper import fetch_player

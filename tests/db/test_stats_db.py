@@ -127,8 +127,8 @@ class TestFetchTopRatings:
     def test_top_ratings_ordering(self, db_conn, db_file, seed_player):
         from db.stats_db import fetch_top_ratings
 
-        seed_player(steam64_id="76561198000000001", name="Low", premier_rating=5000)
-        seed_player(steam64_id="76561198000000002", name="High", premier_rating=25000)
+        seed_player(steamid64="76561198000000001", name="Low", premier_rating=5000)
+        seed_player(steamid64="76561198000000002", name="High", premier_rating=25000)
 
         with _patch_conn("db.stats_db.get_conn", db_file):
             rows = fetch_top_ratings(10)

@@ -49,10 +49,11 @@ def fetch_top_ratings(limit, season=None):
             return conn.execute(
                 """
                 SELECT
-                    COALESCE(NULLIF(p.name, ''), p.steam64_id) AS name,
-                    p.steam64_id AS steamid64,
-                    COALESCE(p.premier_rating, 0) AS rating
+                    COALESCE(NULLIF(p.name, ''), p.steamid64) AS name,
+                    p.steamid64 AS steamid64,
+                    COALESCE(pr.premier_rating, 0) AS rating
                 FROM players p
+                LEFT JOIN prime_ratings pr ON pr.steamid64 = p.steamid64
                 ORDER BY rating DESC, name COLLATE NOCASE ASC
                 LIMIT ?
                 """,
@@ -66,7 +67,7 @@ def fetch_top_ratings(limit, season=None):
                 ers.steamid64 AS steamid64,
                 ROUND(COALESCE(ers.elo, 1500.0), 2) AS rating
             FROM elo_ratings_season ers
-            LEFT JOIN players p ON p.steam64_id = ers.steamid64
+            LEFT JOIN players p ON p.steamid64 = ers.steamid64
             WHERE ers.season = ?
             ORDER BY rating DESC, name COLLATE NOCASE ASC
             LIMIT ?

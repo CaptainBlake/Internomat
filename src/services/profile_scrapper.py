@@ -183,7 +183,7 @@ def _build_result(steam_id, name, premier_rating, *, rating_source, leetify_id=N
                   leetify_rating=None, total_matches=None, winrate=None,
                   rating_season=None, rating_history=None):
     result = {
-        "steam64_id": steam_id,
+        "steamid64": steam_id,
         "leetify_id": leetify_id,
         "name": name or steam_id,
         "premier_rating": premier_rating,

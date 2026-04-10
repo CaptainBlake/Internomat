@@ -22,31 +22,27 @@ def init_db():
         # --- PLAYERS ---
         conn.execute("""
             CREATE TABLE IF NOT EXISTS players(
-                steam64_id TEXT PRIMARY KEY,
+                steamid64 TEXT PRIMARY KEY,
                 leetify_id TEXT,
                 name TEXT,
-                premier_rating INTEGER,
-                leetify_rating REAL,
-                total_matches INTEGER,
-                winrate REAL,
                 added_at TEXT,
-                last_updated TEXT,
-                rating_source TEXT,
-                rating_season INTEGER
+                last_updated TEXT
             )
         """)
 
-        # Backward-compatible migration for existing players table.
-        player_columns = {
-            row[1]
-            for row in conn.execute("PRAGMA table_info(players)").fetchall()
-        }
-        if "rating_source" not in player_columns:
-            conn.execute("ALTER TABLE players ADD COLUMN rating_source TEXT")
-            logger.log("[DB] Added players.rating_source column", level="INFO")
-        if "rating_season" not in player_columns:
-            conn.execute("ALTER TABLE players ADD COLUMN rating_season INTEGER")
-            logger.log("[DB] Added players.rating_season column", level="INFO")
+        # --- PRIME RATINGS ---
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS prime_ratings (
+                steamid64       TEXT PRIMARY KEY,
+                premier_rating  INTEGER,
+                leetify_rating  REAL,
+                total_matches   INTEGER,
+                winrate         REAL,
+                rating_source   TEXT,
+                rating_season   INTEGER,
+                updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
 
         # --- MATCH META ---
         conn.execute("""
@@ -73,22 +69,11 @@ def init_db():
             )
         """)
 
-        # Backward-compatible migration for existing databases.
-        match_columns = {
-            row[1]
-            for row in conn.execute("PRAGMA table_info(matches)").fetchall()
-        }
-        if "demo" not in match_columns:
-            conn.execute("ALTER TABLE matches ADD COLUMN demo INTEGER NOT NULL DEFAULT 0")
-            logger.log("[DB] Added matches.demo column", level="INFO")
-
         # --- MAPS PER MATCH ---
         conn.execute("""
             CREATE TABLE IF NOT EXISTS match_maps (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-
-                match_id TEXT,
-                map_number INTEGER,
+                match_id TEXT NOT NULL,
+                map_number INTEGER NOT NULL,
                 map_name TEXT,
 
                 start_time TEXT,
@@ -99,7 +84,7 @@ def init_db():
                 team1_score INTEGER,
                 team2_score INTEGER,
 
-                UNIQUE(match_id, map_number)
+                PRIMARY KEY (match_id, map_number)
             )
         """)
 
@@ -162,21 +147,10 @@ def init_db():
             )
         """)
 
-        # Backward-compatible migration for existing databases.
-        mps_columns = {
-            row[1]
-            for row in conn.execute("PRAGMA table_info(match_player_stats)").fetchall()
-        }
-        for col, col_type in [("kast", "REAL"), ("impact", "REAL"), ("rating", "REAL")]:
-            if col not in mps_columns:
-                conn.execute(f"ALTER TABLE match_player_stats ADD COLUMN {col} {col_type}")
-                logger.log(f"[DB] Added match_player_stats.{col} column", level="INFO")
-
         # --- GLOBAL MAP POOL ---
         conn.execute("""
             CREATE TABLE IF NOT EXISTS maps(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT UNIQUE
+                name TEXT PRIMARY KEY
             )
         """)
 
@@ -380,52 +354,6 @@ def init_db():
             )
         """)
 
-        # Backward-compatible migration for movement/event enrichment columns.
-        pmm_columns = {row[1] for row in conn.execute("PRAGMA table_info(player_map_movement_stats)").fetchall()}
-        for col, col_type in [
-            ("freeze_distance_units", "REAL NOT NULL DEFAULT 0"),
-            ("strafe_distance_units", "REAL NOT NULL DEFAULT 0"),
-            ("strafe_ratio", "REAL NOT NULL DEFAULT 0"),
-            ("stationary_ticks", "INTEGER NOT NULL DEFAULT 0"),
-            ("camp_time_s", "REAL NOT NULL DEFAULT 0"),
-            ("sprint_ticks", "INTEGER NOT NULL DEFAULT 0"),
-            ("sprint_time_s", "REAL NOT NULL DEFAULT 0"),
-            ("stationary_ratio", "REAL NOT NULL DEFAULT 0"),
-            ("sprint_ratio", "REAL NOT NULL DEFAULT 0"),
-            ("strafe_ticks", "INTEGER NOT NULL DEFAULT 0"),
-            ("strafe_time_s", "REAL NOT NULL DEFAULT 0"),
-        ]:
-            if col not in pmm_columns:
-                conn.execute(f"ALTER TABLE player_map_movement_stats ADD COLUMN {col} {col_type}")
-
-        prm_columns = {row[1] for row in conn.execute("PRAGMA table_info(player_round_movement_stats)").fetchall()}
-        for col, col_type in [
-            ("live_distance_units", "REAL NOT NULL DEFAULT 0"),
-            ("freeze_distance_units", "REAL NOT NULL DEFAULT 0"),
-            ("strafe_distance_units", "REAL NOT NULL DEFAULT 0"),
-            ("strafe_ratio", "REAL NOT NULL DEFAULT 0"),
-            ("stationary_ticks", "INTEGER NOT NULL DEFAULT 0"),
-            ("camp_time_s", "REAL NOT NULL DEFAULT 0"),
-            ("sprint_ticks", "INTEGER NOT NULL DEFAULT 0"),
-            ("sprint_time_s", "REAL NOT NULL DEFAULT 0"),
-            ("strafe_ticks", "INTEGER NOT NULL DEFAULT 0"),
-            ("strafe_time_s", "REAL NOT NULL DEFAULT 0"),
-        ]:
-            if col not in prm_columns:
-                conn.execute(f"ALTER TABLE player_round_movement_stats ADD COLUMN {col} {col_type}")
-
-        prtb_columns = {row[1] for row in conn.execute("PRAGMA table_info(player_round_timeline_bins)").fetchall()}
-        for col, col_type in [
-            ("mean_speed_m_s", "REAL NOT NULL DEFAULT 0"),
-            ("p25_speed_m_s", "REAL NOT NULL DEFAULT 0"),
-            ("p75_speed_m_s", "REAL NOT NULL DEFAULT 0"),
-            ("max_speed_m_s", "REAL NOT NULL DEFAULT 0"),
-            ("alive_ratio", "REAL NOT NULL DEFAULT 0"),
-            ("speed_samples", "INTEGER NOT NULL DEFAULT 0"),
-        ]:
-            if col not in prtb_columns:
-                conn.execute(f"ALTER TABLE player_round_timeline_bins ADD COLUMN {col} {col_type}")
-
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_player_map_move_player ON player_map_movement_stats(steamid64)"
         )
@@ -476,21 +404,6 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_kill_matrix_victim ON player_kill_matrix(victim_steamid64)"
         )
 
-        # Backward-compatible migration for existing databases.
-        pkm_columns = {
-            row[1]
-            for row in conn.execute("PRAGMA table_info(player_kill_matrix)").fetchall()
-        }
-        for col, col_type in [
-            ("damage", "INTEGER NOT NULL DEFAULT 0"),
-            ("assists", "INTEGER NOT NULL DEFAULT 0"),
-            ("flash_assists", "INTEGER NOT NULL DEFAULT 0"),
-            ("flashes", "INTEGER NOT NULL DEFAULT 0"),
-        ]:
-            if col not in pkm_columns:
-                conn.execute(f"ALTER TABLE player_kill_matrix ADD COLUMN {col} {col_type}")
-                logger.log(f"[DB] Added player_kill_matrix.{col} column", level="INFO")
-
         weapon_seed_rows = list(iter_seed_weapon_rows())
         conn.executemany(
             """
@@ -524,49 +437,6 @@ def init_db():
             level="INFO",
         )
 
-        # Normalize legacy stored weapon tokens to canonical ids so stattracker
-        # can categorize them correctly even before a full re-parse.
-        conn.execute(
-            """
-            UPDATE player_map_weapon_stats
-            SET weapon = CASE LOWER(weapon)
-                WHEN 'ak47' THEN 'ak-47'
-                WHEN 'weapon_ak47' THEN 'ak-47'
-                WHEN 'm4a1' THEN 'm4a4'
-                WHEN 'weapon_m4a1' THEN 'm4a4'
-                WHEN 'weapon_m4a4' THEN 'm4a4'
-                WHEN 'm4a1_silencer' THEN 'm4a1-s'
-                WHEN 'weapon_m4a1_silencer' THEN 'm4a1-s'
-                ELSE weapon
-            END
-            WHERE LOWER(weapon) IN (
-                'ak47', 'weapon_ak47',
-                'm4a1', 'weapon_m4a1', 'weapon_m4a4',
-                'm4a1_silencer', 'weapon_m4a1_silencer'
-            )
-            """
-        )
-        conn.execute(
-            """
-            UPDATE player_round_weapon_stats
-            SET weapon = CASE LOWER(weapon)
-                WHEN 'ak47' THEN 'ak-47'
-                WHEN 'weapon_ak47' THEN 'ak-47'
-                WHEN 'm4a1' THEN 'm4a4'
-                WHEN 'weapon_m4a1' THEN 'm4a4'
-                WHEN 'weapon_m4a4' THEN 'm4a4'
-                WHEN 'm4a1_silencer' THEN 'm4a1-s'
-                WHEN 'weapon_m4a1_silencer' THEN 'm4a1-s'
-                ELSE weapon
-            END
-            WHERE LOWER(weapon) IN (
-                'ak47', 'weapon_ak47',
-                'm4a1', 'weapon_m4a1', 'weapon_m4a4',
-                'm4a1_silencer', 'weapon_m4a1_silencer'
-            )
-            """
-        )
-
         # --- ELO TABLES ---
         init_elo_tables(conn)
 
@@ -589,8 +459,6 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_premier_history_player
             ON premier_rating_history(steamid64, game_played_at)
         """)
-        # Migration: partial index → full index (ON CONFLICT needs non-partial).
-        conn.execute("DROP INDEX IF EXISTS uq_premier_history_match")
         conn.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS uq_premier_history_match
             ON premier_rating_history(steamid64, leetify_match_id)
