@@ -547,5 +547,5 @@ class TestParseLeetifyProfileCurrent:
         </body></html>
         """
 
-        result = _parse_leetify_profile_current(html)
+        result = _parse_leetify_profile_current(BeautifulSoup(html, "html.parser"))
         assert result is None
