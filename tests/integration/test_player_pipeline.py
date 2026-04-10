@@ -14,6 +14,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from db.players_db import insert_player
+from db.prime_db import upsert_prime_rating
 
 
 # ---------------------------------------------------------------------------
@@ -22,7 +23,7 @@ from db.players_db import insert_player
 
 def _leetify_response(steam_id, name, premier, leetify_rating, total_matches, winrate):
     return {
-        "steam64_id": steam_id,
+        "steamid64": steam_id,
         "leetify_id": f"leetify-{steam_id[-4:]}",
         "name": name,
         "premier_rating": premier,
@@ -53,11 +54,16 @@ class TestPlayerUpdatePipeline:
 
         # Pre-state: Alice has premier_rating=16000
         pre = conn.execute(
-            "SELECT premier_rating, name FROM players WHERE steam64_id = ?",
+            "SELECT premier_rating FROM prime_ratings WHERE steamid64 = ?",
             (ALICE_ID,),
         ).fetchone()
         assert pre["premier_rating"] == 16000
-        assert pre["name"] == "Alice"
+
+        pre_name = conn.execute(
+            "SELECT name FROM players WHERE steamid64 = ?",
+            (ALICE_ID,),
+        ).fetchone()
+        assert pre_name["name"] == "Alice"
 
         with patch("services.matchzy.sync"), \
              patch("services.profile_scrapper.get_leetify_player", return_value=LEETIFY_ALICE):
@@ -76,13 +82,18 @@ class TestPlayerUpdatePipeline:
         assert finished == [True]
 
         post = conn.execute(
-            "SELECT premier_rating, name, leetify_rating, leetify_id FROM players WHERE steam64_id = ?",
+            "SELECT premier_rating, leetify_rating FROM prime_ratings WHERE steamid64 = ?",
             (ALICE_ID,),
         ).fetchone()
         assert post["premier_rating"] == 18000
-        assert post["name"] == "Alice_Updated"
         assert post["leetify_rating"] == 1.25
-        assert post["leetify_id"] == f"leetify-{ALICE_ID[-4:]}"
+
+        post_player = conn.execute(
+            "SELECT name, leetify_id FROM players WHERE steamid64 = ?",
+            (ALICE_ID,),
+        ).fetchone()
+        assert post_player["name"] == "Alice_Updated"
+        assert post_player["leetify_id"] == f"leetify-{ALICE_ID[-4:]}"
 
     def test_multiple_players_update(self, full_db):
         """Updating multiple players should update each one."""
@@ -108,10 +119,10 @@ class TestPlayerUpdatePipeline:
 
         # Both updated
         alice = conn.execute(
-            "SELECT premier_rating FROM players WHERE steam64_id = ?", (ALICE_ID,),
+            "SELECT premier_rating FROM prime_ratings WHERE steamid64 = ?", (ALICE_ID,),
         ).fetchone()
         bob = conn.execute(
-            "SELECT premier_rating FROM players WHERE steam64_id = ?", (BOB_ID,),
+            "SELECT premier_rating FROM prime_ratings WHERE steamid64 = ?", (BOB_ID,),
         ).fetchone()
 
         assert alice["premier_rating"] == 18000
@@ -183,7 +194,7 @@ class TestPlayerUpdatePipeline:
         # Original data should remain unchanged
         conn, _ = full_db
         row = conn.execute(
-            "SELECT premier_rating FROM players WHERE steam64_id = ?", (ALICE_ID,),
+            "SELECT premier_rating FROM prime_ratings WHERE steamid64 = ?", (ALICE_ID,),
         ).fetchone()
         assert row["premier_rating"] == 16000  # unchanged
 
@@ -202,15 +213,20 @@ class TestAddPlayerFromUrl:
             from core.players.service import add_player_from_url
             result = add_player_from_url("https://steamcommunity.com/profiles/" + new_steam_id)
 
-        assert result["steam64_id"] == new_steam_id
+        assert result["steamid64"] == new_steam_id
 
         row = conn.execute(
-            "SELECT name, premier_rating FROM players WHERE steam64_id = ?",
+            "SELECT name FROM players WHERE steamid64 = ?",
             (new_steam_id,),
         ).fetchone()
         assert row is not None
         assert row["name"] == "NewPlayer"
-        assert row["premier_rating"] == 20000
+
+        prime = conn.execute(
+            "SELECT premier_rating FROM prime_ratings WHERE steamid64 = ?",
+            (new_steam_id,),
+        ).fetchone()
+        assert prime["premier_rating"] == 20000
 
     def test_add_existing_player_upserts(self, full_db):
         """Adding an existing player should upsert, not fail."""
@@ -225,6 +241,6 @@ class TestAddPlayerFromUrl:
         assert result["name"] == "Alice_Refreshed"
 
         row = conn.execute(
-            "SELECT premier_rating FROM players WHERE steam64_id = ?", (ALICE_ID,),
+            "SELECT premier_rating FROM prime_ratings WHERE steamid64 = ?", (ALICE_ID,),
         ).fetchone()
         assert row["premier_rating"] == 19000

@@ -9,7 +9,7 @@ def get_players_payload():
         cur = conn.execute(
             """
             SELECT
-                steam64_id,
+                steamid64,
                 name
             FROM players
             """
@@ -33,12 +33,12 @@ def import_players_payload(players):
             if not isinstance(p, dict):
                 continue
 
-            if not p.get("steam64_id") or not p.get("name"):
+            if not p.get("steamid64") or not p.get("name"):
                 continue
 
             try:
                 player = {
-                    "steam64_id": p["steam64_id"],
+                    "steamid64": p["steamid64"],
                     "name": p["name"]
                 }
 
@@ -46,7 +46,7 @@ def import_players_payload(players):
                 count += 1
 
             except Exception as e:
-                logger.log_error(f"Import error {p.get('steam64_id')}", exc=e)
+                logger.log_error(f"Import error {p.get('steamid64')}", exc=e)
 
     return count
 

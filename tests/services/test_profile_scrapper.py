@@ -4,6 +4,7 @@ import os
 from unittest.mock import patch, Mock, MagicMock
 
 import pytest
+from bs4 import BeautifulSoup
 
 
 # ---------------------------------------------------------------------------
@@ -211,62 +212,65 @@ class TestGetLeetifyPlayer:
     def test_api_success(self, mock_get):
         from services.profile_scrapper import get_leetify_player
 
-        resp = Mock(status_code=200)
-        resp.json.return_value = LEETIFY_API_SUCCESS
-        mock_get.return_value = resp
+        steam_name_resp = Mock(status_code=200, text=STEAM_XML_PROFILE)
+        api_resp = Mock(status_code=200)
+        api_resp.json.return_value = LEETIFY_API_SUCCESS
+        # First call: _get_steam_name, second call: Leetify API
+        mock_get.side_effect = [steam_name_resp, api_resp]
 
         result = get_leetify_player("76561198000000001")
 
-        assert result["steam64_id"] == "76561198000000001"
+        assert result["steamid64"] == "76561198000000001"
         assert result["premier_rating"] == 18500
         assert result["leetify_rating"] == 1.15
-        assert result["name"] == "TestPlayer"
+        assert result["name"] == "TestPlayer"  # From Steam XML
         assert result["total_matches"] == 250
 
     def test_api_404_triggers_fallback(self, mock_get, mock_driver):
         from services.profile_scrapper import get_leetify_player
 
-        resp_404 = Mock(status_code=404)
-        # Fallback also calls requests.get for _get_steam_name
         steam_name_resp = Mock(status_code=200, text=STEAM_XML_PROFILE)
-        mock_get.side_effect = [resp_404, steam_name_resp]
+        resp_404 = Mock(status_code=404)
+        # First: _get_steam_name, second: Leetify API 404
+        mock_get.side_effect = [steam_name_resp, resp_404]
 
         result = get_leetify_player("76561198000000099")
 
         # Fallback with empty HTML won't find premier, so returns default
         assert result is not None
-        assert result["steam64_id"] == "76561198000000099"
+        assert result["steamid64"] == "76561198000000099"
 
     def test_api_non_200_triggers_fallback(self, mock_get, mock_driver):
         from services.profile_scrapper import get_leetify_player
 
-        resp_500 = Mock(status_code=500)
         steam_name_resp = Mock(status_code=200, text=STEAM_XML_PROFILE)
-        mock_get.side_effect = [resp_500, steam_name_resp]
+        resp_500 = Mock(status_code=500)
+        mock_get.side_effect = [steam_name_resp, resp_500]
 
         result = get_leetify_player("76561198000000099")
         assert result is not None
-        assert result["steam64_id"] == "76561198000000099"
+        assert result["steamid64"] == "76561198000000099"
 
     def test_api_no_premier_triggers_fallback(self, mock_get, mock_driver):
         from services.profile_scrapper import get_leetify_player
 
+        steam_name_resp = Mock(status_code=200, text=STEAM_XML_PROFILE)
         resp = Mock(status_code=200)
         resp.json.return_value = LEETIFY_API_NO_PREMIER
-        steam_name_resp = Mock(status_code=200, text=STEAM_XML_PROFILE)
-        mock_get.side_effect = [resp, steam_name_resp]
+        mock_get.side_effect = [steam_name_resp, resp]
 
         result = get_leetify_player("76561198000000099")
         assert result is not None
         # Falls back → default rating path
-        assert result["steam64_id"] == "76561198000000099"
+        assert result["steamid64"] == "76561198000000099"
 
     def test_auto_close_calls_close_driver(self, mock_get):
         from services.profile_scrapper import get_leetify_player
 
-        resp = Mock(status_code=200)
-        resp.json.return_value = LEETIFY_API_SUCCESS
-        mock_get.return_value = resp
+        steam_name_resp = Mock(status_code=200, text=STEAM_XML_PROFILE)
+        api_resp = Mock(status_code=200)
+        api_resp.json.return_value = LEETIFY_API_SUCCESS
+        mock_get.side_effect = [steam_name_resp, api_resp]
 
         with patch("services.profile_scrapper.close_driver") as mock_close:
             get_leetify_player("76561198000000001", auto_close=True)
@@ -321,29 +325,31 @@ class TestFetchPlayer:
     def test_fetch_player_from_url(self, mock_get):
         from services.profile_scrapper import fetch_player
 
-        resp = Mock(status_code=200)
-        resp.json.return_value = LEETIFY_API_SUCCESS
-        mock_get.return_value = resp
+        steam_name_resp = Mock(status_code=200, text=STEAM_XML_PROFILE)
+        api_resp = Mock(status_code=200)
+        api_resp.json.return_value = LEETIFY_API_SUCCESS
+        mock_get.side_effect = [steam_name_resp, api_resp]
 
         with patch("services.profile_scrapper.close_driver"):
             result = fetch_player("76561198000000001")
 
         assert result["premier_rating"] == 18500
-        assert result["steam64_id"] == "76561198000000001"
+        assert result["steamid64"] == "76561198000000001"
 
     def test_fetch_player_from_profiles_url(self, mock_get):
         from services.profile_scrapper import fetch_player
 
-        resp = Mock(status_code=200)
-        resp.json.return_value = LEETIFY_API_SUCCESS
-        mock_get.return_value = resp
+        steam_name_resp = Mock(status_code=200, text=STEAM_XML_PROFILE)
+        api_resp = Mock(status_code=200)
+        api_resp.json.return_value = LEETIFY_API_SUCCESS
+        mock_get.side_effect = [steam_name_resp, api_resp]
 
         with patch("services.profile_scrapper.close_driver"):
             result = fetch_player(
                 "https://steamcommunity.com/profiles/76561198000000001"
             )
 
-        assert result["steam64_id"] == "76561198000000001"
+        assert result["steamid64"] == "76561198000000001"
 
     def test_fetch_player_invalid_url(self, mock_get):
         from services.profile_scrapper import fetch_player
@@ -380,10 +386,9 @@ class TestParseLeetifyProfile:
         </body></html>
         """
 
-        result = _parse_leetify_profile(html, "76561198000000001")
+        result = _parse_leetify_profile(BeautifulSoup(html, "html.parser"))
         assert result is not None
         assert result["premier_rating"] == 15234
-        assert result["name"] == "TestPlayer"
         assert result["season"] == 1
 
     def test_picks_latest_season(self):
@@ -408,7 +413,7 @@ class TestParseLeetifyProfile:
         </body></html>
         """
 
-        result = _parse_leetify_profile(html, "76561198000000001")
+        result = _parse_leetify_profile(BeautifulSoup(html, "html.parser"))
         assert result["premier_rating"] == 12500
         assert result["season"] == 2
 
@@ -416,7 +421,7 @@ class TestParseLeetifyProfile:
         from services.profile_scrapper import _parse_leetify_profile
 
         html = "<html><body><p>No data</p></body></html>"
-        result = _parse_leetify_profile(html, "76561198000000001")
+        result = _parse_leetify_profile(BeautifulSoup(html, "html.parser"))
         assert result is None
 
     def test_no_premier_row_raises(self):
@@ -435,4 +440,112 @@ class TestParseLeetifyProfile:
         """
 
         with pytest.raises(Exception, match="Premier rank not found"):
-            _parse_leetify_profile(html, "76561198000000001")
+            _parse_leetify_profile(BeautifulSoup(html, "html.parser"))
+
+    def test_prefers_max_over_min(self):
+        """When both min and max cells have labels, the MAX (rightmost) is used."""
+        from services.profile_scrapper import _parse_leetify_profile
+
+        html = """
+        <html><head><title>Player - Leetify</title></head><body>
+        <section class="season">
+            <h4>Season Four</h4>
+            <table class="rank-groups"><tbody>
+                <tr>
+                    <th>Premier</th>
+                    <td><span class="label-large">18</span><span class="label-small">000</span></td>
+                    <td><span class="label-large">22</span><span class="label-small">500</span></td>
+                </tr>
+            </tbody></table>
+        </section>
+        </body></html>
+        """
+
+        result = _parse_leetify_profile(BeautifulSoup(html, "html.parser"))
+        assert result["premier_rating"] == 22500
+        assert result["season"] == 4
+
+
+# ---------------------------------------------------------------------------
+# Tests: _parse_leetify_profile_current (profile top-section rating)
+# ---------------------------------------------------------------------------
+
+class TestParseLeetifyProfileCurrent:
+
+    def test_parses_label_large_small_outside_rank_summary(self):
+        from services.profile_scrapper import _parse_leetify_profile_current
+
+        html = """
+        <html><head><title>Sunflower - Leetify</title></head><body>
+        <div class="profile-header">
+            <span class="label-large">24</span><span class="label-small">,777</span>
+        </div>
+        <div id="rank-summary">
+            <span class="label-large">18</span><span class="label-small">,000</span>
+        </div>
+        </body></html>
+        """
+
+        result = _parse_leetify_profile_current(BeautifulSoup(html, "html.parser"))
+        assert result == 24777
+
+    def test_ignores_labels_inside_rank_summary(self):
+        from services.profile_scrapper import _parse_leetify_profile_current
+
+        html = """
+        <html><head><title>Player - Leetify</title></head><body>
+        <div id="rank-summary">
+            <span class="label-large">18</span><span class="label-small">,500</span>
+        </div>
+        </body></html>
+        """
+
+        result = _parse_leetify_profile_current(BeautifulSoup(html, "html.parser"))
+        assert result is None
+
+    def test_returns_none_when_no_rating(self):
+        from services.profile_scrapper import _parse_leetify_profile_current
+
+        html = "<html><head><title>Player - Leetify</title></head><body></body></html>"
+        result = _parse_leetify_profile_current(BeautifulSoup(html, "html.parser"))
+        assert result is None
+
+    def test_ignores_small_label_numbers(self):
+        from services.profile_scrapper import _parse_leetify_profile_current
+
+        html = """
+        <html><head><title>Player - Leetify</title></head><body>
+        <span class="label-large">0</span><span class="label-small">42</span>
+        </body></html>
+        """
+
+        result = _parse_leetify_profile_current(BeautifulSoup(html, "html.parser"))
+        assert result is None
+
+    def test_broad_fallback_finds_comma_number(self):
+        from services.profile_scrapper import _parse_leetify_profile_current
+
+        html = """
+        <html><head><title>Sunflower - Leetify</title></head><body>
+        <p>Some text 24,777 more text</p>
+        <div id="rank-summary">season data here</div>
+        </body></html>
+        """
+
+        result = _parse_leetify_profile_current(BeautifulSoup(html, "html.parser"))
+        assert result == 24777
+
+    def test_ignores_css_rgb_color_values(self):
+        """Regression: rgb(255, 255, 255) in CSS must NOT be parsed as 255,255."""
+        from services.profile_scrapper import _parse_leetify_profile_current
+
+        html = """
+        <html><head><title>Player - Leetify</title></head><body>
+        <style>.foo { color: rgb(255, 255, 255); }</style>
+        <div style="background: rgba(255, 255, 0, 1);">No rating here</div>
+        <div id="rank-summary">season data</div>
+        </body></html>
+        """
+
+        result = _parse_leetify_profile_current(BeautifulSoup(html, "html.parser"))
+        assert result is None

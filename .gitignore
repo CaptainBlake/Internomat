@@ -48,3 +48,4 @@ internomat_backup.json
 docs/*.md
 /log/*
 .secrets/leetify_api.bin
+src/services/profile_scrapper.py.bak

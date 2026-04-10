@@ -453,13 +453,13 @@ def get_match_map_players(match_id, map_number, conn=None):
 
     players = []
     for row in rows:
-        steam64_id = str(row["steamid64"]).strip()
-        if not steam64_id:
+        sid = str(row["steamid64"]).strip()
+        if not sid:
             continue
         players.append(
             {
-                "steam64_id": steam64_id,
-                "name": str(row["name"] or steam64_id),
+                "steamid64": sid,
+                "name": str(row["name"] or sid),
             }
         )
 

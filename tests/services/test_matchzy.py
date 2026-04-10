@@ -314,7 +314,7 @@ class TestSyncToLocal:
 
         # Player should exist in the players pool
         prow = db_conn.execute(
-            "SELECT * FROM players WHERE steam64_id = ?",
+            "SELECT * FROM players WHERE steamid64 = ?",
             ("76561198000000001",),
         ).fetchone()
         assert prow is not None

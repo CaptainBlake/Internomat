@@ -219,7 +219,7 @@ def _load_all_players(conn):
     """Return all known players so season resets can include idle players at 1500."""
     players = set()
 
-    for row in conn.execute("SELECT CAST(steam64_id AS TEXT) AS sid FROM players WHERE steam64_id IS NOT NULL"):
+    for row in conn.execute("SELECT CAST(steamid64 AS TEXT) AS sid FROM players WHERE steamid64 IS NOT NULL"):
         sid = (row["sid"] or "").strip()
         if sid:
             players.add(sid)

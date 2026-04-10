@@ -482,7 +482,7 @@ class MatchZy:
                         if settings.auto_import_players_from_history:
                             players_for_pool_import.append(
                                 {
-                                    "steam64_id": player_payload["steamid64"],
+                                    "steamid64": player_payload["steamid64"],
                                     "name": player_payload["name"],
                                 }
                             )

@@ -12,6 +12,7 @@ import pytest
 from db.connection_db import get_conn
 from db.matches_db import insert_match, insert_match_map, insert_match_player_stats
 from db.players_db import insert_player
+from db.prime_db import upsert_prime_rating
 from db.settings_db import set as settings_set
 from db.stattracker_db import upsert_player_map_weapon_stats_many
 
@@ -268,18 +269,17 @@ def full_db(db_conn, db_file):
     """
     # Players
     for steam64, name, rating, leetify, matches, winrate in PLAYERS:
-        insert_player(
-            {
-                "steam64_id": steam64,
-                "name": name,
-                "premier_rating": rating,
-                "leetify_rating": leetify,
-                "total_matches": matches,
-                "winrate": winrate,
-                "leetify_id": None,
-            },
-            conn=db_conn,
-        )
+        player = {
+            "steamid64": steam64,
+            "name": name,
+            "premier_rating": rating,
+            "leetify_rating": leetify,
+            "total_matches": matches,
+            "winrate": winrate,
+            "leetify_id": None,
+        }
+        insert_player(player, conn=db_conn)
+        upsert_prime_rating(player, conn=db_conn)
 
     # Matches + maps
     for entry in MATCHES:
