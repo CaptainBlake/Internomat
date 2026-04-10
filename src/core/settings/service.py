@@ -29,6 +29,7 @@ SETTINGS_SCHEMA = {
     "matchzy_database": str,
     "auto_import_players_from_history": _to_bool,
     "auto_import_maps_from_history": _to_bool,
+    "update_include_unstable": _to_bool,
     "demo_ftp_host": str,
     "demo_ftp_port": int,
     "demo_ftp_user": str,

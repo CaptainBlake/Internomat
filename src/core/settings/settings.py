@@ -26,6 +26,7 @@ _SETTINGS_DEFAULTS = {
     "matchzy_database":                 (str,      ""),
     "auto_import_players_from_history": (_to_bool, True),
     "auto_import_maps_from_history":    (_to_bool, True),
+    "update_include_unstable":          (_to_bool, False),
     "demo_ftp_host":                    (str,      ""),
     "demo_ftp_port":                    (int,      21),
     "demo_ftp_user":                    (str,      ""),

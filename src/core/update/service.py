@@ -114,9 +114,24 @@ def _normalize_version(version_text: str) -> str:
     return version_text.strip().lstrip("v")
 
 
+def _is_prerelease(version_text: str) -> bool:
+    """Return True if the version string contains prerelease identifiers."""
+    try:
+        _major, _minor, _patch, pre_ids = _parse_version(version_text)
+        return len(pre_ids) > 0
+    except ValueError:
+        return False
+
+
 def _build_latest_release_api_url() -> str:
     return (
         f"https://api.github.com/repos/{RELEASE_CONFIG.owner}/{RELEASE_CONFIG.repo}/releases/latest"
+    )
+
+
+def _build_releases_list_api_url() -> str:
+    return (
+        f"https://api.github.com/repos/{RELEASE_CONFIG.owner}/{RELEASE_CONFIG.repo}/releases"
     )
 
 
@@ -184,45 +199,28 @@ def _parse_checksums_manifest(text: str) -> dict[str, str]:
     return result
 
 
-def check_latest_release(timeout_seconds: float = 8.0) -> UpdateCheckResult:
-    """Check for updates using semantic version comparison only.
-
-    Important: setup/app hashes are not used to decide update availability,
-    because installer hashes naturally differ from client/runtime file hashes.
-    Hashes are only useful for download integrity verification.
-    """
-    response = requests.get(
-        _build_latest_release_api_url(),
-        headers={"Accept": "application/vnd.github+json"},
-        timeout=timeout_seconds,
+def _no_update_result(basis: str = "semver-no-latest-stable") -> UpdateCheckResult:
+    return UpdateCheckResult(
+        current_version=APP_VERSION,
+        latest_version=APP_VERSION,
+        update_available=False,
+        comparison_basis=basis,
+        release_url="",
+        installer_download_url="",
+        tag_name="",
+        release_name="",
+        published_at="",
+        release_id=0,
+        installer_asset_name="",
+        checksums_asset_name="",
+        checksums_download_url="",
     )
-    try:
-        response.raise_for_status()
-    except requests.HTTPError:
-        # GitHub returns 404 for /releases/latest when there is no published stable release
-        # (for example, prereleases only). Treat this as "no update available".
-        if response.status_code == 404:
-            return UpdateCheckResult(
-                current_version=APP_VERSION,
-                latest_version=APP_VERSION,
-                update_available=False,
-                comparison_basis="semver-no-latest-stable",
-                release_url="",
-                installer_download_url="",
-                tag_name="",
-                release_name="",
-                published_at="",
-                release_id=0,
-                installer_asset_name="",
-                checksums_asset_name="",
-                checksums_download_url="",
-            )
-        raise
 
-    payload = response.json()
+
+def _result_from_release_payload(payload: dict) -> UpdateCheckResult:
+    """Build an UpdateCheckResult from a single GitHub release JSON object."""
     tag_name = str(payload.get("tag_name") or "").strip()
     latest_version = _normalize_version(tag_name)
-
     update_available = _compare_versions(latest_version, APP_VERSION) > 0
 
     assets = payload.get("assets") or []
@@ -250,6 +248,81 @@ def check_latest_release(timeout_seconds: float = 8.0) -> UpdateCheckResult:
         checksums_asset_name=str(checksums_asset.get("name") or "") if checksums_asset else "",
         checksums_download_url=str(checksums_asset.get("browser_download_url") or "") if checksums_asset else "",
     )
+
+
+def _fetch_latest_unstable_release(timeout_seconds: float) -> UpdateCheckResult:
+    """Query /releases and return the highest-versioned release (incl. pre-releases)."""
+    response = requests.get(
+        _build_releases_list_api_url(),
+        headers={"Accept": "application/vnd.github+json"},
+        params={"per_page": 25},
+        timeout=timeout_seconds,
+    )
+    response.raise_for_status()
+    releases = response.json()
+
+    best_payload: Optional[dict] = None
+    best_version: Optional[str] = None
+
+    for release in releases:
+        if release.get("draft"):
+            continue
+        tag = str(release.get("tag_name") or "").strip()
+        try:
+            version = _normalize_version(tag)
+            _parse_version(version)
+        except ValueError:
+            continue
+
+        if best_version is None or _compare_versions(version, best_version) > 0:
+            best_version = version
+            best_payload = release
+
+    if best_payload is None:
+        return _no_update_result("semver-no-releases")
+
+    return _result_from_release_payload(best_payload)
+
+
+def check_latest_release(
+    timeout_seconds: float = 8.0,
+    include_unstable: bool = True,
+) -> UpdateCheckResult:
+    """Check for updates using semantic version comparison only.
+
+    When *include_unstable* is ``True`` (default for backward compatibility),
+    pre-release versions (e.g. ``v1.1.0-rc.1``) are considered as update
+    candidates.  When ``False``, only stable releases whose version tag
+    contains no pre-release identifiers are offered.
+
+    Important: setup/app hashes are not used to decide update availability,
+    because installer hashes naturally differ from client/runtime file hashes.
+    Hashes are only useful for download integrity verification.
+    """
+    if include_unstable:
+        return _fetch_latest_unstable_release(timeout_seconds)
+
+    # Stable-only path: query /releases/latest (GitHub already excludes
+    # GitHub-flagged pre-releases), then additionally verify the tag itself
+    # carries no semver pre-release identifiers.
+    response = requests.get(
+        _build_latest_release_api_url(),
+        headers={"Accept": "application/vnd.github+json"},
+        timeout=timeout_seconds,
+    )
+    try:
+        response.raise_for_status()
+    except requests.HTTPError:
+        if response.status_code == 404:
+            return _no_update_result()
+        raise
+
+    payload = response.json()
+    tag_name = str(payload.get("tag_name") or "").strip()
+    if _is_prerelease(_normalize_version(tag_name)):
+        return _no_update_result("semver-latest-is-prerelease")
+
+    return _result_from_release_payload(payload)
 
 
 def download_and_verify_installer(

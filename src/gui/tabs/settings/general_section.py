@@ -96,6 +96,14 @@ def build_general_section(setting_bindings, mark_dirty, save_settings_button):
         tooltip="When enabled, MatchZy sync imports map names from match history into the map pool."
     ))
 
+    checkbox_unstable = QCheckBox()
+    checkbox_unstable.setChecked(bool(getattr(settings, "update_include_unstable", False)))
+    layout.addLayout(create_setting_row(
+        "Include unstable builds:", checkbox_unstable, "update_include_unstable",
+        setting_bindings, mark_dirty,
+        tooltip="When enabled, the update check includes unstable (pre-release) builds.\nDisable to only receive stable releases."
+    ))
+
     settings_button_row = QHBoxLayout()
     settings_button_row.setSpacing(10)
     settings_button_row.addWidget(save_settings_button)
