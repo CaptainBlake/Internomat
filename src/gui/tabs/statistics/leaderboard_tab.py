@@ -17,9 +17,9 @@ import services.logger as logger
 
 
 TOP3_STYLES = {
-    1: {"bg": QColor("#D9E9F8"), "fg": QColor("#1F4E79"), "bold": True, "medal": "🥇"},
-    2: {"bg": QColor("#E8EEF5"), "fg": QColor("#4A5A6A"), "bold": True, "medal": "🥈"},
-    3: {"bg": QColor("#F7D8D8"), "fg": QColor("#7A2E2E"), "bold": True, "medal": "🥉"},
+    1: {"bg": QColor("#DCE7B0"), "fg": QColor("#2E4B57"), "bold": True, "medal": "🥇"},
+    2: {"bg": QColor("#E7EEE9"), "fg": QColor("#34675C"), "bold": True, "medal": "🥈"},
+    3: {"bg": QColor("#D7E2EB"), "fg": QColor("#4F6D68"), "bold": True, "medal": "🥉"},
 }
 
 
@@ -59,8 +59,8 @@ def _build_leaderboard(title_text, headers, rows, value_suffix="", top3_colorize
     frame = QFrame()
     frame.setStyleSheet("""
         QFrame {
-            background: rgba(255, 255, 255, 0.94);
-            border: none;
+            background: rgba(50, 72, 81, 0.92);
+            border: 1px solid #4F6D68;
             border-radius: 16px;
         }
     """)
@@ -71,7 +71,7 @@ def _build_leaderboard(title_text, headers, rows, value_suffix="", top3_colorize
 
     title = QLabel(title_text)
     title.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
-    title.setStyleSheet("font-size: 15px; font-weight: 800; color: #22384D;")
+    title.setStyleSheet("font-size: 14px; font-weight: 800; color: #F7FAF5;")
     layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignHCenter)
 
     table = QTableWidget(0, len(headers))
@@ -109,8 +109,8 @@ def _build_leaderboard(title_text, headers, rows, value_suffix="", top3_colorize
             background: transparent;
         }
         QHeaderView::section {
-            background: #DCEAF7;
-            color: #2E4C69;
+            background: #324851;
+            color: #DCE7E0;
             padding: 10px;
             border: none;
             font-size: 12pt;
@@ -124,8 +124,8 @@ def _build_leaderboard(title_text, headers, rows, value_suffix="", top3_colorize
             background: transparent;
             border: none;
             outline: none;
-            alternate-background-color: #F7FAFD;
-            color: #1E2B38;
+            alternate-background-color: #36545A;
+            color: #F2F6F4;
         }
         QTableWidget:focus {
             border: none;
@@ -136,9 +136,12 @@ def _build_leaderboard(title_text, headers, rows, value_suffix="", top3_colorize
             border: none;
             outline: none;
         }
+        QTableWidget::item:hover {
+            background: rgba(134, 172, 65, 0.16);
+        }
         QTableWidget::item:selected {
-            background: #DCEAF7;
-            color: #1E2B38;
+            background: #34675C;
+            color: #FFFFFF;
             border: none;
             outline: none;
         }
@@ -147,14 +150,6 @@ def _build_leaderboard(title_text, headers, rows, value_suffix="", top3_colorize
             outline: none;
         }
         QAbstractItemView {
-            outline: none;
-        }
-        QAbstractItemView::item {
-            border: none;
-            outline: none;
-        }
-        QAbstractItemView::item:selected {
-            border: none;
             outline: none;
         }
     """)
@@ -190,14 +185,14 @@ def _compute_stat_overview_payload(season=None):
     return {
         "kills": leaderboard.get_top_kills(10, season=season),
         "deaths": leaderboard.get_top_deaths(10, season=season),
-        "ratings": leaderboard.get_top_ratings(10, season=season),
+        "ratings": leaderboard.get_top_ratings(50, season=season),
         "damage": leaderboard.get_top_damage_per_match(10, season=season),
     }
 
 
 def _render_stat_overview_content(layout, payload):
     content = QGridLayout()
-    content.setSpacing(12)
+    content.setSpacing(14)
 
     kills_board = _build_leaderboard(
         "Most Kills",
@@ -265,16 +260,16 @@ def build_stat_overview_tab(parent):
 
     layout = QVBoxLayout(parent)
     layout.setContentsMargins(20, 20, 20, 20)
-    layout.setSpacing(12)
+    layout.setSpacing(14)
 
     title = QLabel("Stat Overview")
     title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    title.setStyleSheet("font-size: 18px; font-weight: 900; color: #21443C;")
+    title.setStyleSheet("font-size: 18px; font-weight: 900; color: #F7FAF5;")
     layout.addWidget(title)
 
     info = QLabel("Top Leaderboards aus den Match-Statistiken")
     info.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    info.setStyleSheet("font-size: 12px; color: #5B7A72;")
+    info.setStyleSheet("font-size: 12px; color: #DCE7E0;")
     layout.addWidget(info)
 
     parent._stat_overview_selected_season = None

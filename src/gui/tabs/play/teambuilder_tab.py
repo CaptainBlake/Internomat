@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QFrame,
 )
 
-
 import core.teams.service as team_service
 import core.players.service as player_service
 from core.stats.elo import recalculate_elo, is_date_in_configured_season
@@ -29,6 +28,7 @@ from gui.widgets.pipeline_progress_dialog import PipelineProgressDialog
 from threading import Lock
 
 update_lock = Lock()
+
 
 class UiDispatcher(QObject):
     add_player_success = Signal(object)
@@ -54,26 +54,26 @@ def _apply_table_style(table):
 
     table.setStyleSheet("""
         QTableWidget {
-            background: transparent;
-            border: none;
+            background: rgba(50, 72, 81, 0.92);
+            border: 1px solid #4F6D68;
+            border-radius: 14px;
             outline: none;
-            alternate-background-color: #F8FCFA;
-            color: #20443D;
-        }
-        QTableWidget:focus {
-            border: none;
-            outline: none;
+            alternate-background-color: #36545A;
+            color: #F2F6F4;
         }
         QTableWidget::item {
-            padding: 6px;
+            padding: 8px;
             border: none;
             outline: none;
         }
         QTableWidget::item:selected {
-            background: #DFF7EF;
-            color: #4A7168;
+            background: #34675C;
+            color: #FFFFFF;
             border: none;
             outline: none;
+        }
+        QTableWidget::item:hover {
+            background: rgba(134, 172, 65, 0.16);
         }
         QTableWidget::item:focus {
             border: none;
@@ -98,8 +98,8 @@ def _apply_table_style(table):
             background: transparent;
         }
         QHeaderView::section {
-            background: #EAF8F3;
-            color: #4A7168;
+            background: #324851;
+            color: #DCE7E0;
             padding: 10px;
             border: none;
             font-size: 12pt;
@@ -130,82 +130,35 @@ def _apply_result_table_style(table):
 
     table.setStyleSheet("""
         QTableWidget {
-            background: #FFFFFF;
-            border: none;
+            background: rgba(50, 72, 81, 0.92);
+            border: 1px solid #4F6D68;
+            border-radius: 14px;
             outline: none;
-            alternate-background-color: #F7FAFD;
-            color: #1E2B38;
-        }
-        QTableWidget:focus {
-            border: none;
-            outline: none;
+            alternate-background-color: #36545A;
+            color: #F2F6F4;
         }
         QTableWidget::item {
             padding: 10px 8px;
             border: none;
             outline: none;
             background: transparent;
-            color: #1E2B38;
+            color: #F2F6F4;
+        }
+        QTableWidget::item:hover {
+            background: rgba(134, 172, 65, 0.16);
         }
         QTableWidget::item:selected {
-            background: #DCEAF7;
-            color: #1E2B38;
-            border: none;
-            outline: none;
-        }
-        QTableWidget::item:focus {
+            background: #34675C;
+            color: #FFFFFF;
             border: none;
             outline: none;
         }
         QAbstractItemView {
             outline: none;
         }
-        QAbstractItemView::item {
-            border: none;
-            outline: none;
-        }
-        QAbstractItemView::item:selected {
-            border: none;
-            outline: none;
-        }
     """)
 
 
-def _build_card(title_text, table, title_color="#DCEAF7", title_text_color="#2E4C69"):
-    card = QFrame()
-    card.setStyleSheet("""
-        QFrame {
-            background: rgba(255, 255, 255, 0.94);
-            border: none;
-            border-radius: 16px;
-        }
-    """)
-
-    card_layout = QVBoxLayout(card)
-    card_layout.setContentsMargins(0, 0, 0, 0)
-    card_layout.setSpacing(0)
-
-    title = QLabel(title_text)
-    title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    title.setStyleSheet(f"""
-        QLabel {{
-            background: {title_color};
-            color: {title_text_color};
-            padding: 8px 12px;
-            font-size: 13px;
-            font-weight: 800;
-            border-top-left-radius: 16px;
-            border-top-right-radius: 16px;
-            border-bottom-left-radius: 0px;
-            border-bottom-right-radius: 0px;
-        }}
-    """)
-
-    card_layout.addWidget(title)
-    card_layout.addWidget(table, 1)
-    return card
-
-# --- UI Logic ---
 def _fill_player_table(table, players):
     table.setRowCount(0)
 
@@ -222,6 +175,23 @@ def _fill_player_table(table, players):
         table.setItem(row, 0, name_item)
         table.setItem(row, 1, rating_item)
 
+
+def _filter_player_rows(players, search_text):
+    query = str(search_text or "").strip().lower()
+    if not query:
+        return list(players)
+
+    filtered = []
+    for p in players:
+        pid = str(p[0])
+        name = str(p[1])
+        rating = str(p[2])
+        haystack = f"{pid} {name} {rating}".lower()
+        if query in haystack:
+            filtered.append(p)
+    return filtered
+
+
 def _extract_pool_players(pool_tree):
     players = []
     for row in range(pool_tree.rowCount()):
@@ -230,6 +200,7 @@ def _extract_pool_players(pool_tree):
         rating = int(pool_tree.item(row, 2).text())
         players.append((pid, name, rating))
     return players
+
 
 def _fill_team_table(table, team):
     table.setRowCount(0)
@@ -249,7 +220,6 @@ def _fill_team_table(table, team):
         item.setFont(font)
 
         table.setItem(row, 0, item)
-
         total += p[2]
 
     return total
@@ -260,24 +230,91 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
     update_progress_dialog = {"dialog": None}
     last_generated = {"team_a": [], "team_b": []}
 
+    parent.setObjectName("teamPage")
+    parent.setStyleSheet("""
+        QWidget#teamPage {
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                stop:0 #2E4B57,
+                stop:0.5 #324851,
+                stop:1 #34675C);
+        }
+
+        QWidget#teamPage QLabel {
+            color: #F2F6F4;
+            background: transparent;
+            border: none;
+        }
+
+        QWidget#teamPage QLineEdit {
+            background: rgba(58, 92, 90, 0.92);
+            border: 1px solid #4F6D68;
+            border-radius: 12px;
+            padding: 10px 12px;
+            color: #F7FAF5;
+        }
+
+        QWidget#teamPage QLineEdit:focus {
+            border: 1px solid #D7E2EB;
+        }
+
+        QWidget#teamPage QPushButton {
+            border-radius: 12px;
+            padding: 10px 16px;
+        }
+    """)
+
     layout = QVBoxLayout(parent)
-    layout.setContentsMargins(20, 20, 20, 20)
-    layout.setSpacing(10)
+    layout.setContentsMargins(24, 24, 24, 24)
+    layout.setSpacing(18)
+
+    hero = QFrame()
+    hero.setStyleSheet("""
+        QFrame {
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                stop:0 rgba(50, 72, 81, 0.96),
+                stop:0.5 rgba(52, 103, 92, 0.96),
+                stop:1 rgba(54, 84, 90, 0.96));
+            border: 1px solid #4F6D68;
+            border-radius: 18px;
+        }
+    """)
+    hero_layout = QVBoxLayout(hero)
+    hero_layout.setContentsMargins(22, 18, 22, 18)
+    hero_layout.setSpacing(6)
+
+    title = QLabel("Team Generator")
+    title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    title.setStyleSheet("""
+        QLabel {
+            font-size: 20px;
+            font-weight: 900;
+            color: #F7FAF5;
+            letter-spacing: 0.5px;
+            border: none;
+        }
+    """)
+
+    hero_layout.addWidget(title)
+    layout.addWidget(hero)
 
     top_frame = QFrame()
     top_layout = QHBoxLayout(top_frame)
     top_layout.setContentsMargins(0, 0, 0, 0)
-    top_layout.setSpacing(8)
+    top_layout.setSpacing(12)
 
     entry = QLineEdit()
     entry.setPlaceholderText("Steam profile URL")
+
+    search_box = QLineEdit()
+    search_box.setPlaceholderText("Search players...")
+    search_box.setMinimumWidth(260)
 
     add_button = QPushButton("Add Player")
     remove_button = QPushButton("Remove Player")
     update_button = QPushButton("Update")
 
     ranking_mode_label = QLabel("Ranking: Auto")
-    ranking_mode_label.setStyleSheet("font-weight: 700; color: #2E4C69;")
+    ranking_mode_label.setStyleSheet("font-weight: 700; color: #DCE7B0;")
 
     def _is_today_in_season():
         if not bool(getattr(settings, "use_elo_when_in_season", False)):
@@ -296,6 +333,7 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
         )
 
     top_layout.addWidget(entry, 1)
+    top_layout.addWidget(search_box)
     top_layout.addWidget(add_button)
     top_layout.addWidget(remove_button)
     top_layout.addWidget(update_button)
@@ -305,7 +343,7 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
     lists_frame = QFrame()
     lists_layout = QHBoxLayout(lists_frame)
     lists_layout.setContentsMargins(0, 0, 0, 0)
-    lists_layout.setSpacing(10)
+    lists_layout.setSpacing(14)
 
     db_tree = QTableWidget(0, 2)
     db_tree.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -321,20 +359,17 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
     pool_tree.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     pool_tree.setHorizontalHeaderLabels(["#", "Player", "Rating"])
     _apply_table_style(pool_tree)
-    pool_tree.horizontalHeader().hide()
+    pool_tree.horizontalHeader()
     pool_tree.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
     pool_tree.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
     pool_tree.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
     pool_tree.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
     pool_tree.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
 
-    db_card = _build_card("Player Pool", db_tree)
-    pool_card = _build_card("Selected Players", pool_tree)
-
     btn_frame = QFrame()
     btn_layout = QVBoxLayout(btn_frame)
     btn_layout.setContentsMargins(0, 0, 0, 0)
-    btn_layout.setSpacing(8)
+    btn_layout.setSpacing(10)
 
     add_to_pool_button = QPushButton(">")
     remove_from_pool_button = QPushButton("<")
@@ -346,21 +381,22 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
     btn_layout.addWidget(remove_from_pool_button, alignment=Qt.AlignmentFlag.AlignHCenter)
     btn_layout.addStretch(1)
 
-    lists_layout.addWidget(db_card, 2)
+    lists_layout.addWidget(db_tree, 2)
     lists_layout.addWidget(btn_frame, 0)
-    lists_layout.addWidget(pool_card, 2)
+    lists_layout.addWidget(pool_tree, 2)
     layout.addWidget(lists_frame, 1)
 
     control_frame = QFrame()
     control_frame.setStyleSheet("""
         QFrame {
-            background: #EAF1F8;
-            border-radius: 12px;
+            background: rgba(50, 72, 81, 0.92);
+            border: 1px solid #4F6D68;
+            border-radius: 16px;
         }
     """)
     control_layout = QHBoxLayout(control_frame)
-    control_layout.setContentsMargins(16, 12, 16, 12)
-    control_layout.setSpacing(10)
+    control_layout.setContentsMargins(18, 14, 18, 14)
+    control_layout.setSpacing(12)
 
     tolerance_value = QLabel("1000")
     tolerance_value.setFixedWidth(90)
@@ -396,22 +432,22 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
     result_frame = QFrame()
     result_layout = QHBoxLayout(result_frame)
     result_layout.setContentsMargins(0, 0, 0, 0)
-    result_layout.setSpacing(10)
+    result_layout.setSpacing(14)
 
     ct_frame = QFrame()
     t_frame = QFrame()
     ct_frame.setStyleSheet("""
         QFrame {
-            background: #FFFFFF;
-            border: none;
-            border-radius: 12px;
+            background: rgba(50, 72, 81, 0.92);
+            border: 1px solid #4F6D68;
+            border-radius: 16px;
         }
     """)
     t_frame.setStyleSheet("""
         QFrame {
-            background: #FFFFFF;
-            border: none;
-            border-radius: 12px;
+            background: rgba(50, 72, 81, 0.92);
+            border: 1px solid #4F6D68;
+            border-radius: 16px;
         }
     """)
 
@@ -419,9 +455,9 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
     t_layout = QVBoxLayout(t_frame)
 
     ct_layout.setContentsMargins(0, 0, 0, 0)
-    ct_layout.setSpacing(0)
+    ct_layout.setSpacing(10)
     t_layout.setContentsMargins(0, 0, 0, 0)
-    t_layout.setSpacing(0)
+    t_layout.setSpacing(10)
 
     team_a_tree = QTableWidget(0, 1)
     team_b_tree = QTableWidget(0, 1)
@@ -432,41 +468,39 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
         _apply_result_table_style(tree)
         tree.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
 
-    ct_card = _build_card("Counter Terrorists", team_a_tree, "#3A7BD5", "#FFFFFF")
-    t_card = _build_card("Terrorists", team_b_tree, "#D94A4A", "#FFFFFF")
+    ct_layout.addWidget(team_a_tree)
+    t_layout.addWidget(team_b_tree)
 
-    ct_layout.addWidget(ct_card)
-    ct_layout.addWidget(QLabel("Total: 0"))
-    t_layout.addWidget(t_card)
-    t_layout.addWidget(QLabel("Total: 0"))
-
-    ct_total = ct_layout.itemAt(1).widget()
-    t_total = t_layout.itemAt(1).widget()
+    ct_total = QLabel("Total: 0")
+    t_total = QLabel("Total: 0")
 
     ct_total.setAlignment(Qt.AlignmentFlag.AlignCenter)
     t_total.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
     ct_total.setStyleSheet("""
         QLabel {
-            background: #DCEAF7;
-            color: #2E4C69;
-            padding: 10px 12px;
-            font-size: 14px;
+            background: transparent;
+            color: #DCE7B0;
+            padding: 4px 12px 12px 12px;
+            font-size: 13px;
             font-weight: 800;
-            border-radius: 0px;
+            border: none;
         }
     """)
 
     t_total.setStyleSheet("""
         QLabel {
-            background: #F7D8D8;
-            color: #7A2E2E;
-            padding: 10px 12px;
-            font-size: 14px;
+            background: transparent;
+            color: #E7EEE9;
+            padding: 4px 12px 12px 12px;
+            font-size: 13px;
             font-weight: 800;
-            border-radius: 0px;
+            border: none;
         }
     """)
+
+    ct_layout.addWidget(ct_total)
+    t_layout.addWidget(t_total)
 
     result_layout.addWidget(ct_frame, 1)
     result_layout.addWidget(t_frame, 1)
@@ -476,13 +510,13 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
     diff_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     diff_label.setStyleSheet("""
         QLabel {
-            background: #FFFFFF;
-            color: #2E4C69;
-            padding: 10px 14px;
+            background: rgba(50, 72, 81, 0.92);
+            color: #DCE7B0;
+            padding: 12px 14px;
             font-size: 15px;
             font-weight: 900;
-            border-radius: 12px;
-            border: 1px solid #B9CADC;
+            border-radius: 14px;
+            border: 1px solid #4F6D68;
         }
     """)
     layout.addWidget(diff_label)
@@ -557,7 +591,9 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
         _update_ranking_mode_label()
         rating_source = _current_rating_source()
         players = player_service.get_players_for_teambuilder(rating_source)
-        _fill_player_table(db_tree, players)
+        search_text = search_box.text().strip()
+        filtered_players = _filter_player_rows(players, search_text)
+        _fill_player_table(db_tree, filtered_players)
         _refresh_pool_and_result_views(players)
 
     def _refresh_pool_and_result_views(players_rows=None):
@@ -861,7 +897,7 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
                 dispatcher.balance_error.emit(e)
 
         executor.submit(worker)
-        
+
     def on_balance_finished(team_a, team_b, diff):
         last_generated["team_a"] = [(str(p[0]), str(p[1]), int(p[2])) for p in (team_a or [])]
         last_generated["team_b"] = [(str(p[0]), str(p[1]), int(p[2])) for p in (team_b or [])]
@@ -883,6 +919,11 @@ def build_team_tab(parent, on_data_updated=None, on_players_data_updated=None, u
         generate_button.setEnabled(True)
         generate_button.setText("Generate Teams")
         generate_button.setFocus()
+
+    def _on_search_changed(_text):
+        refresh_players()
+
+    search_box.textChanged.connect(_on_search_changed)
 
     add_button.clicked.connect(add_player)
     update_button.clicked.connect(update_players)
