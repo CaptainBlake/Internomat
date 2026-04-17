@@ -97,10 +97,67 @@ def insert_match(data, conn=None):
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         ON CONFLICT(match_id) DO UPDATE SET
-            end_time=excluded.end_time,
-            winner=excluded.winner,
-            team1_score=excluded.team1_score,
-            team2_score=excluded.team2_score
+            start_time = CASE
+                WHEN TRIM(COALESCE(matches.start_time, '')) = ''
+                 AND TRIM(COALESCE(excluded.start_time, '')) != ''
+                THEN excluded.start_time
+                ELSE matches.start_time
+            END,
+            end_time = CASE
+                WHEN TRIM(COALESCE(excluded.end_time, '')) != ''
+                THEN excluded.end_time
+                ELSE matches.end_time
+            END,
+            winner = CASE
+                WHEN TRIM(COALESCE(excluded.winner, '')) != ''
+                THEN excluded.winner
+                ELSE matches.winner
+            END,
+            series_type = CASE
+                WHEN TRIM(COALESCE(matches.series_type, '')) = ''
+                 AND TRIM(COALESCE(excluded.series_type, '')) != ''
+                THEN excluded.series_type
+                ELSE matches.series_type
+            END,
+            team1_name = CASE
+                WHEN TRIM(COALESCE(matches.team1_name, '')) = ''
+                 AND TRIM(COALESCE(excluded.team1_name, '')) != ''
+                THEN excluded.team1_name
+                ELSE matches.team1_name
+            END,
+            team2_name = CASE
+                WHEN TRIM(COALESCE(matches.team2_name, '')) = ''
+                 AND TRIM(COALESCE(excluded.team2_name, '')) != ''
+                THEN excluded.team2_name
+                ELSE matches.team2_name
+            END,
+            team1_score = CASE
+                WHEN COALESCE(excluded.team1_score, 0) > 0
+                  OR COALESCE(excluded.team2_score, 0) > 0
+                  OR (
+                    COALESCE(matches.team1_score, 0) = 0
+                    AND COALESCE(matches.team2_score, 0) = 0
+                  )
+                THEN COALESCE(excluded.team1_score, matches.team1_score)
+                ELSE matches.team1_score
+            END,
+            team2_score = CASE
+                WHEN COALESCE(excluded.team1_score, 0) > 0
+                  OR COALESCE(excluded.team2_score, 0) > 0
+                  OR (
+                    COALESCE(matches.team1_score, 0) = 0
+                    AND COALESCE(matches.team2_score, 0) = 0
+                  )
+                THEN COALESCE(excluded.team2_score, matches.team2_score)
+                ELSE matches.team2_score
+            END,
+            server_ip = CASE
+                WHEN TRIM(COALESCE(matches.server_ip, '')) = ''
+                 AND TRIM(COALESCE(excluded.server_ip, '')) != ''
+                 AND excluded.server_ip != '-'
+                THEN excluded.server_ip
+                ELSE matches.server_ip
+            END
         """, (
             data["match_id"],
             data.get("start_time"),
@@ -132,12 +189,47 @@ def insert_match_map(data, conn=None):
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(match_id, map_number) DO UPDATE SET
-            map_name=excluded.map_name,
-            start_time=excluded.start_time,
-            end_time=excluded.end_time,
-            winner=excluded.winner,
-            team1_score=excluded.team1_score,
-            team2_score=excluded.team2_score
+                        map_name = CASE
+                                WHEN TRIM(COALESCE(excluded.map_name, '')) != ''
+                                THEN excluded.map_name
+                                ELSE match_maps.map_name
+                        END,
+                        start_time = CASE
+                                WHEN TRIM(COALESCE(match_maps.start_time, '')) = ''
+                                 AND TRIM(COALESCE(excluded.start_time, '')) != ''
+                                THEN excluded.start_time
+                                ELSE match_maps.start_time
+                        END,
+                        end_time = CASE
+                                WHEN TRIM(COALESCE(excluded.end_time, '')) != ''
+                                THEN excluded.end_time
+                                ELSE match_maps.end_time
+                        END,
+                        winner = CASE
+                                WHEN TRIM(COALESCE(excluded.winner, '')) != ''
+                                THEN excluded.winner
+                                ELSE match_maps.winner
+                        END,
+                        team1_score = CASE
+                                WHEN COALESCE(excluded.team1_score, 0) > 0
+                                    OR COALESCE(excluded.team2_score, 0) > 0
+                                    OR (
+                                        COALESCE(match_maps.team1_score, 0) = 0
+                                        AND COALESCE(match_maps.team2_score, 0) = 0
+                                    )
+                                THEN COALESCE(excluded.team1_score, match_maps.team1_score)
+                                ELSE match_maps.team1_score
+                        END,
+                        team2_score = CASE
+                                WHEN COALESCE(excluded.team1_score, 0) > 0
+                                    OR COALESCE(excluded.team2_score, 0) > 0
+                                    OR (
+                                        COALESCE(match_maps.team1_score, 0) = 0
+                                        AND COALESCE(match_maps.team2_score, 0) = 0
+                                    )
+                                THEN COALESCE(excluded.team2_score, match_maps.team2_score)
+                                ELSE match_maps.team2_score
+                        END
         """, (
             data["match_id"],
             data["map_number"],
