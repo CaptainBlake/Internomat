@@ -103,6 +103,9 @@ def bind_current_settings_tuning_to_season(season: int, *, source: str = "settin
 
 def is_date_in_configured_season(date_obj=None) -> bool:
     """Return True when the given date falls into any configured Elo season range."""
+    if not _setting_bool("use_elo", False, legacy_key="use_elo_when_in_season"):
+        return False
+
     if date_obj is None:
         date_obj = datetime.now().date()
 
@@ -119,6 +122,15 @@ def is_date_in_configured_season(date_obj=None) -> bool:
             return True
 
     return False
+
+
+def _setting_bool(key: str, default: bool, *, legacy_key: str | None = None) -> bool:
+    raw = settings_db.get(key, None)
+    if raw is None and legacy_key:
+        raw = settings_db.get(legacy_key, None)
+    if raw is None:
+        return bool(default)
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
 # ── Data loading ──────────────────────────────────────────────────────

@@ -438,11 +438,12 @@ def build_settings_tab(parent, on_players_updated=None, on_update_players=None, 
             return
 
         check_updates_button.setEnabled(False)
-        logger.log("[UPDATE_CLIENT] Checking GitHub releases for updates", level="INFO")
+        include_unstable = bool(getattr(settings, "update_include_unstable", False))
+        logger.log(f"[UPDATE_CLIENT] Checking GitHub releases for updates (unstable={include_unstable})", level="INFO")
 
         def worker():
             try:
-                result = update_service.check_latest_release()
+                result = update_service.check_latest_release(include_unstable=include_unstable)
                 dispatcher.update_check_finished.emit(result)
             except Exception as exc:
                 dispatcher.update_check_error.emit(exc)
