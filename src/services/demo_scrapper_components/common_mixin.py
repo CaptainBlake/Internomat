@@ -16,6 +16,9 @@ except ImportError:
 
 
 class DemoScrapperCommonMixin:
+    _MIN_PARTIAL_PLAYER_MATCH_COUNT = 10
+    _MIN_PARTIAL_PLAYER_MATCH_COVERAGE = 0.75
+
     def extract_match_id(self, filename):
         try:
             return int(filename.split("_")[2])
@@ -285,6 +288,38 @@ class DemoScrapperCommonMixin:
 
         return steamids
 
+    def _evaluate_demo_player_match(self, expected_players, parsed_players):
+        expected = {str(sid) for sid in (expected_players or []) if str(sid).strip()}
+        parsed = {str(sid) for sid in (parsed_players or []) if str(sid).strip()}
+
+        missing = sorted(expected - parsed)
+        extra = sorted(parsed - expected)
+
+        if expected == parsed:
+            return {
+                "is_valid": True,
+                "mode": "exact",
+                "missing": missing,
+                "extra": extra,
+                "coverage": 1.0,
+            }
+
+        coverage = (len(parsed & expected) / len(expected)) if expected else 0.0
+        allow_subset = (
+            not extra
+            and parsed.issubset(expected)
+            and len(parsed) >= self._MIN_PARTIAL_PLAYER_MATCH_COUNT
+            and coverage >= self._MIN_PARTIAL_PLAYER_MATCH_COVERAGE
+        )
+
+        return {
+            "is_valid": allow_subset,
+            "mode": "subset" if allow_subset else "mismatch",
+            "missing": missing,
+            "extra": extra,
+            "coverage": coverage,
+        }
+
     def validate_demo_players(self, match_id, map_number, data, conn=None):
         expected_players = get_expected_demo_players(
             match_id=match_id,
@@ -306,20 +341,28 @@ class DemoScrapperCommonMixin:
             )
             return False
 
-        is_valid = expected_players == parsed_players
+        validation = self._evaluate_demo_player_match(expected_players, parsed_players)
+        is_valid = bool(validation["is_valid"])
 
-        if not is_valid:
-            missing = sorted(expected_players - parsed_players)
-            extra = sorted(parsed_players - expected_players)
+        if validation["missing"] or validation["extra"]:
             logger.log_debug(
                 "[Validator] "
-                f"match={match_id} map={map_number} missing={missing} extra={extra}"
+                f"match={match_id} map={map_number} "
+                f"missing={validation['missing']} extra={validation['extra']}"
+            )
+
+        if validation["mode"] == "subset":
+            logger.log_warning(
+                "[Validator] Accepting partial player match "
+                f"match={match_id} map={map_number} coverage={validation['coverage']:.2f} "
+                f"parsed={len(parsed_players)} expected={len(expected_players)}"
             )
 
         logger.log_info(
             "[Validator] "
             f"match={match_id} map={map_number} "
-            f"expected={len(expected_players)} parsed={len(parsed_players)} valid={is_valid}"
+            f"expected={len(expected_players)} parsed={len(parsed_players)} "
+            f"coverage={validation['coverage']:.2f} mode={validation['mode']} valid={is_valid}"
         )
 
         return is_valid
