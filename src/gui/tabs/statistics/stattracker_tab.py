@@ -39,6 +39,7 @@ else:
 import core.stats.stattracker as stattracker
 import services.logger as logger
 from . import stattracker_insight_builder
+from . import stattracker_playercard
 
 
 # ---------------------------------------------------------------------------
@@ -1581,41 +1582,22 @@ def refresh_stattracker(parent):
     _practice_target = f"{fav['opponent_name']} ({fav['kills_dealt']}K)" if fav else "-"
     _nemesis = f"{nem['opponent_name']} ({nem['kills_received']}D)" if nem else "-"
 
-    # --- Global Stats ---
-    global_title = QLabel("Global Stats")
-    global_title.setStyleSheet("font-size: 13px; font-weight: 900; color: #21443C;")
-    layout.addWidget(global_title)
+    # --- Player Card (replaces Global Stats table) ---
+    _player_name = selected_sid
+    for _opt in player_options:
+        if str(_opt.get("steamid64") or "") == selected_sid:
+            _player_name = str(_opt.get("player_name") or selected_sid)
+            break
 
-    _elo_val = kpis.get("elo_rating")
-    _elo_display = f"{_elo_val:.0f}" if _elo_val is not None else "-"
-
-    global_table = _build_table(
-        [
-            "Elo Rating",
-            "Maps Played", "Win Rate", "K/D", "ADR",
-            "Avg Kills", "Avg Deaths", "HS%",
-            "Camp Time (s)", "Nemesis", "Practice-Target",
-        ],
-        [
-            [
-                _elo_display,
-                int(kpis.get("maps_played") or 0),
-                _fmt_pct(kpis.get("win_rate") or 0.0),
-                f"{float(kpis.get('kdr') or 0.0):.2f}",
-                f"{float(kpis.get('adr') or 0.0):.1f}",
-                f"{float(kpis.get('avg_kills') or 0.0):.2f}",
-                f"{float(kpis.get('avg_deaths') or 0.0):.2f}",
-                _fmt_pct(kpis.get("hs_pct") or 0.0),
-                f"{float(kpis.get('camp_time_s') or 0.0):.1f}",
-                _nemesis,
-                _practice_target,
-            ]
-        ],
+    player_card = stattracker_playercard.build_player_card(
+        player_name=_player_name,
+        kpis=kpis,
+        nemesis=_nemesis,
+        practice_target=_practice_target,
     )
-    _fit_single_row_table_height(global_table)
-    layout.addWidget(global_table)
+    layout.addWidget(player_card)
 
-    # --- Compared player Global Stats ---
+    # --- Compared player card ---
     compare_sid = str(getattr(parent, "_stattracker_compare_player", "") or "")
     if compare_sid and compare_sid != selected_sid:
         compare_dashboard = stattracker.get_player_dashboard(
@@ -1632,13 +1614,6 @@ def refresh_stattracker(parent):
                     return str(opt.get("player_name") or sid)
             return str(sid or "?")
 
-        compare_title = QLabel(f"Global Stats — {_compare_label(compare_sid)}")
-        compare_title.setStyleSheet("font-size: 13px; font-weight: 900; color: #6C8790;")
-        layout.addWidget(compare_title)
-
-        _cmp_elo_val = compare_kpis.get("elo_rating")
-        _cmp_elo_display = f"{_cmp_elo_val:.0f}" if _cmp_elo_val is not None else "-"
-
         cmp_rel = stattracker.get_player_kill_relationships(
             compare_sid,
             seasons=getattr(parent, "_stattracker_selected_seasons", None),
@@ -1648,31 +1623,13 @@ def refresh_stattracker(parent):
         _cmp_practice = f"{cmp_fav['opponent_name']} ({cmp_fav['kills_dealt']}K)" if cmp_fav else "-"
         _cmp_nemesis = f"{cmp_nem['opponent_name']} ({cmp_nem['kills_received']}D)" if cmp_nem else "-"
 
-        compare_table = _build_table(
-            [
-                "Elo Rating",
-                "Maps Played", "Win Rate", "K/D", "ADR",
-                "Avg Kills", "Avg Deaths", "HS%",
-                "Camp Time (s)", "Nemesis", "Practice-Target",
-            ],
-            [
-                [
-                    _cmp_elo_display,
-                    int(compare_kpis.get("maps_played") or 0),
-                    _fmt_pct(compare_kpis.get("win_rate") or 0.0),
-                    f"{float(compare_kpis.get('kdr') or 0.0):.2f}",
-                    f"{float(compare_kpis.get('adr') or 0.0):.1f}",
-                    f"{float(compare_kpis.get('avg_kills') or 0.0):.2f}",
-                    f"{float(compare_kpis.get('avg_deaths') or 0.0):.2f}",
-                    _fmt_pct(compare_kpis.get("hs_pct") or 0.0),
-                    f"{float(compare_kpis.get('camp_time_s') or 0.0):.1f}",
-                    _cmp_nemesis,
-                    _cmp_practice,
-                ]
-            ],
+        compare_card = stattracker_playercard.build_player_card(
+            player_name=_compare_label(compare_sid),
+            kpis=compare_kpis,
+            nemesis=_cmp_nemesis,
+            practice_target=_cmp_practice,
         )
-        _fit_single_row_table_height(compare_table)
-        layout.addWidget(compare_table)
+        layout.addWidget(compare_card)
 
     # --- Insight Selection ---
     selected_category = str(getattr(parent, "_stattracker_weapon_category", "all") or "all")

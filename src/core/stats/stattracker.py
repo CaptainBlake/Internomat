@@ -1,5 +1,6 @@
 from db import stattracker_db as stattracker_repo
 from core.stats import metrics as M
+from core.stats import rating_hltv as hltv
 import services.logger as logger
 from datetime import datetime
 
@@ -138,6 +139,13 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all", s
     raw_avg_rating = overall["avg_rating"] if overall else None
     avg_rating = float(raw_avg_rating) if raw_avg_rating is not None else None
 
+    total_enemy2ks = int((overall["total_enemy2ks"] if overall else 0) or 0)
+    total_enemy3ks = int((overall["total_enemy3ks"] if overall else 0) or 0)
+    total_enemy4ks = int((overall["total_enemy4ks"] if overall else 0) or 0)
+    total_enemy5ks = int((overall["total_enemy5ks"] if overall else 0) or 0)
+    total_entry_count = int((overall["total_entry_count"] if overall else 0) or 0)
+    total_entry_wins = int((overall["total_entry_wins"] if overall else 0) or 0)
+
     win_rate = M.win_rate(map_wins, maps_played)
     kdr = M.kd_ratio(total_kills, max(1, total_deaths)) if maps_played > 0 else 0.0
     adr = M.adr(total_damage, total_rounds) or 0.0
@@ -147,6 +155,12 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all", s
     hs_pct = M.hs_pct(total_headshot_kills, total_kills)
     # Performance index: lightweight composite until true per-map rating/kast persistence is added.
     performance_index = M.performance_index(total_kills, total_assists, total_deaths) if maps_played > 0 else 0.0
+
+    # HLTV 3.0 sub-metrics
+    kpr = hltv.kills_per_round(total_kills, total_rounds)
+    dpr = hltv.deaths_per_round(total_deaths, total_rounds)
+    mk_pct = hltv.multi_kill_pct(total_enemy2ks, total_enemy3ks, total_enemy4ks, total_enemy5ks, total_rounds)
+    entry_success_pct = M.success_pct(total_entry_wins, total_entry_count)
 
     avg_speed_m_s = (total_distance_units * 0.0254 / total_alive_seconds) if total_alive_seconds > 0 else 0.0
     if total_alive_seconds > 0:
@@ -241,6 +255,10 @@ def get_player_dashboard(steamid64, min_weapon_shots=1, weapon_category="all", s
             "avg_speed_m_s": avg_speed_m_s,
             "strafe_ratio": strafe_ratio,
             "camp_time_s": avg_camp_time_s,
+            "kpr": kpr,
+            "dpr": dpr,
+            "multi_kill_pct": mk_pct,
+            "entry_success_pct": entry_success_pct,
         },
         "map_rows": map_rows,
         "weapon_rows": weapon_rows,
