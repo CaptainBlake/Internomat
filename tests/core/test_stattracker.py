@@ -214,6 +214,12 @@ class TestGetPlayerDashboard:
                 "avg_kast": 0.7,
                 "avg_impact": 1.0,
                 "avg_rating": 1.1,
+                "total_enemy2ks": 2,
+                "total_enemy3ks": 1,
+                "total_enemy4ks": 0,
+                "total_enemy5ks": 0,
+                "total_entry_count": 5,
+                "total_entry_wins": 3,
             },
         )
         monkeypatch.setattr(
@@ -276,6 +282,12 @@ class TestGetPlayerDashboard:
                 "avg_kast": 0.7,
                 "avg_impact": 1.0,
                 "avg_rating": 1.1,
+                "total_enemy2ks": 0,
+                "total_enemy3ks": 0,
+                "total_enemy4ks": 0,
+                "total_enemy5ks": 0,
+                "total_entry_count": 0,
+                "total_entry_wins": 0,
             },
         )
         monkeypatch.setattr(

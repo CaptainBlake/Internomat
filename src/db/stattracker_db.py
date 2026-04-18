@@ -1132,7 +1132,13 @@ def fetch_player_overall_metrics(steamid64, seasons=None):
                 SUM(CASE WHEN COALESCE(mm.winner, '') = COALESCE(mps.team, '') THEN 1 ELSE 0 END) AS map_wins,
                 AVG(mps.kast) AS avg_kast,
                 AVG(mps.impact) AS avg_impact,
-                AVG(mps.rating) AS avg_rating
+                AVG(mps.rating) AS avg_rating,
+                SUM(COALESCE(mps.enemy2ks, 0)) AS total_enemy2ks,
+                SUM(COALESCE(mps.enemy3ks, 0)) AS total_enemy3ks,
+                SUM(COALESCE(mps.enemy4ks, 0)) AS total_enemy4ks,
+                SUM(COALESCE(mps.enemy5ks, 0)) AS total_enemy5ks,
+                SUM(COALESCE(mps.entry_count, 0)) AS total_entry_count,
+                SUM(COALESCE(mps.entry_wins, 0)) AS total_entry_wins
             FROM match_player_stats mps
             LEFT JOIN match_maps mm
               ON mm.match_id = mps.match_id
